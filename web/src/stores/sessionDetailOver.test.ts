@@ -15,6 +15,7 @@ vi.mock('$lib/api/client', async () => {
     ...actual,
     getManifest: (...args: unknown[]) => getManifest(...args),
     listTable: (...args: unknown[]) => listTable(...args),
+    listTableIn: (...args: unknown[]) => listTable(...args),
     queryPods: (...args: unknown[]) => queryPods(...args),
     listWorkloads: (...args: unknown[]) => listWorkloads(...args),
     scaleWorkload: (...args: unknown[]) => scaleWorkload(...args),

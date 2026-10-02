@@ -34,6 +34,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte'
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import RoleHoldersDialog from '$lib/components/RoleHoldersDialog.svelte'
+  import Select from '$lib/components/Select.svelte'
   import { toApiError, type ApiError } from '$lib/api/errors'
   import { subjectRules as askSubjectRules, type SubjectRules } from '$lib/api/client'
   import { isControlColumn } from '$lib/fixedColumns'
@@ -90,14 +91,36 @@
   }
 
   /**
-   * One request when the page opens and one whenever the tab's namespace
+   * WHICH namespace is reviewed: ONE, picked here from the filter's set.
+   *
+   * A rules review (SelfSubjectRulesReview) is per namespace by definition —
+   * there is no review of a set — so the filter cannot simply apply here as
+   * it does on a list. The page offers the selected namespaces (every one,
+   * when the filter is All) and reviews the one chosen: the first by
+   * default, or `default` on All, which is where the review used to land.
+   * Per tab and in memory; the filter is what is remembered.
+   */
+  let chosenNamespace = $state('')
+  const reviewChoices = $derived(
+    session.isAllNamespaces ? session.namespaces.map((namespace) => namespace.name) : session.scope.namespaces,
+  )
+  const reviewNamespace = $derived(
+    reviewChoices.includes(chosenNamespace)
+      ? chosenNamespace
+      : session.isAllNamespaces && reviewChoices.includes('default')
+        ? 'default'
+        : (reviewChoices[0] ?? ''),
+  )
+
+  /**
+   * One request when the page opens and one whenever the reviewed namespace
    * changes — never on the refresh tick. Keyed on the pair, because "what may
    * I do here" is a different question in every namespace.
    */
   $effect(() => {
-    const key = `${session.cluster.id} ${session.namespace}`
+    const key = `${session.cluster.id} ${reviewNamespace}`
     if (key === rulesFor) return
-    void loadRules(session.cluster.id, session.namespace)
+    void loadRules(session.cluster.id, reviewNamespace)
   })
 
   /**
@@ -110,13 +133,13 @@
     const presses = session.manualRefreshes
     if (presses === seenRefreshes) return
     seenRefreshes = presses
-    void loadRules(session.cluster.id, session.namespace)
+    void loadRules(session.cluster.id, reviewNamespace)
   })
 
   const rulesState = $derived(reviewState(rules?.status ?? 'answered', rules?.refusal ?? ''))
 
   /** The namespace the review actually named. */
-  const reviewedNamespace = $derived(rules?.namespace || session.namespace || 'default')
+  const reviewedNamespace = $derived(rules?.namespace || reviewNamespace || 'default')
 
   /** One row of the table: a resource rule or a non-resource URL path. */
   interface PermissionRow {
@@ -254,6 +277,21 @@
   exportRows={exportCSV}
 >
   {#snippet notice()}
+    <!-- The one namespace reviewed, from the filter's set: a rules review is
+         per namespace, so this page cannot read a set the way a list does. -->
+    <div class="flex flex-wrap items-center gap-3 border-b border-outline-variant/60 px-6 py-2">
+      <Select
+        label="Reviewed namespace"
+        value={reviewNamespace}
+        options={reviewChoices.map((name) => ({ value: name, label: name }))}
+        placeholder={reviewedNamespace}
+        disabled={reviewChoices.length < 2}
+        onchange={(value) => (chosenNamespace = value)}
+        onopen={() => void session.refreshNamespaces()}
+        compact
+      />
+      <span class="text-body-small text-on-surface-variant">Permissions are reviewed per namespace</span>
+    </div>
     {#if rules?.incomplete}
       <!-- Only when the answer is partial: a partial list that does not say
            so reads as a complete one. -->
@@ -318,7 +356,7 @@
 <CanIDialog
   open={canIOpen}
   clusterId={session.cluster.id}
-  namespace={session.namespace}
+  namespace={session.singleNamespace}
   onclose={() => (canIOpen = false)}
 />
 <RoleHoldersDialog open={rolesOpen} clusterId={session.cluster.id} onclose={() => (rolesOpen = false)} />

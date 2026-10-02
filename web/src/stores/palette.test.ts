@@ -10,7 +10,7 @@ vi.mock('$lib/api/client', async () => {
   return {
     ...actual,
     getManifest: vi.fn().mockRejectedValue(new Error('no cluster in a test')),
-    listTable: (...args: unknown[]) => listTable(...args),
+    listTableIn: (...args: unknown[]) => listTable(...args),
   }
 })
 
@@ -23,7 +23,7 @@ const cluster = { id: 'dev', name: 'dev', defaultNamespace: 'default' } as unkno
 // Written out locally rather than imported from `$lib/api/client`, so the
 // on-demand search tests' expectations are independent of the module under
 // test's own constant.
-const ALL_NAMESPACES_FOR_TEST = ''
+const ALL_NAMESPACES_FOR_TEST: string[] = []
 
 const podsKind = {
   id: RICH_KIND_IDS.pods,
@@ -49,7 +49,7 @@ function makeSession(): ClusterSession {
   // `preferences` (a real, persistent singleton) — the on-demand search
   // tests below assert exactly which namespace a ListTable call was made
   // with, and that has to be deterministic regardless of test order.
-  session.namespace = ALL_NAMESPACES_FOR_TEST
+  session.selectedNamespaces = ALL_NAMESPACES_FOR_TEST
   session.kinds = [podsKind, deploymentsKind]
   session.selectedKindId = RICH_KIND_IDS.pods
   session.pods = [

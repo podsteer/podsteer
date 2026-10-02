@@ -1,5 +1,5 @@
 /**
- * All clusters has ONE namespace for the window.
+ * All clusters has ONE namespace set for the window.
  *
  * Its rows are one set for the window, and they used to be read in whichever
  * tab was in front's own namespace — so two tabs on different namespaces
@@ -15,11 +15,10 @@ vi.mock('$lib/api/client', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('$lib/api/client')
   return {
     ...actual,
-    queryFleetPods: (...args: unknown[]) => queryFleetPods(...args),
+    queryFleetPodsIn: (...args: unknown[]) => queryFleetPods(...args),
   }
 })
 
-import { ALL_NAMESPACES } from '$lib/api/client'
 import { fleet } from './fleet.svelte'
 
 /** One cluster's page of the merged pod table, as Go answers it. */
@@ -54,25 +53,25 @@ beforeEach(() => {
   queryFleetPods.mockReset()
   fleet.openClusters = () => ['prod', 'staging']
   fleet.tab = 'pods'
-  fleet.chooseNamespace(ALL_NAMESPACES)
+  fleet.chooseNamespaces([])
   fleet.pods = []
 })
 
 describe('the All clusters namespace', () => {
   it('starts on every namespace, whatever any tab is filtered to', () => {
-    expect(fleet.namespace).toBe(ALL_NAMESPACES)
+    expect(fleet.namespaces).toEqual([])
   })
 
   it('drops the old scope’s rows when the namespace changes', async () => {
     queryFleetPods.mockResolvedValue(answer('prod', ['a', 'b']))
-    await fleet.refresh(fleet.namespace, query)
+    await fleet.refresh(fleet.namespaces, query)
     expect(fleet.podRows).toHaveLength(2)
     expect(fleet.podRows[0].cluster).toBe('prod')
     expect(fleet.podCounts.matched).toBe(2)
 
-    fleet.chooseNamespace('default')
+    fleet.chooseNamespaces(['default'])
 
-    expect(fleet.namespace).toBe('default')
+    expect(fleet.namespaces).toEqual(['default'])
     expect(fleet.podRows).toHaveLength(0)
     expect(fleet.podCounts.matched).toBe(0)
   })
@@ -81,8 +80,8 @@ describe('the All clusters namespace', () => {
     let settle: (value: unknown) => void = () => {}
     queryFleetPods.mockReturnValue(new Promise((resolve) => (settle = resolve)))
 
-    const inFlight = fleet.refresh(fleet.namespace, query)
-    fleet.chooseNamespace('default')
+    const inFlight = fleet.refresh(fleet.namespaces, query)
+    fleet.chooseNamespaces(['default'])
     settle(answer('prod', ['stale']))
     await inFlight
 
@@ -97,7 +96,7 @@ describe('the All clusters namespace', () => {
       ],
       page: { rows: [], offset: 0, matched: 7, total: 7, unhealthy: 0, chipCounts: {}, queryError: '' },
     })
-    await fleet.refresh(fleet.namespace, query)
+    await fleet.refresh(fleet.namespaces, query)
 
     const [prod, staging] = fleet.strip
     expect(prod).toMatchObject({ cluster: 'prod', status: 'unreachable', rows: 7, stale: true })
@@ -106,19 +105,28 @@ describe('the All clusters namespace', () => {
 
   it('stays ready while the same table is asked for another page', async () => {
     queryFleetPods.mockResolvedValue(answer('prod', ['a']))
-    await fleet.refresh(fleet.namespace, query)
+    await fleet.refresh(fleet.namespaces, query)
     expect(fleet.status).toBe('ready')
 
     let settle: (value: unknown) => void = () => {}
     queryFleetPods.mockReturnValue(new Promise((resolve) => (settle = resolve)))
-    const next = fleet.refresh(fleet.namespace, { ...query, offset: 50 })
+    const next = fleet.refresh(fleet.namespaces, { ...query, offset: 50 })
     expect(fleet.status).toBe('ready')
     settle(answer('prod', ['b']))
     await next
 
-    fleet.chooseNamespace('default')
+    fleet.chooseNamespaces(['default'])
     queryFleetPods.mockReturnValue(new Promise(() => {}))
-    void fleet.refresh(fleet.namespace, query)
+    void fleet.refresh(fleet.namespaces, query)
     expect(fleet.status).toBe('loading')
+  })
+
+  it('reads a set, and asks Go for it as one', async () => {
+    queryFleetPods.mockResolvedValue(answer('prod', ['a']))
+    fleet.chooseNamespaces(['shop', 'billing', 'shop'])
+    expect(fleet.namespaces).toEqual(['billing', 'shop'])
+
+    await fleet.refresh(fleet.namespaces, query)
+    expect(queryFleetPods).toHaveBeenCalledWith(['prod', 'staging'], ['billing', 'shop'], query)
   })
 })

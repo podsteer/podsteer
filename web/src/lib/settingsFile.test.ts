@@ -127,7 +127,7 @@ function populateEverything(): void {
   // Things that must NOT travel, each written where the application really
   // writes it — so this test fails if any of these fields ever joins the
   // export, rather than passing on a shape nobody populated.
-  preferences.setClusterNamespace(CONTEXT, FORBIDDEN.namespace)
+  preferences.setClusterNamespaces(CONTEXT, [FORBIDDEN.namespace])
   preferences.snooze(CONTEXT, FORBIDDEN.findingId, FORBIDDEN.namespace, FORBIDDEN.pod, 3_600_000)
   preferences.snooze(CONTEXT, FORBIDDEN.findingId, '', FORBIDDEN.node, 3_600_000)
   preferences.markUpdateChecked(1_700_000_000_000)
@@ -153,7 +153,7 @@ describe('what a settings file must never carry', () => {
 
     // The categories are checked by their VALUES above and by their field
     // names here, so a rename of either half still fails the test.
-    for (const field of ['snoozes', 'namespaceByCluster', 'recentObjects', 'kubeconfig']) {
+    for (const field of ['snoozes', 'namespacesByCluster', 'namespaceByCluster', 'recentObjects', 'kubeconfig']) {
       expect(text.includes(`"${field}"`), `the export gained a ${field} field`).toBe(false)
     }
 
@@ -172,7 +172,7 @@ describe('what a settings file must never carry', () => {
     // inverse of `expandedCategories`, which is already here, and its members
     // are the navigator's own two section labels — the literal strings
     // "Pinned" and "Recent". It cannot come to hold an object name the way
-    // `pinnedKinds` and `namespaceByCluster` can, because nothing writes into
+    // `pinnedKinds` and `namespacesByCluster` can, because nothing writes into
     // it but the two toggles in Navigator.svelte.
     //
     // `fixedEdges` was argued for on 2026-09-06 and admitted. It is two
@@ -283,7 +283,7 @@ describe('what a settings file must never carry', () => {
     // it and delete it.
     preferences.saveView('Crashing pods', {
       kindId: 'core/v1/pods',
-      namespace: 'payments-prod',
+      namespaces: ['payments-prod'],
       search: 'checkout-api',
       statusFilters: ['crashing'],
     })
@@ -364,7 +364,7 @@ describe('the round trip', () => {
 
     applyImport(previewImport(currentPayload(), parsed.document, 'replace'))
 
-    expect(preferences.getClusterNamespace(CONTEXT)).toBe(FORBIDDEN.namespace)
+    expect(preferences.getClusterNamespaces(CONTEXT)).toEqual([FORBIDDEN.namespace])
     expect(
       preferences.snoozedUntil(CONTEXT, FORBIDDEN.findingId, FORBIDDEN.namespace, FORBIDDEN.pod),
     ).toBeGreaterThan(0)

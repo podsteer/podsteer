@@ -29,7 +29,7 @@
    * when the row that names it is folded away.
    */
   const FOLDED_SELECTION = 'bg-surface-container text-on-surface'
-  import { ALL_NAMESPACES, type ResourceKind } from '$lib/api/client'
+  import type { ResourceKind } from '$lib/api/client'
   import {
     APPLICATIONS_KIND_ID,
     FLEET_KIND_ID,
@@ -51,7 +51,7 @@
   import { formatBadgeCount } from '$lib/format'
   import { kindSetMatches } from '$lib/kindSets'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
-  import Select from './Select.svelte'
+  import NamespacePicker from './NamespacePicker.svelte'
   import {
     Blocks,
     ChevronDown,
@@ -78,36 +78,27 @@
 
   let { session }: Props = $props()
 
-  const namespaceOptions = $derived.by(() => {
-    const options = [
-      { value: ALL_NAMESPACES, label: 'All namespaces' },
-      ...session.namespaces.map((namespace) => ({
-        value: namespace.name,
-        label: namespace.name,
-        hint: namespace.isActive ? undefined : namespace.phase.toLowerCase(),
-      })),
-    ]
+  /**
+   * What the namespace picker offers: every namespace the cluster lists, a
+   * phase beside any that is not active.
+   *
+   * A name the filter holds that is NOT here — deleted while the tab was
+   * open, remembered from before, or on an account that may list objects in
+   * a namespace but not list namespaces — the picker keeps and marks "not
+   * found" itself, so the trigger never describes a filter the list cannot
+   * show while the whole tree below is still scoped to it.
+   */
+  const namespaceChoices = $derived(
+    session.namespaces.map((namespace) => ({
+      name: namespace.name,
+      hint: namespace.isActive ? undefined : namespace.phase.toLowerCase(),
+    })),
+  )
 
-    // KEEP A FILTER THAT NO LONGER MATCHES ANYTHING VISIBLE.
-    //
-    // The list refreshes now (session.refreshNamespaces), so the namespace
-    // being filtered on can disappear from under the selection — deleted
-    // while the tab was open, or still named by a preference remembered from
-    // before it was. A Select whose value is absent from its options falls
-    // back to the placeholder, so the trigger would read as EMPTY while the
-    // whole tree below it was still scoped to that namespace: an operator
-    // looking at nothing, with nothing on screen saying why.
-    //
-    // The same case covers RBAC that permits listing objects in one namespace
-    // but not listing namespaces at all, where this is the only entry there
-    // will ever be.
-    const selected = session.scopeNamespace
-    if (selected !== ALL_NAMESPACES && !options.some((option) => option.value === selected)) {
-      options.push({ value: selected, label: selected, hint: 'not found' })
-    }
-
-    return options
-  })
+  /** Cluster-scoped kinds ignore the filter, and the picker says so. */
+  const clusterScopedTitle = $derived(
+    session.selectedKind && !session.isNamespaced ? `${session.selectedKind.title} are cluster-scoped` : undefined,
+  )
 
   const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
   const onApplications = $derived(session.selectedKindId === APPLICATIONS_KIND_ID)
@@ -422,17 +413,13 @@
        deliberately not a catalog entry, so `selectedKind` is undefined there
        AND `isNamespaced` is false — testing only the latter renders
        "undefined are cluster-scoped" on the view every session opens with. -->
-  <div
-    class="flex h-14 shrink-0 items-center border-b border-outline-variant/60 px-3"
-    title={session.selectedKind && !session.isNamespaced
-      ? `${session.selectedKind.title} are cluster-scoped`
-      : undefined}
-  >
-    <Select
-      label="Namespace"
-      value={session.scopeNamespace}
-      options={namespaceOptions}
-      onchange={(value) => session.selectNamespace(value)}
+  <div class="flex h-14 shrink-0 items-center border-b border-outline-variant/60 px-3">
+    <NamespacePicker
+      value={session.scopeOnScreen}
+      choices={namespaceChoices}
+      disabled={clusterScopedTitle !== undefined}
+      title={clusterScopedTitle}
+      onapply={(scope) => void session.selectNamespaces(scope.namespaces)}
       onopen={() => void session.refreshNamespaces()}
       class="w-full"
     />

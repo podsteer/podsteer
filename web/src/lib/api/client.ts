@@ -2651,3 +2651,379 @@ export function onNotificationActivated(
 ): Unsubscribe {
   return subscribe<NotificationActivatedEvent>('notification:activated', handler)
 }
+
+// --- Namespace sets ---------------------------------------------------------
+//
+// Every list the namespace filter scopes takes a SET: `namespaces` sorted, an
+// empty list meaning every namespace. Each wrapper calls the Go method of the
+// same name with `In` appended — the old method's parameters with
+// `namespace string` replaced by `namespaces []string` in the same position —
+// which applies one rule to every list (see CLAUDE.md, "Lists take a
+// namespace set"): up to three namespaces are one LIST each, more is one
+// cluster-wide LIST filtered in Go, and a named namespace that fails fails
+// the list, naming it.
+
+// ===== BEGIN NAMESPACE-SET SEAM ============================================
+// TEMPORARY, until the backend's …In methods are in the generated bindings.
+// Each wrapper below asks `generatedIn` for its binding and, when it is not
+// generated yet, falls back to the single-namespace binding: one call for
+// All or one namespace; for several, one call per namespace merged here —
+// except where merging cannot be right (a PAGE of pods, its CSV, Helm's
+// listing status, the fleet's per-cluster answers), which throws
+// NamespaceSetUnsupportedError instead. Once the bindings are regenerated,
+// delete everything between BEGIN and END SEAM, the three `* as` imports,
+// and each wrapper's `if (!bound)` fallback branch, and import the …In
+// functions by name like every other binding.
+import * as workloadBindings from '$bindings/workloadapi'
+import * as browseBindings from '$bindings/browseapi'
+import * as helmBindings from '$bindings/helmapi'
+import * as fleetBindings from '$bindings/fleetapi'
+import { ApiError } from './errors'
+
+/** A namespace set this build of the backend cannot answer correctly. */
+export class NamespaceSetUnsupportedError extends ApiError {
+  constructor(what: string) {
+    super(
+      'invalid_input',
+      `${what} across several namespaces needs a newer PodSteer backend. Choose one namespace, or All.`,
+    )
+    this.name = 'NamespaceSetUnsupportedError'
+  }
+}
+
+/** The generated `…In` binding, when this build has one. Looked up by a
+    name passed in rather than written as a member, so a missing export is
+    an `undefined` at run time and never a bundler error. */
+function generatedIn<F>(module: object, name: string): F | undefined {
+  const candidate = (module as Record<string, unknown>)[name]
+  return typeof candidate === 'function' ? (candidate as F) : undefined
+}
+
+/** One call for All or one namespace; otherwise one per namespace, merged. */
+async function eachNamespace<T>(
+  namespaces: readonly string[],
+  one: (namespace: string) => Promise<T>,
+  merge: (parts: T[]) => T,
+): Promise<T> {
+  if (namespaces.length <= 1) return one(namespaces[0] ?? ALL_NAMESPACES)
+  return merge(await Promise.all(namespaces.map(one)))
+}
+
+/** The single-namespace binding for All or one; a typed refusal for several. */
+function singleOnly<T>(namespaces: readonly string[], what: string, one: (namespace: string) => Promise<T>): Promise<T> {
+  if (namespaces.length > 1) return Promise.reject(new NamespaceSetUnsupportedError(what))
+  return one(namespaces[0] ?? ALL_NAMESPACES)
+}
+
+const concat = <T>(parts: T[][]): T[] => parts.flat()
+// ===== END NAMESPACE-SET SEAM ==============================================
+
+type Bound<A extends unknown[], R> = (...args: A) => Promise<R>
+
+/** listPods over a namespace set. */
+export function listPodsIn(
+  clusterId: string,
+  namespaces: string[],
+  annotationKeys: string[] = [],
+  expressions: CustomExpression[] = [],
+): Promise<Pod[]> {
+  const bound = generatedIn<Bound<[string, string[], string[], CustomExpression[]], Pod[] | null>>(
+    workloadBindings,
+    'ListPodsIn',
+  )
+  if (!bound) return eachNamespace(namespaces, (ns) => listPods(clusterId, ns, annotationKeys, expressions), concat)
+  return callList(() => bound(clusterId, namespaces, annotationKeys, expressions))
+}
+
+/** queryPods over a namespace set: one page of the whole set's pods. */
+export async function queryPodsIn(
+  clusterId: string,
+  namespaces: string[],
+  annotationKeys: string[],
+  expressions: CustomExpression[],
+  query: PodQuery,
+): Promise<PodPage> {
+  const bound = generatedIn<Bound<[string, string[], string[], CustomExpression[], PodQuery], PodPage>>(
+    workloadBindings,
+    'QueryPodsIn',
+  )
+  if (!bound) {
+    return singleOnly(namespaces, 'Paging pods', (ns) =>
+      queryPods(clusterId, ns, annotationKeys, expressions, query),
+    )
+  }
+  const page = await call(() => bound(clusterId, namespaces, annotationKeys, expressions, query))
+  return { ...page, rows: page.rows ?? [], chipCounts: page.chipCounts ?? {} }
+}
+
+/** listPodKeys over a namespace set. */
+export function listPodKeysIn(
+  clusterId: string,
+  namespaces: string[],
+  annotationKeys: string[],
+  expressions: CustomExpression[],
+  query: PodQuery,
+): Promise<PodKey[]> {
+  const bound = generatedIn<Bound<[string, string[], string[], CustomExpression[], PodQuery], PodKey[] | null>>(
+    workloadBindings,
+    'ListPodKeysIn',
+  )
+  if (!bound) {
+    return eachNamespace(
+      namespaces,
+      (ns) => listPodKeys(clusterId, ns, annotationKeys, expressions, query),
+      concat,
+    )
+  }
+  return callList(() => bound(clusterId, namespaces, annotationKeys, expressions, query))
+}
+
+/** exportPodsCSV over a namespace set, in the table's order. */
+export function exportPodsCSVIn(
+  clusterId: string,
+  namespaces: string[],
+  annotationKeys: string[],
+  expressions: CustomExpression[],
+  query: PodQuery,
+  columns: CSVColumn[],
+  suggestedName: string,
+): Promise<string> {
+  const bound = generatedIn<
+    Bound<[string, string[], string[], CustomExpression[], PodQuery, CSVColumn[], string], string>
+  >(workloadBindings, 'ExportPodsCSVIn')
+  if (!bound) {
+    return singleOnly(namespaces, 'Exporting pods', (ns) =>
+      exportPodsCSV(clusterId, ns, annotationKeys, expressions, query, columns, suggestedName),
+    )
+  }
+  return call(() => bound(clusterId, namespaces, annotationKeys, expressions, query, columns, suggestedName))
+}
+
+/** listWorkloads over a namespace set. */
+export function listWorkloadsIn(
+  clusterId: string,
+  kind: string,
+  namespaces: string[],
+  annotationKeys: string[] = [],
+  expressions: CustomExpression[] = [],
+): Promise<Workload[]> {
+  const bound = generatedIn<Bound<[string, string, string[], string[], CustomExpression[]], Workload[] | null>>(
+    workloadBindings,
+    'ListWorkloadsIn',
+  )
+  if (!bound) {
+    return eachNamespace(
+      namespaces,
+      (ns) => listWorkloads(clusterId, kind, ns, annotationKeys, expressions),
+      concat,
+    )
+  }
+  return callList(() => bound(clusterId, kind, namespaces, annotationKeys, expressions))
+}
+
+/** workloadConsumption over a namespace set, keyed "namespace/name". */
+export function workloadConsumptionIn(
+  clusterId: string,
+  kind: string,
+  namespaces: string[],
+): Promise<Record<string, Consumption>> {
+  const bound = generatedIn<
+    Bound<[string, string, string[]], Record<string, Consumption | undefined> | null>
+  >(workloadBindings, 'WorkloadConsumptionIn')
+  if (!bound) {
+    return eachNamespace(
+      namespaces,
+      (ns) => workloadConsumption(clusterId, kind, ns),
+      (parts) => Object.assign({}, ...parts),
+    )
+  }
+  return call(async () => {
+    const raw = (await bound(clusterId, kind, namespaces)) ?? {}
+    const consumption: Record<string, Consumption> = {}
+    for (const [key, value] of Object.entries(raw)) {
+      if (value !== undefined) consumption[key] = value
+    }
+    return consumption
+  })
+}
+
+/** listApplications over a namespace set. */
+export function listApplicationsIn(clusterId: string, namespaces: string[]): Promise<ApplicationInventory> {
+  const bound = generatedIn<Bound<[string, string[]], ApplicationInventory>>(workloadBindings, 'ListApplicationsIn')
+  if (!bound) {
+    return eachNamespace(
+      namespaces,
+      (ns) => listApplications(clusterId, ns),
+      (parts) => ({
+        applications: parts.flatMap((part) => part.applications ?? []),
+        unlabelled: parts.reduce((sum, part) => sum + part.unlabelled, 0),
+      }),
+    )
+  }
+  return call(() => bound(clusterId, namespaces))
+}
+
+/** listEvents over a namespace set. */
+export function listEventsIn(
+  clusterId: string,
+  namespaces: string[],
+  annotationKeys: string[] = [],
+  expressions: CustomExpression[] = [],
+): Promise<K8sEvent[]> {
+  const bound = generatedIn<Bound<[string, string[], string[], CustomExpression[]], K8sEvent[] | null>>(
+    browseBindings,
+    'ListEventsIn',
+  )
+  if (!bound) {
+    return eachNamespace(namespaces, (ns) => listEvents(clusterId, ns, annotationKeys, expressions), concat)
+  }
+  return callList(() => bound(clusterId, namespaces, annotationKeys, expressions))
+}
+
+/** listTable over a namespace set: the first answer's columns, every
+    namespace's rows in the set's order, truncated if any part was. */
+export function listTableIn(
+  clusterId: string,
+  kindId: string,
+  namespaces: string[],
+  annotationKeys: string[] = [],
+  expressions: CustomExpression[] = [],
+): Promise<ResourceTable> {
+  const bound = generatedIn<Bound<[string, string, string[], string[], CustomExpression[]], ResourceTable>>(
+    browseBindings,
+    'ListTableIn',
+  )
+  if (!bound) {
+    return eachNamespace(
+      namespaces,
+      (ns) => listTable(clusterId, kindId, ns, annotationKeys, expressions),
+      (parts) => ({
+        ...parts[0],
+        columns: parts.find((part) => part.columns?.length)?.columns ?? parts[0].columns,
+        rows: parts.flatMap((part) => part.rows ?? []),
+        truncated: parts.some((part) => part.truncated),
+      }),
+    )
+  }
+  return call(() => bound(clusterId, kindId, namespaces, annotationKeys, expressions))
+}
+
+/** vulnerabilitySummaries over a namespace set. */
+export async function vulnerabilitySummariesIn(
+  clusterId: string,
+  namespaces: string[],
+): Promise<VulnerabilityListing> {
+  const bound = generatedIn<Bound<[string, string[]], VulnerabilityListing | null>>(
+    browseBindings,
+    'VulnerabilitySummariesIn',
+  )
+  if (!bound) {
+    // Complete only when every namespace's read was; otherwise the first
+    // part that was not says why.
+    return eachNamespace(
+      namespaces,
+      (ns) => vulnerabilitySummaries(clusterId, ns),
+      (parts) => ({
+        summaries: parts.flatMap((part) => part.summaries ?? []),
+        status: parts.find((part) => part.status !== 'complete')?.status ?? 'complete',
+        read: parts.reduce((sum, part) => sum + part.read, 0),
+        remaining: parts.reduce((sum, part) => sum + part.remaining, 0),
+        cap: parts[0].cap,
+      }),
+    )
+  }
+  const listing = await call(() => bound(clusterId, namespaces))
+  return listing ?? { summaries: [], status: '', read: 0, remaining: 0, cap: 0 }
+}
+
+/** listHelmReleases over a namespace set. */
+export function listHelmReleasesIn(clusterId: string, namespaces: string[], refresh = false): Promise<HelmListing> {
+  const bound = generatedIn<Bound<[string, string[], boolean], HelmListing>>(helmBindings, 'ListReleasesIn')
+  if (!bound) {
+    return singleOnly(namespaces, 'Listing Helm releases', (ns) => listHelmReleases(clusterId, ns, refresh))
+  }
+  return call(() => bound(clusterId, namespaces, refresh))
+}
+
+/** listFleetPods over a namespace set. */
+export function listFleetPodsIn(clusterIds: string[], namespaces: string[]): Promise<ClusterPods[]> {
+  const bound = generatedIn<Bound<[string[], string[]], ClusterPods[] | null>>(fleetBindings, 'ListPodsIn')
+  if (!bound) return singleOnly(namespaces, 'Listing pods on every cluster', (ns) => listFleetPods(clusterIds, ns))
+  return callList(() => bound(clusterIds, namespaces))
+}
+
+/** queryFleetPods over a namespace set. */
+export async function queryFleetPodsIn(
+  clusterIds: string[],
+  namespaces: string[],
+  query: PodQuery,
+): Promise<FleetPodPage> {
+  const bound = generatedIn<Bound<[string[], string[], PodQuery], FleetPodPage>>(fleetBindings, 'QueryPodsIn')
+  if (!bound) {
+    return singleOnly(namespaces, 'Paging pods on every cluster', (ns) => queryFleetPods(clusterIds, ns, query))
+  }
+  const answer = await call(() => bound(clusterIds, namespaces, query))
+  return {
+    clusters: (answer.clusters ?? []).map((share) => ({ ...share, missing: share.missing ?? [] })),
+    page: {
+      ...answer.page,
+      rows: answer.page.rows ?? [],
+      chipCounts: answer.page.chipCounts ?? {},
+    },
+  }
+}
+
+/** exportFleetPodsCSV over a namespace set. */
+export function exportFleetPodsCSVIn(
+  clusterIds: string[],
+  namespaces: string[],
+  query: PodQuery,
+  columns: CSVColumn[],
+  suggestedName: string,
+): Promise<string> {
+  const bound = generatedIn<Bound<[string[], string[], PodQuery, CSVColumn[], string], string>>(
+    fleetBindings,
+    'ExportPodsCSVIn',
+  )
+  if (!bound) {
+    return singleOnly(namespaces, 'Exporting pods on every cluster', (ns) =>
+      exportFleetPodsCSV(clusterIds, ns, query, columns, suggestedName),
+    )
+  }
+  return call(() => bound(clusterIds, namespaces, query, columns, suggestedName))
+}
+
+/** listFleetWorkloads over a namespace set. */
+export function listFleetWorkloadsIn(clusterIds: string[], namespaces: string[]): Promise<ClusterWorkloads[]> {
+  const bound = generatedIn<Bound<[string[], string[]], ClusterWorkloads[] | null>>(fleetBindings, 'ListWorkloadsIn')
+  if (!bound) {
+    return singleOnly(namespaces, 'Listing workloads on every cluster', (ns) => listFleetWorkloads(clusterIds, ns))
+  }
+  return callList(() => bound(clusterIds, namespaces))
+}
+
+/** listFleetEvents over a namespace set. */
+export function listFleetEventsIn(clusterIds: string[], namespaces: string[]): Promise<ClusterEvents[]> {
+  const bound = generatedIn<Bound<[string[], string[]], ClusterEvents[] | null>>(fleetBindings, 'ListEventsIn')
+  if (!bound) {
+    return singleOnly(namespaces, 'Listing events on every cluster', (ns) => listFleetEvents(clusterIds, ns))
+  }
+  return callList(() => bound(clusterIds, namespaces))
+}
+
+/** listFleetTable over a namespace set. */
+export function listFleetTableIn(
+  clusterIds: string[],
+  group: string,
+  resource: string,
+  namespaces: string[],
+): Promise<ClusterTable[]> {
+  const bound = generatedIn<Bound<[string[], string, string, string[]], ClusterTable[] | null>>(
+    fleetBindings,
+    'ListTableIn',
+  )
+  if (!bound) {
+    return singleOnly(namespaces, 'Listing on every cluster', (ns) => listFleetTable(clusterIds, group, resource, ns))
+  }
+  return callList(() => bound(clusterIds, group, resource, namespaces))
+}

@@ -41,8 +41,7 @@
  */
 
 import {
-  ALL_NAMESPACES,
-  listTable,
+  listTableIn,
   saveTextFile,
   type ResourceTable,
   type TableRow,
@@ -230,7 +229,8 @@ class CommandPaletteStore {
         .filter((tab) => tab.id !== session?.cluster.id)
         .map((tab) => ({ id: tab.id })),
       namespaces: session ? session.namespaces.map((namespace) => namespace.name) : [],
-      showsAllNamespaces: session ? session.namespace === ALL_NAMESPACES : true,
+      showsAllNamespaces: session ? session.scope.all : true,
+      selectedNamespaces: session ? session.selectedNamespaces : [],
       selectedKindSingular: session?.selectedKind?.singular,
       canExportCSV: activeTable.present && (session?.visibleCount ?? 0) > 0,
     }
@@ -242,6 +242,10 @@ class CommandPaletteStore {
     goToKind: (kindId) => this.#session?.selectKind(kindId),
     focusCluster: (clusterId) => this.#focusCluster?.(clusterId),
     setNamespace: (namespace) => this.#session?.selectNamespace(namespace),
+    addNamespace: (namespace) => {
+      const session = this.#session
+      if (session && !session.inScope(namespace)) void session.toggleNamespace(namespace)
+    },
     openSettings: () => settingsDialog.show(),
     openAbout: () => settingsDialog.show('about'),
     openOrganise: () => organiseDialog.show(),
@@ -615,7 +619,7 @@ class CommandPaletteStore {
     const kindId = this.#effectiveKindId
     if (!session || !kindId || kindId === session.selectedKindId) return
 
-    const cacheKey = `${session.cluster.id}|${kindId}|${session.namespace}`
+    const cacheKey = `${session.cluster.id}|${kindId}|${session.scopeKey}`
     const cached = this.#kindSearchCache.get(cacheKey)
     if (cached) {
       void this.#adoptCachedResult(kindId, cached)
@@ -641,7 +645,7 @@ class CommandPaletteStore {
   }
 
   async #runKindSearch(session: ClusterSession, kindId: string, cacheKey: string): Promise<void> {
-    const request = listTable(session.cluster.id, kindId, session.namespace)
+    const request = listTableIn(session.cluster.id, kindId, session.selectedNamespaces)
     // Stored BEFORE the await: a second keystroke inside this same debounce
     // window that resolves to the SAME scope joins this read via the
     // `cached` branch above instead of starting a second one — this is what
@@ -675,7 +679,7 @@ class CommandPaletteStore {
     const kind =
       session.selectedKind?.singular ??
       (session.viewMode === 'applications' ? 'application' : session.viewMode)
-    const filename = buildExportFilename(session.cluster.id, kind, session.namespace)
+    const filename = buildExportFilename(session.cluster.id, kind, session.selectedNamespaces)
 
     try {
       if ('save' in data) await data.save(filename)

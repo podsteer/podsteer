@@ -112,7 +112,7 @@
    * Read here rather than per row: it qualifies every mark in the list, and the
    * only row it is about is the one that ISN'T marked.
    */
-  const scannerRead = $derived(vulnerabilityReadFor(session.cluster.id, session.namespace))
+  const scannerRead = $derived(vulnerabilityReadFor(session.cluster.id, session.selectedNamespaces))
 
   const columns = $derived<Column[]>([
     ...COLUMNS,
@@ -181,7 +181,7 @@
    * $stores/vulnerabilities.
    */
   $effect(() => {
-    ensureVulnerabilities(session.cluster.id, session.namespace)
+    ensureVulnerabilities(session.cluster.id, session.selectedNamespaces)
   })
 
   /**
@@ -450,8 +450,8 @@
                 "not scanned" are different facts and no mark at all already
                 means the second.
               -->
-              {#if vulnerabilitiesFor(session.cluster.id, session.namespace, pod)}
-                {@const found = vulnerabilitiesFor(session.cluster.id, session.namespace, pod)!}
+              {#if vulnerabilitiesFor(session.cluster.id, session.selectedNamespaces, pod)}
+                {@const found = vulnerabilitiesFor(session.cluster.id, session.selectedNamespaces, pod)!}
                 <span
                   class="inline-flex shrink-0 items-center gap-1 rounded px-1.5 text-body-small
                          {found.critical > 0

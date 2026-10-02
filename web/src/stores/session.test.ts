@@ -19,9 +19,12 @@ vi.mock('$lib/api/client', async () => {
     ...actual,
     getManifest: vi.fn().mockRejectedValue(new Error('no cluster in a test')),
     listTable: (...args: unknown[]) => listTable(...args),
+    listTableIn: (...args: unknown[]) => listTable(...args),
     refreshCredentials: (...args: unknown[]) => refreshCredentials(...args),
     queryPods: (...args: unknown[]) => queryPods(...args),
+    queryPodsIn: (...args: unknown[]) => queryPods(...args),
     listPodKeys: (...args: unknown[]) => listPodKeys(...args),
+    listPodKeysIn: (...args: unknown[]) => listPodKeys(...args),
     podUsageHistory: (...args: unknown[]) => podUsageHistory(...args),
   }
 })
@@ -276,7 +279,7 @@ describe('the pod table, paged in Go', () => {
 
     await open.selectAllMatchingPods()
 
-    expect(listPodKeys).toHaveBeenCalledWith('dev', open.namespace, [], [], open.podQuery)
+    expect(listPodKeys).toHaveBeenCalledWith('dev', open.selectedNamespaces, [], [], open.podQuery)
     expect(open.selection.count).toBe(3)
     // Off-page pods are planned from what the keys said; the one on the page
     // from its row, which is this tick's.
@@ -632,5 +635,80 @@ describe('retrying after an error', () => {
     await open.retry()
 
     expect(refresh).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('the namespace filter is a set', () => {
+  let count = 0
+  function fresh(defaultNamespace = ''): ClusterSession {
+    count += 1
+    return new ClusterSession({ id: `ns-set-${count}`, name: 'x', defaultNamespace } as unknown as Cluster)
+  }
+
+  beforeEach(() => {
+    listTable.mockReset()
+    listTable.mockResolvedValue({ kindId: 'x', title: '', namespaced: true, columns: [], rows: [] })
+  })
+
+  it('starts on the kubeconfig default for a cluster never opened, else on what was left', () => {
+    expect(fresh('billing').selectedNamespaces).toEqual(['billing'])
+    expect(fresh('').isAllNamespaces).toBe(true)
+
+    preferences.setClusterNamespaces(`ns-set-${count + 1}`, ['shop', 'keda'])
+    expect(fresh('billing').selectedNamespaces).toEqual(['keda', 'shop'])
+  })
+
+  it('applies a set sorted and unique, remembers it, and names it by the label rule', async () => {
+    const open = fresh()
+    open.selectedKindId = 'core/v1/configmaps'
+    await open.selectNamespaces(['shop', 'billing', 'shop', 'keda'])
+
+    expect(open.selectedNamespaces).toEqual(['billing', 'keda', 'shop'])
+    expect(preferences.getClusterNamespaces(open.cluster.id)).toEqual(['billing', 'keda', 'shop'])
+    expect(open.scopeKey).toBe('billing,keda,shop')
+    expect(open.singleNamespace).toBe('')
+    expect(open.namespaceLabel.label).toBe('billing +2')
+    expect(open.inScope('keda')).toBe(true)
+    expect(open.inScope('default')).toBe(false)
+    // One read over the set, not one per namespace from here.
+    expect(listTable).toHaveBeenLastCalledWith(open.cluster.id, 'core/v1/configmaps', ['billing', 'keda', 'shop'], [], [])
+  })
+
+  it('selectNamespace filters to exactly one, and ALL_NAMESPACES to every one', async () => {
+    const open = fresh()
+    await open.selectNamespaces(['a', 'b'])
+    await open.selectNamespace('c')
+    expect(open.selectedNamespaces).toEqual(['c'])
+    expect(open.singleNamespace).toBe('c')
+    await open.selectNamespace('')
+    expect(open.scope).toEqual({ namespaces: [], all: true })
+  })
+
+  it('toggles a namespace in and out, and taking the last out is All', async () => {
+    const open = fresh('shop')
+    await open.toggleNamespace('keda')
+    expect(open.selectedNamespaces).toEqual(['keda', 'shop'])
+    await open.toggleNamespace('keda')
+    await open.toggleNamespace('shop')
+    expect(open.isAllNamespaces).toBe(true)
+  })
+
+  it('ADDS the namespace of an object opened from outside the set, never swapping the set', async () => {
+    const open = fresh()
+    await open.selectNamespaces(['shop', 'keda'])
+    await open.openObject('core/v1/configmaps', 'settings', 'billing', true)
+
+    expect(open.selectedNamespaces).toEqual(['billing', 'keda', 'shop'])
+    expect(open.selectedKindId).toBe('core/v1/configmaps')
+  })
+
+  it('leaves All alone when opening an object, and ignores cluster-scoped ones', async () => {
+    const open = fresh()
+    await open.openObject('core/v1/configmaps', 'settings', 'billing', true)
+    expect(open.isAllNamespaces).toBe(true)
+
+    await open.selectNamespaces(['shop'])
+    await open.openObject('core/v1/nodes', 'node-1', '', false)
+    expect(open.selectedNamespaces).toEqual(['shop'])
   })
 })

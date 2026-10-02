@@ -7,7 +7,6 @@
  * argued with in a test.
  */
 
-import { ALL_NAMESPACES } from './api/client'
 import { DEFAULT_CLUSTER_SHELL_IMAGE } from '$stores/preferences.svelte'
 
 /** What a confirmed in-cluster shell dialog asks for. */
@@ -17,12 +16,14 @@ export interface ClusterShellRequest {
 }
 
 /**
- * The namespace the dialog opens on, given the tab's current filter.
+ * The namespace the dialog opens on, given the tab's current filter (a set;
+ * empty is All).
  *
- * DEFAULTS TO THE TAB'S NAMESPACE so the two terminals and the rest of the
- * interface agree about where somebody is working. When the tab is on "All
- * namespaces" there IS NO ANSWER — a pod lives in exactly one namespace — so
- * this returns the empty string and the dialog asks.
+ * DEFAULTS TO THE TAB'S NAMESPACE when exactly one is selected, so the two
+ * terminals and the rest of the interface agree about where somebody is
+ * working. When the tab is on "All namespaces", or on several, there IS NO
+ * ANSWER — a pod lives in exactly one namespace — so this returns the empty
+ * string and the dialog asks.
  *
  * It deliberately does NOT fall back to a system namespace. That is where the
  * node shell's own default points (kube-system, where admission is already
@@ -31,8 +32,8 @@ export interface ClusterShellRequest {
  * in kube-system without being told, in the one namespace they are least
  * likely to be permitted to create one in.
  */
-export function clusterShellNamespaceFor(tabNamespace: string): string {
-  return tabNamespace === ALL_NAMESPACES ? '' : tabNamespace.trim()
+export function clusterShellNamespaceFor(tabNamespaces: readonly string[]): string {
+  return tabNamespaces.length === 1 ? tabNamespaces[0].trim() : ''
 }
 
 /**
@@ -68,7 +69,7 @@ export function canOpenClusterShell(namespace: string): boolean {
  * explanation beside it.
  */
 export const CLUSTER_SHELL_NAMESPACE_PROMPT =
-  'This tab is showing every namespace, and a pod lives in exactly one — name the namespace to open the shell in.'
+  'This tab is showing more than one namespace, and a pod lives in exactly one — name the namespace to open the shell in.'
 
 /**
  * The sentence shown beside pods PodSteer created here that are NOT running.

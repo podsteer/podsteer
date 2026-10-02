@@ -36,7 +36,8 @@ function session(findings: unknown[] = []) {
     // the first page.
     selectedKindId: 'podsteer/security',
     securityTab: 'posture',
-    namespace: '',
+    selectedNamespaces: [],
+    inScope: () => true,
     query: { terms: [] },
     search: '',
     sort: null,

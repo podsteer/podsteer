@@ -9,6 +9,7 @@ function context(overrides: Partial<CommandContext> = {}): CommandContext {
     otherClusterTabs: [],
     namespaces: [],
     showsAllNamespaces: true,
+    selectedNamespaces: [],
     selectedKindSingular: undefined,
     canExportCSV: false,
     ...overrides,
@@ -20,6 +21,7 @@ function handlers(): CommandHandlers {
     goToKind: vi.fn(),
     focusCluster: vi.fn(),
     setNamespace: vi.fn(),
+    addNamespace: vi.fn(),
     openSettings: vi.fn(),
     openAbout: vi.fn(),
     openOrganise: vi.fn(),
@@ -124,19 +126,35 @@ describe('buildCommands', () => {
     expect(h.focusCluster).toHaveBeenCalledWith('staging')
   })
 
-  it('builds a "set namespace" command per namespace, plus "All namespaces" unless already showing it', () => {
+  it('builds "Filter to" per namespace, "Add namespace" for those not in the set, and "All namespaces" unless already showing it', () => {
     const withFilter = buildCommands(
-      context({ namespaces: ['default', 'kube-system'], showsAllNamespaces: false }),
+      context({ namespaces: ['default', 'kube-system'], showsAllNamespaces: false, selectedNamespaces: ['default'] }),
       handlers(),
     )
     const namespaceCommands = withFilter.filter((c) => c.group === 'Namespaces')
-    expect(namespaceCommands.map((c) => c.title).sort()).toEqual(['All namespaces', 'default', 'kube-system'])
+    expect(namespaceCommands.map((c) => c.title).sort()).toEqual([
+      'Add namespace kube-system',
+      'All namespaces',
+      'Filter to default',
+      'Filter to kube-system',
+    ])
 
     const showingAll = buildCommands(
       context({ namespaces: ['default'], showsAllNamespaces: true }),
       handlers(),
     )
-    expect(showingAll.filter((c) => c.group === 'Namespaces').map((c) => c.title)).toEqual(['default'])
+    expect(showingAll.filter((c) => c.group === 'Namespaces').map((c) => c.title)).toEqual(['Filter to default'])
+  })
+
+  it('adds rather than replaces through "Add namespace"', async () => {
+    const h = handlers()
+    const commands = buildCommands(
+      context({ namespaces: ['keda'], showsAllNamespaces: false, selectedNamespaces: ['shop'] }),
+      h,
+    )
+    await commands.find((c) => c.title === 'Add namespace keda')?.run()
+    expect(h.addNamespace).toHaveBeenCalledWith('keda')
+    expect(h.setNamespace).not.toHaveBeenCalled()
   })
 
   it('runs setNamespace with the empty string for "All namespaces"', async () => {

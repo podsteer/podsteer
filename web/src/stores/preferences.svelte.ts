@@ -29,6 +29,7 @@ import {
   type SavedView,
   type ViewState,
 } from '$lib/savedViews'
+import { normaliseNamespaces } from '$lib/namespaceScope'
 import { kindSetId, cleanKindSetName, MAX_KIND_SETS, type KindSet } from '$lib/kindSets'
 import { readBinding, type Binding } from '$lib/shortcutBinding'
 import { customColumnId, normaliseSpecs, type CustomColumnSpec } from '$lib/customColumns'
@@ -278,6 +279,37 @@ export function detailLabelWidthCSS(share: number): string {
   return `min(${DETAIL_LABEL_MAX_SHARE * 100}%, clamp(${DETAIL_LABEL_MIN_REM}rem, ${
     share * 100
   }%, ${DETAIL_LABEL_MAX_REM}rem))`
+}
+
+/**
+ * The remembered namespace set per cluster, from a stored blob of any age.
+ *
+ * `namespacesByCluster` when present (each list kept to strings, sorted and
+ * deduplicated). Otherwise the field it replaced, `namespaceByCluster` — one
+ * name per cluster, '' meaning All — read as [] for All and [name] for one.
+ * Either missing is no memory at all. The old field is read here and only
+ * here: nothing writes it any more, so the next save drops it.
+ */
+export function migrateNamespacesByCluster(stored: unknown): Record<string, string[]> {
+  if (!stored || typeof stored !== 'object') return {}
+  const blob = stored as { namespacesByCluster?: unknown; namespaceByCluster?: unknown }
+  const sets: Record<string, string[]> = {}
+
+  if (blob.namespacesByCluster && typeof blob.namespacesByCluster === 'object') {
+    for (const [clusterId, names] of Object.entries(blob.namespacesByCluster)) {
+      if (!Array.isArray(names)) continue
+      sets[clusterId] = normaliseNamespaces(names.filter((name): name is string => typeof name === 'string'))
+    }
+    return sets
+  }
+
+  if (blob.namespaceByCluster && typeof blob.namespaceByCluster === 'object') {
+    for (const [clusterId, name] of Object.entries(blob.namespaceByCluster)) {
+      if (typeof name !== 'string') continue
+      sets[clusterId] = normaliseNamespaces([name])
+    }
+  }
+  return sets
 }
 
 /** The detail panel's width bounds, in rem, applied whatever the share says. */
@@ -534,14 +566,21 @@ interface PersistedShape {
    * is looking for spec.
    */
   showManagedFields: boolean
-  /** clusterId -> the namespace filter it was last left on. */
-  namespaceByCluster: Record<string, string>
+  /**
+   * clusterId -> the namespace filter it was last left on, as a sorted set;
+   * an empty list is All.
+   *
+   * Replaced `namespaceByCluster` (one name per cluster, '' for All) when the
+   * filter became a set. A blob that still carries the old field is migrated
+   * on load and the old field is never written again.
+   */
+  namespacesByCluster: Record<string, string[]>
   /**
    * clusterId -> pinned kind ids, in the order the operator pinned them.
    *
    * KIND IDS ONLY — a catalog identifier like "apps/v1/deployments", never an
    * object name — so this is exactly the same shape of fact as
-   * namespaceByCluster above and belongs in the same place, the webview's own
+   * namespacesByCluster above and belongs in the same place, the webview's own
    * storage. Nothing here says which Deployment exists, only that this
    * operator watches Deployments on this cluster. Objects opened in the
    * detail drawer are a different kind of fact — see ClusterSession's
@@ -563,7 +602,7 @@ interface PersistedShape {
    * Context names the operator pinned on the home page, in the order they
    * pinned them.
    *
-   * THE SAME SHAPE OF FACT as pinnedKinds and namespaceByCluster: a context
+   * THE SAME SHAPE OF FACT as pinnedKinds and namespacesByCluster: a context
    * name is the handle the organiser, the per-cluster switches and every API
    * here already use, and it says which clusters this operator works with —
    * not what is in any of them.
@@ -744,7 +783,7 @@ const DEFAULTS: PersistedShape = {
   timelineObjectLimit: 200,
   wrapLines: true,
   showManagedFields: false,
-  namespaceByCluster: {},
+  namespacesByCluster: {},
   pinnedKinds: {},
   multiKindSelection: {},
   pinnedClusters: [],
@@ -809,7 +848,7 @@ const DEFAULTS: PersistedShape = {
  * - `snoozes`, whose inner keys are a finding id, a NAMESPACE and an OBJECT
  *   NAME. That is exactly what SECURITY.md says PodSteer does not write, and
  *   an export file is where it would leave the machine.
- * - `namespaceByCluster`, which is a namespace name per cluster — a namespace
+ * - `namespacesByCluster`, which is namespace names per cluster — a namespace
  *   is an object, and "which namespace this operator was last reading" is a
  *   fact about their cluster's contents, not about how they like PodSteer to
  *   look.
@@ -950,8 +989,8 @@ class Preferences {
   /** Whether a manifest shows managed fields. See the shape above. */
   showManagedFields = $state<boolean>(DEFAULTS.showManagedFields)
 
-  /** clusterId -> last-selected namespace filter. */
-  namespaceByCluster = $state<Record<string, string>>({})
+  /** clusterId -> last-selected namespace set; [] is All. */
+  namespacesByCluster = $state<Record<string, string[]>>({})
 
   /** clusterId -> pinned kind ids, in the order pinned. See the shape above. */
   pinnedKinds = $state<Record<string, string[]>>({})
@@ -1264,10 +1303,10 @@ class Preferences {
    * fallback for kubectl, not a statement about which namespace matters to
    * whoever is looking at PodSteer.
    */
-  getClusterNamespace = (clusterId: string): string | undefined => this.namespaceByCluster[clusterId]
+  getClusterNamespaces = (clusterId: string): string[] | undefined => this.namespacesByCluster[clusterId]
 
-  setClusterNamespace = (clusterId: string, namespace: string): void => {
-    this.namespaceByCluster = { ...this.namespaceByCluster, [clusterId]: namespace }
+  setClusterNamespaces = (clusterId: string, namespaces: string[]): void => {
+    this.namespacesByCluster = { ...this.namespacesByCluster, [clusterId]: normaliseNamespaces(namespaces) }
     this.#save()
   }
 
@@ -1408,7 +1447,7 @@ class Preferences {
     const captured = {
       name: cleaned,
       kindId: current.kindId,
-      namespace: current.namespace,
+      namespaces: normaliseNamespaces(current.namespaces),
       search: current.search,
       statusFilters: [...current.statusFilters],
     }
@@ -2080,9 +2119,8 @@ class Preferences {
           (entry): entry is string => typeof entry === 'string',
         )
       }
-      if (stored.namespaceByCluster && typeof stored.namespaceByCluster === 'object') {
-        this.namespaceByCluster = stored.namespaceByCluster
-      }
+      // The set replaced one name per cluster; see migrateNamespacesByCluster.
+      this.namespacesByCluster = migrateNamespacesByCluster(stored)
       // BACKWARD-COMPATIBLE: a preferences blob written before this setting
       // existed has no `pinnedKinds` key at all, and the field stays at its
       // default of {} — nobody's navigator gains a Pinned section they never
@@ -2306,7 +2344,7 @@ class Preferences {
         timelineObjectLimit: this.timelineObjectLimit,
         wrapLines: this.wrapLines,
         showManagedFields: this.showManagedFields,
-        namespaceByCluster: this.namespaceByCluster,
+        namespacesByCluster: this.namespacesByCluster,
         pinnedKinds: this.pinnedKinds,
         multiKindSelection: this.multiKindSelection,
         clusterDistributions: this.clusterDistributions,

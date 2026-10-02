@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   apply,
+  getList,
+  scopeFlags,
   applyServerSide,
   attach,
   applyDryRun,
@@ -654,6 +656,30 @@ describe('the command the Create dialog shows', () => {
   it('keeps the context and namespace the rest of the hints use', () => {
     expect(applyServerSide('dev', 'shop')).toBe(
       'kubectl --context dev -n shop apply --server-side --field-manager=podsteer -f -',
+    )
+  })
+})
+
+describe('scopeFlags', () => {
+  it('is -A for every namespace, whichever way All is said', () => {
+    expect(scopeFlags({ namespaces: [], all: true })).toEqual(['-A'])
+    expect(scopeFlags({ namespaces: [], all: false })).toEqual(['-A'])
+  })
+
+  it('is one -n for one namespace', () => {
+    expect(scopeFlags({ namespaces: ['shop'], all: false })).toEqual(['-n shop'])
+  })
+
+  it('is one command per namespace of a set, because kubectl takes one -n', () => {
+    expect(scopeFlags({ namespaces: ['billing', 'keda'], all: false })).toEqual(['-n billing', '-n keda'])
+  })
+})
+
+describe('getList', () => {
+  it('reads the list on screen as kubectl would, one line per namespace', () => {
+    expect(getList('dev', 'pods', { namespaces: [], all: true })).toBe('kubectl --context dev get pods -A')
+    expect(getList('dev', 'pods', { namespaces: ['billing', 'keda'], all: false })).toBe(
+      'kubectl --context dev get pods -n billing\nkubectl --context dev get pods -n keda',
     )
   })
 })

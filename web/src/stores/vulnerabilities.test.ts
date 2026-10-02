@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const vulnerabilitySummaries = vi.fn()
 vi.mock('$lib/api/client', () => ({
-  vulnerabilitySummaries: (...args: unknown[]) => vulnerabilitySummaries(...args),
+  vulnerabilitySummariesIn: (...args: unknown[]) => vulnerabilitySummaries(...args),
 }))
 
 import {
@@ -48,10 +48,10 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
     // images, so keying on the pod's name would find nothing for any of them.
     vulnerabilitySummaries.mockResolvedValue(listing([summary('ReplicaSet/web-abc123', 2, 5)]))
 
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
     await settle()
 
-    const found = vulnerabilitiesFor('dev', 'shop', {
+    const found = vulnerabilitiesFor('dev', ['shop'], {
       name: 'web-abc123-xyz',
       controlledBy: 'ReplicaSet/web-abc123',
     })
@@ -64,20 +64,20 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
     // one case where the pod IS the subject.
     vulnerabilitySummaries.mockResolvedValue(listing([summary('Pod/debug', 0, 1)]))
 
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
     await settle()
 
-    expect(vulnerabilitiesFor('dev', 'shop', { name: 'debug', controlledBy: '' })?.high).toBe(1)
+    expect(vulnerabilitiesFor('dev', ['shop'], { name: 'debug', controlledBy: '' })?.high).toBe(1)
   })
 
   it('answers nothing for a workload the scanner has not reported on', async () => {
     vulnerabilitySummaries.mockResolvedValue(listing([summary('ReplicaSet/web-abc123', 1, 0)]))
 
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
     await settle()
 
     expect(
-      vulnerabilitiesFor('dev', 'shop', { name: 'api-1', controlledBy: 'ReplicaSet/api-def456' }),
+      vulnerabilitiesFor('dev', ['shop'], { name: 'api-1', controlledBy: 'ReplicaSet/api-def456' }),
     ).toBeUndefined()
   })
 
@@ -86,10 +86,10 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
     // rows and ten ticks are still one call.
     vulnerabilitySummaries.mockResolvedValue(listing([]))
 
-    ensureVulnerabilities('dev', 'shop')
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
+    ensureVulnerabilities('dev', ['shop'])
     await settle()
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
 
     expect(vulnerabilitySummaries).toHaveBeenCalledTimes(1)
   })
@@ -97,9 +97,9 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
   it('keeps clusters and namespaces apart', async () => {
     vulnerabilitySummaries.mockResolvedValue(listing([]))
 
-    ensureVulnerabilities('dev', 'shop')
-    ensureVulnerabilities('dev', 'admin')
-    ensureVulnerabilities('staging', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
+    ensureVulnerabilities('dev', ['admin'])
+    ensureVulnerabilities('staging', ['shop'])
     await settle()
 
     expect(vulnerabilitySummaries).toHaveBeenCalledTimes(3)
@@ -111,13 +111,13 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
     // list, and retrying either would be one request per render.
     vulnerabilitySummaries.mockRejectedValue(new Error('forbidden'))
 
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
     await settle()
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
     await settle()
 
     expect(vulnerabilitySummaries).toHaveBeenCalledTimes(1)
-    expect(vulnerabilitiesFor('dev', 'shop', { name: 'web', controlledBy: '' })).toBeUndefined()
+    expect(vulnerabilitiesFor('dev', ['shop'], { name: 'web', controlledBy: '' })).toBeUndefined()
   })
 
   it('says nothing has been reported before the read answers', () => {
@@ -125,10 +125,10 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
     // render correctly with no answer at all.
     vulnerabilitySummaries.mockResolvedValue(listing([summary('ReplicaSet/web', 9, 9)]))
 
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
 
     expect(
-      vulnerabilitiesFor('dev', 'shop', { name: 'web-1', controlledBy: 'ReplicaSet/web' }),
+      vulnerabilitiesFor('dev', ['shop'], { name: 'web-1', controlledBy: 'ReplicaSet/web' }),
     ).toBeUndefined()
   })
 
@@ -136,15 +136,15 @@ describe('the severity counts a scanner already in the cluster recorded', () => 
     // Closing one tab must not make every other tab read again.
     vulnerabilitySummaries.mockResolvedValue(listing([summary('ReplicaSet/web', 1, 1)]))
 
-    ensureVulnerabilities('dev', 'shop')
-    ensureVulnerabilities('staging', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
+    ensureVulnerabilities('staging', ['shop'])
     await settle()
 
     forgetVulnerabilities('dev')
 
     const owner = { name: 'web-1', controlledBy: 'ReplicaSet/web' }
-    expect(vulnerabilitiesFor('dev', 'shop', owner)).toBeUndefined()
-    expect(vulnerabilitiesFor('staging', 'shop', owner)?.critical).toBe(1)
+    expect(vulnerabilitiesFor('dev', ['shop'], owner)).toBeUndefined()
+    expect(vulnerabilitiesFor('staging', ['shop'], owner)?.critical).toBe(1)
   })
 })
 
@@ -170,10 +170,10 @@ describe('whether an unmarked row has been shown to be clean', () => {
       forgetVulnerabilities('dev')
       vulnerabilitySummaries.mockResolvedValue(listing([], expected.status))
 
-      ensureVulnerabilities('dev', 'shop')
+      ensureVulnerabilities('dev', ['shop'])
       await settle()
 
-      const read = vulnerabilityReadFor('dev', 'shop')
+      const read = vulnerabilityReadFor('dev', ['shop'])
       expect(read?.complete, expected.status).toBe(expected.complete)
       expect(read?.truncated, expected.status).toBe(expected.truncated)
     }
@@ -185,10 +185,10 @@ describe('whether an unmarked row has been shown to be clean', () => {
     // as every workload being clean.
     vulnerabilitySummaries.mockRejectedValue(new Error('[unreachable] gone'))
 
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
     await settle()
 
-    expect(vulnerabilityReadFor('dev', 'shop')?.complete).toBe(false)
+    expect(vulnerabilityReadFor('dev', ['shop'])?.complete).toBe(false)
   })
 
   it('carries the ceiling and what was left, for the sentence the list shows', async () => {
@@ -200,10 +200,10 @@ describe('whether an unmarked row has been shown to be clean', () => {
       cap: 5000,
     })
 
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
     await settle()
 
-    const read = vulnerabilityReadFor('dev', 'shop')
+    const read = vulnerabilityReadFor('dev', ['shop'])
     expect(read).toMatchObject({ truncated: true, read: 5000, remaining: 1200, cap: 5000 })
   })
 })
@@ -232,27 +232,50 @@ describe('how many workloads run the same image', () => {
       ]),
     )
 
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
     return settle().then(() => {
-      expect(workloadsRunningImage('dev', 'shop', 'library/nginx:1.27')).toBe(2)
-      expect(workloadsRunningImage('dev', 'shop', 'acme/sidecar:2.0')).toBe(1)
-      expect(workloadsRunningImage('dev', 'shop', 'acme/worker:9')).toBe(1)
+      expect(workloadsRunningImage('dev', ['shop'], 'library/nginx:1.27')).toBe(2)
+      expect(workloadsRunningImage('dev', ['shop'], 'acme/sidecar:2.0')).toBe(1)
+      expect(workloadsRunningImage('dev', ['shop'], 'acme/worker:9')).toBe(1)
     })
   })
 
   it('answers zero for an unread namespace rather than claiming one', async () => {
     // Nothing has been read, so nothing is known — the caller must not render
     // this as "only this workload".
-    expect(workloadsRunningImage('dev', 'never-read', 'library/nginx:1.27')).toBe(0)
+    expect(workloadsRunningImage('dev', ['never-read'], 'library/nginx:1.27')).toBe(0)
   })
 
   it('answers zero for an image nothing named', async () => {
     vulnerabilitySummaries.mockResolvedValue(listing([withImages('ReplicaSet/web', [])]))
 
-    ensureVulnerabilities('dev', 'shop')
+    ensureVulnerabilities('dev', ['shop'])
     await settle()
 
-    expect(workloadsRunningImage('dev', 'shop', '')).toBe(0)
-    expect(workloadsRunningImage('dev', 'shop', 'library/nginx:1.27')).toBe(0)
+    expect(workloadsRunningImage('dev', ['shop'], '')).toBe(0)
+    expect(workloadsRunningImage('dev', ['shop'], 'library/nginx:1.27')).toBe(0)
+  })
+})
+
+describe('a scope of several namespaces', () => {
+  beforeEach(() => {
+    forgetVulnerabilities('multi')
+    vulnerabilitySummaries.mockReset()
+  })
+
+  it('reads the set once, and tells apart two namespaces holding the same workload name', async () => {
+    // Same Kind/name in two namespaces; the backend says which each is from.
+    const both = [
+      { ...summary('ReplicaSet/web', 3, 0), namespace: 'shop' },
+      { ...summary('ReplicaSet/web', 0, 1), namespace: 'billing' },
+    ]
+    vulnerabilitySummaries.mockResolvedValue(listing(both))
+    ensureVulnerabilities('multi', ['billing', 'shop'])
+    await vi.waitFor(() => expect(vulnerabilityReadFor('multi', ['billing', 'shop'])).toBeDefined())
+
+    expect(vulnerabilitySummaries).toHaveBeenCalledWith('multi', ['billing', 'shop'])
+    const owner = { name: 'web-1', controlledBy: 'ReplicaSet/web' }
+    expect(vulnerabilitiesFor('multi', ['billing', 'shop'], { ...owner, namespace: 'shop' })?.critical).toBe(3)
+    expect(vulnerabilitiesFor('multi', ['billing', 'shop'], { ...owner, namespace: 'billing' })?.high).toBe(1)
   })
 })

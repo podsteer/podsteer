@@ -13,20 +13,23 @@ import {
   getManifest,
   getOverview,
   getOverviewForTarget,
-  listEvents,
   listKinds,
   listNamespaces,
-  listApplications,
   listNamespaceSummaries,
-  workloadConsumption,
   listNodes,
-  listPodKeys,
   podUsageHistory,
-  exportPodsCSV,
-  exportFleetPodsCSV,
   queryPods,
   listTable,
   listWorkloads,
+  listEventsIn,
+  listApplicationsIn,
+  workloadConsumptionIn,
+  listPodKeysIn,
+  exportPodsCSVIn,
+  exportFleetPodsCSVIn,
+  queryPodsIn,
+  listTableIn,
+  listWorkloadsIn,
   refreshCredentials,
   scaleWorkload,
   updateResource,
@@ -57,6 +60,15 @@ import { findAutoscalers, foldKedaAutoscalers, type AutoscalerCheck } from '$lib
 import { RowSelection } from '$lib/selection.svelte'
 import { nodeItem, podItem, rowKey, tableRowItem, workloadItem, type BulkItem } from '$lib/bulk'
 import type { SavedView, ViewState } from '$lib/savedViews'
+import {
+  namespaceLabelOf,
+  normaliseNamespaces,
+  sameNamespaces,
+  scopeKeyOf,
+  scopeOf,
+  type NamespaceLabel,
+  type NamespaceScope,
+} from '$lib/namespaceScope'
 import {
   EVENT_CHIPS,
   WORKLOAD_CHIPS,
@@ -352,11 +364,11 @@ export const HELM_KIND_ID = 'podsteer/helm'
  */
 export const TOPOLOGY_KIND_ID = 'podsteer/topology'
 
-/** What the topology draws: some namespaces, or all of them. */
-export interface TopologyScope {
-  namespaces: string[]
-  all: boolean
-}
+export type { NamespaceScope } from '$lib/namespaceScope'
+
+/** What the topology draws: the namespace filter's set. Kept as a name for
+    TopologyView until its own picker goes (it follows the global one). */
+export type TopologyScope = NamespaceScope
 
 /**
  * The multi-kind view, the SEVENTH pinned pseudo-entry.
@@ -629,23 +641,64 @@ export class ClusterSession {
   selectedKindId = $state<string>(DEFAULT_KIND_ID)
 
   /**
-   * What the topology draws, once somebody has chosen; null until then, which
-   * means "whatever the namespace filter says" — see `topologyScopeNow`.
-   *
-   * Per tab and in memory, like the selection: a scope names namespaces of
-   * one cluster, and remembering it on disk would be the first thing in the
-   * settings file that describes a cluster's contents.
-   */
-  topologyScope = $state.raw<TopologyScope | null>(null)
-
-  /**
    * Applications left off the topology when it is grouped by application —
    * group ids (`group/app:<namespace>/<name>`), so an app is one namespace's.
    * Per tab and in memory, like the scope: it names objects of one cluster.
    */
   topologyHiddenApps = $state.raw<ReadonlySet<string>>(new Set())
-  /** The namespace filter. ALL_NAMESPACES means every namespace. */
-  namespace = $state<string>(ALL_NAMESPACES)
+
+  /**
+   * The namespace filter: a SET, sorted and deduplicated, and EMPTY FOR ALL.
+   * Every list this tab shows is read over it — see $lib/namespaceScope and
+   * CLAUDE.md, "Lists take a namespace set". Changed only through
+   * selectNamespaces (and its wrappers), which persist it per cluster.
+   */
+  selectedNamespaces = $state.raw<string[]>([])
+
+  /** The filter as a scope: `{ namespaces, all }`. */
+  readonly scope = $derived<NamespaceScope>(scopeOf(this.selectedNamespaces))
+  /** A string per scope, '' for All — what in-flight guards and per-scope
+      caches compare. */
+  readonly scopeKey = $derived(scopeKeyOf(this.scope))
+  /** Whether the filter is on every namespace. */
+  readonly isAllNamespaces = $derived(this.scope.all)
+  /**
+   * The ONE namespace selected, or '' when the filter is All or several.
+   * What single-namespace defaults read — the create dialog, the cluster
+   * shell — which ask rather than guess when it is ''.
+   */
+  readonly singleNamespace = $derived(this.scope.namespaces.length === 1 ? this.scope.namespaces[0] : '')
+  /** How the filter is named on its trigger: "All namespaces", "shop",
+      "keda +2", "5 namespaces" — and a title listing every member. */
+  readonly namespaceLabel = $derived<NamespaceLabel>(namespaceLabelOf(this.scope))
+
+  /** Whether the filter includes this namespace. */
+  inScope = (namespace: string): boolean => this.scope.all || this.scope.namespaces.includes(namespace)
+
+  /**
+   * TOPOLOGY COMPAT, until TopologyView's own picker is removed: the page
+   * reads and assigns a scope here, and the scope is now the namespace
+   * filter's. Assigning one selects it. Delete with the picker.
+   */
+  get topologyScope(): TopologyScope | null {
+    return this.scope
+  }
+  set topologyScope(next: TopologyScope | null) {
+    if (!next) return
+    // Each name is split on commas because the `namespace` compat getter
+    // below hands TopologyView the set joined, and the page assigns it back
+    // as one name. A namespace name never holds a comma.
+    void this.selectNamespaces(next.all ? [] : next.namespaces.flatMap((name) => name.split(',')))
+  }
+
+  /**
+   * TOPOLOGY COMPAT, read only by TopologyView's seeding effect: '' for All,
+   * the set comma-joined otherwise (scopeKey). Nothing else may read it —
+   * use `scope`, `singleNamespace` or `inScope`. Delete with the picker.
+   */
+  get namespace(): string {
+    return this.scopeKey
+  }
   /** The client-side search term. */
   /** The term the lists are filtered by. Trails `typedSearch` by a beat. */
   search = $state<string>('')
@@ -961,7 +1014,8 @@ export class ClusterSession {
     // statement about which namespace matters to whoever is looking at
     // PodSteer, and reconnecting to a cluster that was left on "billing"
     // should not silently snap back to "default".
-    this.namespace = preferences.getClusterNamespace(cluster.id) ?? (cluster.defaultNamespace || ALL_NAMESPACES)
+    this.selectedNamespaces =
+      preferences.getClusterNamespaces(cluster.id) ?? normaliseNamespaces([cluster.defaultNamespace ?? ''])
   }
 
   /** The kind currently selected, or undefined before kinds have loaded. */
@@ -1001,10 +1055,12 @@ export class ClusterSession {
   })
 
   /**
-   * The namespace the view on screen is scoped to: the window-wide one on
-   * All clusters (see fleet.namespace), this tab's own everywhere else.
+   * The namespaces the view on screen is scoped to: the window-wide set on
+   * All clusters (see fleet.namespaces), this tab's own everywhere else.
    */
-  readonly scopeNamespace = $derived(this.viewMode === 'fleet' ? fleet.namespace : this.namespace)
+  readonly scopeNamespaces = $derived(this.viewMode === 'fleet' ? fleet.namespaces : this.selectedNamespaces)
+  /** scopeNamespaces as a scope — what the navigator's picker shows. */
+  readonly scopeOnScreen = $derived<NamespaceScope>(scopeOf(this.scopeNamespaces))
 
   /** Whether the selected kind carries namespaces. */
   readonly isNamespaced = $derived(
@@ -1857,24 +1913,21 @@ export class ClusterSession {
     await this.refresh()
   }
 
-  /**
-   * The topology's scope as it stands: the one chosen on the page, or else
-   * the namespace filter's — one namespace, or all of them.
-   */
-  readonly topologyScopeNow = $derived.by<TopologyScope>(
-    () =>
-      this.topologyScope ??
-      (this.namespace === ALL_NAMESPACES
-        ? { namespaces: [], all: true }
-        : { namespaces: [this.namespace], all: false }),
-  )
+  /** The topology's scope: the namespace filter's, as every list's is. */
+  readonly topologyScopeNow = $derived<TopologyScope>(this.scope)
 
   /**
    * Opens the topology on a scope — "Open topology" on a namespace's row and
-   * drawer — or on the namespace filter's when none is given.
+   * drawer selects that scope as the filter — or on the filter as it stands.
    */
   openTopology = async (scope?: TopologyScope): Promise<void> => {
-    if (scope) this.topologyScope = scope
+    if (scope && this.#setNamespaces(scope.all ? [] : scope.namespaces)) {
+      this.clearSelection()
+      if (this.selectedKindId === TOPOLOGY_KIND_ID) {
+        await this.refresh()
+        return
+      }
+    }
     await this.selectKind(TOPOLOGY_KIND_ID)
   }
 
@@ -1963,18 +2016,14 @@ export class ClusterSession {
     // On the topology a followed reference opens over the map, which stays.
     if (this.viewMode === 'topology') return this.openDetailOver(kindId, name, namespace)
 
-    const needsNamespace =
-      namespaced &&
-      namespace !== '' &&
-      this.namespace !== ALL_NAMESPACES &&
-      this.namespace !== namespace
+    // A namespace the filter leaves out is ADDED to it, never swapped in:
+    // somebody reading three namespaces who follows a reference into a
+    // fourth still wants the three.
+    const needsNamespace = namespaced && namespace !== '' && !this.inScope(namespace)
 
     if (kindId !== this.selectedKindId || needsNamespace) {
       this.selectedKindId = kindId
-      if (needsNamespace) {
-        this.namespace = namespace
-        preferences.setClusterNamespace(this.cluster.id, namespace)
-      }
+      if (needsNamespace) this.#setNamespaces([...this.selectedNamespaces, namespace])
       this.page = 1
       this.closeDetail()
       this.clearSelection()
@@ -2017,17 +2066,9 @@ export class ClusterSession {
    * the wrong list, and on a large cluster an expensive one.
    */
   browseKind = async (kindId: string, namespace: string): Promise<void> => {
-    const changed = kindId !== this.selectedKindId || namespace !== this.namespace
-    // The topology keeps a scope of its own once one is chosen; browsing to it
-    // for a namespace means THAT namespace, not whatever was drawn last.
-    if (kindId === TOPOLOGY_KIND_ID) {
-      this.topologyScope =
-        namespace === ALL_NAMESPACES ? { namespaces: [], all: true } : { namespaces: [namespace], all: false }
-    }
-
+    const kindChanged = kindId !== this.selectedKindId
     this.selectedKindId = kindId
-    this.namespace = namespace
-    preferences.setClusterNamespace(this.cluster.id, namespace)
+    const changed = this.#setNamespaces(namespace === ALL_NAMESPACES ? [] : [namespace]) || kindChanged
     this.page = 1
     // Closed either way: the drawer is open on the namespace that was just
     // navigated away from, and leaving it there over a list of something else
@@ -2038,23 +2079,55 @@ export class ClusterSession {
     if (changed) await this.refresh()
   }
 
-  /** Changes the namespace filter, remembers it for this cluster, and reloads. */
-  selectNamespace = async (namespace: string): Promise<void> => {
+  /**
+   * Sets this tab's namespace set and remembers it for this cluster, without
+   * reloading. Whether it changed — callers that batch a kind change with it
+   * reload once.
+   */
+  #setNamespaces(names: readonly string[]): boolean {
+    const next = normaliseNamespaces(names)
+    if (sameNamespaces(next, this.selectedNamespaces)) return false
+    this.selectedNamespaces = next
+    preferences.setClusterNamespaces(this.cluster.id, next)
+    return true
+  }
+
+  /**
+   * Changes the namespace filter to a set ([] is All), remembers it for this
+   * cluster, and reloads — once, however many namespaces changed, which is
+   * why the picker applies a draft rather than every tick.
+   */
+  selectNamespaces = async (names: readonly string[]): Promise<void> => {
     if (this.viewMode === 'fleet') {
-      // All clusters has one namespace for the window, and choosing it must
-      // not rewrite this cluster's remembered filter.
-      if (namespace === fleet.namespace) return
-      fleet.chooseNamespace(namespace)
+      // All clusters has one set for the window, and choosing it must not
+      // rewrite this cluster's remembered filter.
+      const next = normaliseNamespaces(names)
+      if (sameNamespaces(next, fleet.namespaces)) return
+      fleet.chooseNamespaces(next)
       this.page = 1
       await this.refresh()
       return
     }
-    if (namespace === this.namespace) return
-    this.namespace = namespace
-    preferences.setClusterNamespace(this.cluster.id, namespace)
+    if (!this.#setNamespaces(names)) return
     this.page = 1
     this.clearSelection()
     await this.refresh()
+  }
+
+  /** Filters to exactly one namespace — or All, for ALL_NAMESPACES. What a
+      namespace's "Filter to" gestures call. */
+  selectNamespace = (namespace: string): Promise<void> =>
+    this.selectNamespaces(namespace === ALL_NAMESPACES ? [] : [namespace])
+
+  /**
+   * Adds a namespace to the filter, or takes it out. Taking out the last one
+   * leaves the empty set, which is All; adding one to All starts a set of one.
+   */
+  toggleNamespace = (namespace: string): Promise<void> => {
+    const current = this.viewMode === 'fleet' ? fleet.namespaces : this.selectedNamespaces
+    return this.selectNamespaces(
+      current.includes(namespace) ? current.filter((name) => name !== namespace) : [...current, namespace],
+    )
   }
 
   /**
@@ -2065,7 +2138,7 @@ export class ClusterSession {
    */
   readonly viewState = $derived<ViewState>({
     kindId: this.selectedKindId,
-    namespace: this.scopeNamespace,
+    namespaces: this.scopeNamespaces,
     search: this.typedSearch,
     statusFilters: this.podStatusFilters,
   })
@@ -2085,16 +2158,13 @@ export class ClusterSession {
    */
   applyView = async (view: SavedView): Promise<void> => {
     const fleetView = view.kindId === FLEET_KIND_ID
-    const changed =
-      view.kindId !== this.selectedKindId ||
-      view.namespace !== (fleetView ? fleet.namespace : this.namespace)
-
+    let changed = view.kindId !== this.selectedKindId
     this.selectedKindId = view.kindId
     if (fleetView) {
-      fleet.chooseNamespace(view.namespace)
+      changed ||= !sameNamespaces(view.namespaces, fleet.namespaces)
+      fleet.chooseNamespaces(view.namespaces)
     } else {
-      this.namespace = view.namespace
-      preferences.setClusterNamespace(this.cluster.id, view.namespace)
+      changed = this.#setNamespaces(view.namespaces) || changed
     }
     this.podStatusFilters = [...view.statusFilters]
     this.setSearch(view.search)
@@ -2384,10 +2454,10 @@ export class ClusterSession {
     try {
       const rows =
         this.viewMode === 'fleet'
-          ? await fleet.refresh(fleet.namespace, this.fleetPodQuery)
-          : await queryPods(
+          ? await fleet.refresh(fleet.namespaces, this.fleetPodQuery)
+          : await queryPodsIn(
               this.cluster.id,
-              this.namespace,
+              this.selectedNamespaces,
               this.annotationKeys,
               this.columnExpressions,
               this.podQuery,
@@ -2465,16 +2535,16 @@ export class ClusterSession {
     // is asking any more, and ticking them would select pods the table does
     // not show.
     const asked = this.#matchingQuery
-    const namespace = this.namespace
+    const scopeKey = this.scopeKey
     try {
-      const keys = await listPodKeys(
+      const keys = await listPodKeysIn(
         this.cluster.id,
-        namespace,
+        this.selectedNamespaces,
         this.annotationKeys,
         this.columnExpressions,
         this.podQuery,
       )
-      if (this.viewMode !== 'pods' || this.#matchingQuery !== asked || this.namespace !== namespace) return
+      if (this.viewMode !== 'pods' || this.#matchingQuery !== asked || this.scopeKey !== scopeKey) return
       const ticked = keys.map((key) => rowKey(key.namespace, key.name))
       this.selection.selectAll(ticked)
       this.#notePodFacts(keys)
@@ -2490,9 +2560,9 @@ export class ClusterSession {
    * path, or '' when the operator cancelled.
    */
   exportPodsCSV = (columns: CSVColumn[], filename: string): Promise<string> =>
-    exportPodsCSV(
+    exportPodsCSVIn(
       this.cluster.id,
-      this.namespace,
+      this.selectedNamespaces,
       this.annotationKeys,
       this.columnExpressions,
       this.podQuery,
@@ -2503,7 +2573,7 @@ export class ClusterSession {
   /** The merged pod table's export — exportPodsCSV across every open cluster,
       with this tab's search, chips and cluster selection. */
   exportFleetPodsCSV = (columns: CSVColumn[], filename: string): Promise<string> =>
-    exportFleetPodsCSV(fleet.openClusters(), fleet.namespace, this.fleetPodQuery, columns, filename)
+    exportFleetPodsCSVIn(fleet.openClusters(), fleet.namespaces, this.fleetPodQuery, columns, filename)
 
   /** Reloads whichever view is active. */
   refresh = async (): Promise<void> => {
@@ -2731,7 +2801,7 @@ export class ClusterSession {
   /** Issues the call the active view needs. */
   async #fetch(): Promise<unknown> {
     const { id } = this.cluster
-    const namespace = this.isNamespaced ? this.namespace : ALL_NAMESPACES
+    const namespaces = this.isNamespaced ? this.selectedNamespaces : []
 
     // The assessment is refreshed whatever is on screen. It used to be
     // fetched only while the overview was open, which left two things wrong:
@@ -2771,9 +2841,9 @@ export class ClusterSession {
         // Every open cluster, one call, at this tab's cadence — and only
         // while this view is the one on screen, because this switch is the
         // only thing that ever calls it. See $stores/fleet.
-        // The WINDOW'S namespace, never this tab's — see fleet.namespace —
+        // The WINDOW'S namespaces, never this tab's — see fleet.namespaces —
         // and THIS tab's page of the merged pods.
-        return fleet.refresh(fleet.namespace, this.fleetPodQuery)
+        return fleet.refresh(fleet.namespaces, this.fleetPodQuery)
       case 'rbac':
         // NOTHING, DELIBERATELY. The RBAC explorer's reads are made by the
         // panel when somebody presses something, never by this tick: a
@@ -2802,7 +2872,7 @@ export class ClusterSession {
         if (kinds.length === 0) return Promise.resolve([])
         return Promise.all(
           kinds.map((kindId) =>
-            listTable(id, kindId, namespace, this.annotationKeys, this.columnExpressions),
+            listTableIn(id, kindId, namespaces, this.annotationKeys, this.columnExpressions),
           ),
         )
       }
@@ -2840,15 +2910,15 @@ export class ClusterSession {
       // $lib/customColumns and the client's listNamespaceSummaries note.
       case 'pods':
         // ONE PAGE, NOT THE LIST — see podPage.
-        return queryPods(id, namespace, this.annotationKeys, this.columnExpressions, this.podQuery)
+        return queryPodsIn(id, namespaces, this.annotationKeys, this.columnExpressions, this.podQuery)
       case 'nodes':
         return listNodes(id, this.annotationKeys, this.columnExpressions)
       case 'events':
-        return listEvents(id, namespace, this.annotationKeys, this.columnExpressions)
+        return listEventsIn(id, namespaces, this.annotationKeys, this.columnExpressions)
       case 'namespaces':
         return listNamespaceSummaries(id, this.annotationKeys, this.columnExpressions)
       case 'applications':
-        return listApplications(id, namespace)
+        return listApplicationsIn(id, namespaces)
       case 'workloads': {
         const kind = WORKLOAD_KIND_BY_ID[this.selectedKindId]
         // Not awaited, so a slow pod list never delays the rows themselves.
@@ -2859,17 +2929,17 @@ export class ClusterSession {
         // with the older winning, and a failure clearing figures a later
         // success had already installed. One counter closes all three.
         const generation = ++this.#usageGeneration
-        void workloadConsumption(id, kind, namespace)
+        void workloadConsumptionIn(id, kind, namespaces)
           .then((usage) => {
             if (generation === this.#usageGeneration) this.workloadUsage = usage
           })
           .catch(() => {
             if (generation === this.#usageGeneration) this.workloadUsage = {}
           })
-        return listWorkloads(id, kind, namespace, this.annotationKeys, this.columnExpressions)
+        return listWorkloadsIn(id, kind, namespaces, this.annotationKeys, this.columnExpressions)
       }
       default:
-        return listTable(id, this.selectedKindId, namespace, this.annotationKeys, this.columnExpressions)
+        return listTableIn(id, this.selectedKindId, namespaces, this.annotationKeys, this.columnExpressions)
     }
   }
 

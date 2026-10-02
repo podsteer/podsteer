@@ -24,12 +24,12 @@
  * close a circle.
  */
 
+import { normaliseNamespaces, sameNamespaces } from '$lib/namespaceScope'
 import {
-  ALL_NAMESPACES,
-  listFleetEvents,
-  queryFleetPods,
-  listFleetTable,
-  listFleetWorkloads,
+  listFleetEventsIn,
+  queryFleetPodsIn,
+  listFleetTableIn,
+  listFleetWorkloadsIn,
   type ClusterEvents,
   type ClusterTable,
   type FleetPodShare,
@@ -179,7 +179,8 @@ class Fleet {
   tableKind = $state<FleetKind | null>(null)
 
   /**
-   * The namespace every open cluster is read in — ONE, for the window.
+   * The namespaces every open cluster is read in — ONE SET, for the window;
+   * empty is All.
    *
    * It used to be whichever tab was in front's own namespace filter, and the
    * rows below are one set for the window. So two tabs on different
@@ -188,9 +189,10 @@ class Fleet {
    * wiped them, and switching back did the same in reverse. A tab's
    * namespace is a filter on THAT cluster; this view is about all of them.
    * All namespaces by default, because a namespace name means something
-   * different — or nothing — on each cluster.
+   * different — or nothing — on each cluster. A set for the same reason a
+   * tab's filter is one; a name missing on some cluster lists nothing there.
    */
-  namespace = $state<string>(ALL_NAMESPACES)
+  namespaces = $state.raw<string[]>([])
 
   status = $state<LoadStatus>('idle')
   /** When the last read landed, in ms since the epoch. */
@@ -260,13 +262,14 @@ class Fleet {
    * is a table that is wrong rather than merely old.
    */
   /**
-   * Changes the window-wide namespace and drops what was read in the old
+   * Changes the window-wide namespace set and drops what was read in the old
    * one, so a table is never another scope's rows for a tick. Bumping the
-   * generation discards a read still in flight for the old namespace.
+   * generation discards a read still in flight for the old set.
    */
-  chooseNamespace = (namespace: string): void => {
-    if (namespace === this.namespace) return
-    this.namespace = namespace
+  chooseNamespaces = (names: readonly string[]): void => {
+    const next = normaliseNamespaces(names)
+    if (sameNamespaces(next, this.namespaces)) return
+    this.namespaces = next
     this.#generation++
     this.#readScope = ''
     this.pods = []
@@ -290,7 +293,7 @@ class Fleet {
    * chips, cluster selection, sort and page. The rows are the workspace's;
    * which page of them is the tab's. Unused for the other tables.
    */
-  refresh = async (namespace: string, podQuery?: PodQuery): Promise<void> => {
+  refresh = async (namespaces: string[], podQuery?: PodQuery): Promise<void> => {
     const ids = this.openClusters()
     const tab = this.tab
     const generation = ++this.#generation
@@ -298,7 +301,7 @@ class Fleet {
     // clusters, or the first read. A page, a sort or a chip on the merged
     // pods asks again constantly, and flipping to loading for each made the
     // view say "Reading clusters…" over rows it already had.
-    const scope = `${tab}|${namespace}|${ids.join(',')}`
+    const scope = `${tab}|${namespaces.join(',')}|${ids.join(',')}`
     if (scope !== this.#readScope) this.status = 'loading'
 
     try {
@@ -308,7 +311,7 @@ class Fleet {
             this.status = 'ready'
             return
           }
-          const answer = await queryFleetPods(ids, namespace, podQuery)
+          const answer = await queryFleetPodsIn(ids, namespaces, podQuery)
           if (generation !== this.#generation) return
           this.pods = (answer.clusters ?? []).map(shareAnswer)
           this.podRows = (answer.page.rows ?? []).map((pod) => ({ ...pod, cluster: pod.clusterId }))
@@ -323,7 +326,7 @@ class Fleet {
           break
         }
         case 'workloads': {
-          const answers = await listFleetWorkloads(ids, namespace)
+          const answers = await listFleetWorkloadsIn(ids, namespaces)
           if (generation !== this.#generation) return
           this.workloads = mergeFleet(
             this.workloads,
@@ -333,7 +336,7 @@ class Fleet {
           break
         }
         case 'events': {
-          const answers = await listFleetEvents(ids, namespace)
+          const answers = await listFleetEventsIn(ids, namespaces)
           if (generation !== this.#generation) return
           // Filed on each cluster's own timeline on the way past. The merged
           // table is the one view that reads events for a cluster whose tab
@@ -358,7 +361,7 @@ class Fleet {
             return
           }
 
-          const answers = await listFleetTable(ids, kind.group, kind.resource, namespace)
+          const answers = await listFleetTableIn(ids, kind.group, kind.resource, namespaces)
           if (generation !== this.#generation) return
 
           // A cluster's columns are replaced only when that cluster answered

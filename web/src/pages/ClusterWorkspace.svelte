@@ -36,7 +36,7 @@ import TimelineView from './TimelineView.svelte'
   import { shortcut } from '$stores/shortcuts.svelte'
   import { toCSV } from '$lib/csv'
   import { buildExportFilename } from '$lib/exportFilename'
-  import { ALL_NAMESPACES, saveTextFile } from '$lib/api/client'
+  import { saveTextFile } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { flash } from '$lib/flash.svelte'
   import { skeletonFor } from '$lib/manifestTemplates'
@@ -136,13 +136,13 @@ import TimelineView from './TimelineView.svelte'
    *
    * The namespace is the tab's, so the two terminals and the rest of the
    * interface agree about where somebody is working — and it is '' when the
-   * tab is on every namespace, which the dialog reads as "ask" rather than as
-   * a licence to guess. See $lib/clusterShell.
+   * tab is on every namespace or on several, which the dialog reads as "ask"
+   * rather than as a licence to guess. See $lib/clusterShell.
    */
   function onOpenClusterShell(): void {
     sessionLauncher.requestClusterShell({
       clusterId: session.cluster.id,
-      namespace: clusterShellNamespaceFor(session.namespace),
+      namespace: clusterShellNamespaceFor(session.selectedNamespaces),
     })
   }
 
@@ -226,7 +226,7 @@ import TimelineView from './TimelineView.svelte'
    * never a draft somebody is midway through editing.
    */
   const newSkeleton = $derived(
-    session.selectedKind ? skeletonFor(session.selectedKind, session.namespace) : '',
+    session.selectedKind ? skeletonFor(session.selectedKind, session.singleNamespace) : '',
   )
 
   /** The namespace the kubectl hint shows a `-n` flag for — the same
@@ -234,9 +234,7 @@ import TimelineView from './TimelineView.svelte'
       `skeletonFor` itself applies to `metadata.namespace`, so the hint never
       claims a flag the manifest does not actually need. */
   const newNamespaceHint = $derived(
-    session.selectedKind?.namespaced && session.namespace !== ALL_NAMESPACES
-      ? session.namespace
-      : undefined,
+    session.selectedKind?.namespaced && session.singleNamespace ? session.singleNamespace : undefined,
   )
 
   /**
@@ -283,7 +281,7 @@ import TimelineView from './TimelineView.svelte'
     const filename = buildExportFilename(
       session.viewMode === 'fleet' ? 'all-clusters' : session.cluster.id,
       kind,
-      session.scopeNamespace,
+      session.scopeNamespaces,
     )
 
     try {
@@ -464,7 +462,6 @@ import TimelineView from './TimelineView.svelte'
           <SavedViewsMenu
             current={session.viewState}
             kindTitle={(kindId) => session.kinds.find((entry) => entry.id === kindId)?.title ?? ''}
-            allNamespaces={ALL_NAMESPACES}
             onapply={(view) => void session.applyView(view)}
           />
         {/if}

@@ -41,7 +41,6 @@
 -->
 <script lang="ts">
   import type { ClusterSession } from '$stores/session.svelte'
-  import { ALL_NAMESPACES } from '$lib/api/client'
   import type { Finding } from '$lib/api/client'
   import { preferences } from '$stores/preferences.svelte'
   import {
@@ -68,16 +67,16 @@
   const tab = $derived(session.securityTab)
 
   /**
-   * One cluster-wide scanner read, when the page opens. ALL_NAMESPACES,
-   * because posture is a property of the cluster; the store reads each pair
-   * at most once, so re-entering the page costs nothing.
+   * One scanner read over the namespace filter's set, when the page opens;
+   * the store reads each cluster and scope at most once, so re-entering the
+   * page costs nothing.
    */
   $effect(() => {
-    ensureVulnerabilities(session.cluster.id, session.namespace)
+    ensureVulnerabilities(session.cluster.id, session.selectedNamespaces)
   })
 
-  const read = $derived(vulnerabilityReadFor(session.cluster.id, session.namespace))
-  const summaries = $derived(summariesFor(session.cluster.id, session.namespace))
+  const read = $derived(vulnerabilityReadFor(session.cluster.id, session.selectedNamespaces))
+  const summaries = $derived(summariesFor(session.cluster.id, session.selectedNamespaces))
 
   // --- Posture ---------------------------------------------------------------
 
@@ -86,10 +85,9 @@
     (session.overview?.findings ?? []).filter((finding) => finding.category === 'Security'),
   )
 
-  /** Whether the tab is narrowed to one namespace — the navigator's filter
-      applies here as on every list. */
-  const inNamespace = (namespace: string): boolean =>
-    session.namespace === ALL_NAMESPACES || namespace === session.namespace
+  /** Whether a namespace is in the navigator's filter, which applies here as
+      on every list. */
+  const inNamespace = (namespace: string): boolean => session.inScope(namespace)
 
   interface PostureRow {
     key: string

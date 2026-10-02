@@ -17,24 +17,34 @@ function timestamp(now: Date): string {
 }
 
 /**
- * `<cluster>-<kind>-<namespace or all>-<YYYYMMDD-HHMMSS>.csv`.
+ * The namespace segment of an export's name: `all` for every namespace, the
+ * name for one, `N-namespaces` for a set — a set's names would make the
+ * filename as long as the selection.
+ */
+export function exportScopeLabel(namespaces: readonly string[]): string {
+  if (namespaces.length === 0) return 'all'
+  if (namespaces.length === 1) return namespaces[0]
+  return `${namespaces.length}-namespaces`
+}
+
+/**
+ * `<cluster>-<kind>-<scope>-<YYYYMMDD-HHMMSS>.csv`, the scope being
+ * exportScopeLabel's: all, keda, 3-namespaces.
  *
  * Named for what is IN the file rather than left as "export.csv": a person
  * exporting three namespaces' worth of Pods across two clusters over a
  * session ends up with files a save dialog's own list already tells apart,
  * instead of a pile of "export (3).csv" only the export time distinguishes.
  *
- * `namespace` takes the empty string for "every namespace", matching
- * `ALL_NAMESPACES` in `$lib/api/client` — the caller is not required to
- * import that just to call this.
+ * `namespaces` is the filter's set; empty means every namespace.
  */
 export function buildExportFilename(
   cluster: string,
   kind: string,
-  namespace: string,
+  namespaces: readonly string[],
   now: Date = new Date(),
 ): string {
-  const scope = namespace === '' ? 'all' : namespace
+  const scope = exportScopeLabel(namespaces)
   return `${safe(cluster)}-${safe(kind)}-${safe(scope)}-${timestamp(now)}.csv`
 }
 

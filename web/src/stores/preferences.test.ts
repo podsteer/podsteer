@@ -703,7 +703,7 @@ describe('views somebody named and kept', () => {
 
   const crashing = {
     kindId: 'core/v1/pods',
-    namespace: 'kube-system',
+    namespaces: ['kube-system'],
     search: 're:crash',
     statusFilters: ['crashing'],
   }
@@ -722,7 +722,7 @@ describe('views somebody named and kept', () => {
     // collecting two of them — and the row must not jump to the bottom of a
     // list they were reading.
     preferences.saveView('Crashing pods', crashing)
-    preferences.saveView('Other', { ...crashing, namespace: 'default' })
+    preferences.saveView('Other', { ...crashing, namespaces: ['default'] })
     preferences.saveView('crashing PODS', { ...crashing, search: 'oomkilled' })
 
     expect(preferences.savedViews).toHaveLength(2)
@@ -806,5 +806,52 @@ describe('clusters pinned to the top of the picker', () => {
 
     const { preferences: reloaded } = await reimportPreferences()
     expect(reloaded.pinnedClusters).toEqual(['prod', 'staging'])
+  })
+})
+
+describe('the remembered namespace set per cluster', () => {
+  it('migrates the single name every blob held before the filter was a set', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ namespaceByCluster: { prod: 'billing', dev: '', odd: 7 } }),
+    )
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.getClusterNamespaces('prod')).toEqual(['billing'])
+    // '' was All, and All is the empty set.
+    expect(reloaded.getClusterNamespaces('dev')).toEqual([])
+    expect(reloaded.getClusterNamespaces('odd')).toBeUndefined()
+    expect(reloaded.getClusterNamespaces('never-opened')).toBeUndefined()
+  })
+
+  it('never writes the old field again, and keeps the set sorted and unique', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ namespaceByCluster: { prod: 'billing' } }))
+
+    const { preferences: reloaded } = await reimportPreferences()
+    reloaded.setClusterNamespaces('prod', ['shop', 'billing', 'shop'])
+
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}')
+    expect(saved).not.toHaveProperty('namespaceByCluster')
+    expect(saved.namespacesByCluster).toEqual({ prod: ['billing', 'shop'] })
+  })
+
+  it('prefers the new field when a blob somehow carries both', async () => {
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        namespaceByCluster: { prod: 'stale' },
+        namespacesByCluster: { prod: ['keda', 'billing', 3] },
+      }),
+    )
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.getClusterNamespaces('prod')).toEqual(['billing', 'keda'])
+  })
+
+  it('reads a blob with neither field as no memory at all', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({}))
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.namespacesByCluster).toEqual({})
   })
 })
