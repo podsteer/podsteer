@@ -448,3 +448,23 @@ func TestTrafficNamesLinkerdVizWhenItIsNotChosen(t *testing.T) {
 		t.Errorf("%d queries sent to a backend without Linkerd's metrics", got)
 	}
 }
+
+// What linkerd-viz's own Prometheus sent is a scrape, and the source names it:
+// dropped by source, while a headless-Service request is kept.
+func TestTrafficDropsWhatTheMonitoringBackendSent(t *testing.T) {
+	f := newTrafficFixture(t, domain.MetricsQueryManual, nil)
+	f.discovery.backends = []domain.MetricsBackend{vizBackend()}
+	f.traffic.answers["count(request_total"] = []domain.PromSeries{one(43, nil)}
+	f.traffic.answers[`request_total{direction="outbound",dst_namespace!=""`] = []domain.PromSeries{
+		one(0.2, map[string]string{"namespace": "linkerd-viz", "deployment": "prometheus", "dst_namespace": "warehouse", "dst_deployment": "picker"}),
+		one(2, map[string]string{"namespace": "warehouse", "deployment": "picker", "dst_namespace": "warehouse", "dst_statefulset": "orders-db"}),
+	}
+
+	layer, err := f.service.Traffic(context.Background(), "dev", nil, true, domain.TrafficLinkerd, domain.TrafficWindow5m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(layer.Edges) != 1 || layer.Edges[0].Dest.Workload != "orders-db" {
+		t.Fatalf("edges %+v", layer.Edges)
+	}
+}

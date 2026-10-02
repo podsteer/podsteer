@@ -216,6 +216,25 @@ func (s *TrafficService) Sources(ctx context.Context, id domain.ClusterID) (doma
 	return answer, nil
 }
 
+// monitors names every discovered monitoring backend as a source workload,
+// so what it sent — a scrape of a meshed pod — is not drawn as traffic.
+//
+// EVERY DISCOVERED ONE, not only the chosen: a general Prometheus can be the
+// one answering while linkerd-viz's meshed Prometheus is the one scraping.
+// Named by namespace and Service, which for linkerd-viz is also the
+// Deployment's name. Discovery is cached, so this costs no request.
+func (s *TrafficService) monitors(ctx context.Context, id domain.ClusterID, chosen domain.MetricsBackend) []domain.TrafficEndpoint {
+	backends, err := s.metrics.discovery.ListMetricsBackends(ctx, id)
+	if err != nil {
+		backends = nil
+	}
+	monitors := make([]domain.TrafficEndpoint, 0, len(backends)+1)
+	for _, backend := range append(backends, chosen) {
+		monitors = append(monitors, domain.TrafficEndpoint{Namespace: string(backend.Namespace), Workload: backend.Service})
+	}
+	return monitors
+}
+
 // linkerdVizElsewhere names linkerd-viz's Prometheus when discovery found one
 // that is not the chosen backend, or returns "".
 //
@@ -340,7 +359,7 @@ func (s *TrafficService) Traffic(
 		}
 	}
 
-	mapped := domain.MapTraffic(source, window, results, nodes, namespaces)
+	mapped := domain.MapTraffic(source, window, results, nodes, namespaces, s.monitors(ctx, id, gate.backend)...)
 	mapped.Provenance = layer.Provenance
 	mapped.Expressions = layer.Expressions
 

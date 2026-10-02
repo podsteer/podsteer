@@ -364,22 +364,22 @@ var trafficSpecs = map[TrafficSource]trafficSpec{
 		// rollout while the Deployment does not, and grouping by it would
 		// split one edge's percentile in two.
 		//
-		// MONITORING SCRAPES ARE NOT TRAFFIC. Seen live on edge-26.9.3:
-		// linkerd-viz's own Prometheus is meshed, so every scrape it makes of
-		// a proxy's admin port is an outbound request — an edge from
-		// prometheus to every meshed pod. Those requests are addressed to a
-		// pod IP, not a Service, and Linkerd then writes dst_* but NO
-		// dst_service and NO authority; application traffic addressed to a
-		// Service carries both. So the meshed branch requires dst_service and
-		// the outside-the-mesh branch requires an authority. What that also
-		// leaves out is any other request sent straight to a pod IP, which is
-		// stated in CLAUDE.md. linkerdScrape applies the same rule to a
-		// series that arrives anyway.
+		// MONITORING SCRAPES ARE NOT TRAFFIC, AND THEY ARE TOLD APART BY
+		// THEIR SOURCE. Seen live on edge-26.9.3: linkerd-viz's own
+		// Prometheus is meshed, so every scrape of a proxy's admin port is an
+		// outbound request from it to every meshed pod. Those carry dst_* but
+		// no dst_service — and so does a request to a HEADLESS Service (a
+		// StatefulSet's database, Kafka, Redis resolve to pod IPs), so the
+		// destination's labels cannot tell a scrape from real traffic. The
+		// caller names the discovered monitoring backends and MapTraffic
+		// drops what they sent (see its monitors). The outside-the-mesh
+		// branch still requires an authority: without one a series names no
+		// destination at all.
 		branches: []trafficBranch{
-			{matchers: `direction="outbound",dst_namespace!="",dst_service!=""`},
+			{matchers: `direction="outbound",dst_namespace!=""`},
 			{matchers: `direction="outbound",dst_namespace="",authority!=""`, extraBy: []string{"authority"}, dstUnknown: true},
 		},
-		exclude:      linkerdScrape,
+		exclude:      linkerdNowhere,
 		srcNamespace: "namespace",
 		dstNamespace: "dst_namespace",
 		keyBy: []string{
@@ -539,7 +539,9 @@ func TrafficExpressions(source TrafficSource, namespaces []NamespaceName, window
 func MaxTrafficQueries() int {
 	most := 0
 	for _, spec := range trafficSpecs {
-		most = max(most, len(spec.metrics))
+		// Counted from what is composed, not from the table, so a row that
+		// one day becomes two requests cannot be miscounted here.
+		most = max(most, len(composeTraffic(spec, TrafficWindow5m, "")))
 	}
 	return most
 }
@@ -650,6 +652,10 @@ func selector(name string, matchers ...string) string {
 // nodes may be nil, in which case nothing is resolved and nothing is listed as
 // unmapped: an endpoint is only "unmapped" against a topology that was given.
 // namespaces, when non-empty, keeps the edges with either end in one of them.
+// monitors are the monitoring backends' own workloads: what they sent is a
+// scrape, not traffic, and is dropped. A backend is named by its Service,
+// which for linkerd-viz is also its Deployment's name; a monitor that names
+// no workload of the source's matches nothing and costs nothing.
 //
 // The returned layer carries Status answered or answered-empty; the caller
 // fills the provenance and the expressions.
@@ -659,6 +665,7 @@ func MapTraffic(
 	results map[TrafficRole][]PromSeries,
 	nodes []TrafficNodeRef,
 	namespaces []NamespaceName,
+	monitors ...TrafficEndpoint,
 ) TrafficLayer {
 	layer := TrafficLayer{Source: source, Window: window, Edges: []TrafficEdge{}, Unmapped: []TrafficEndpoint{}}
 
@@ -693,6 +700,10 @@ func MapTraffic(
 			seriesSeen++
 
 			src, dst, protocol := spec.endpoints(series.Labels)
+			if isMonitor(src, monitors) {
+				seriesSeen--
+				continue
+			}
 			if src.anonymous() && dst.anonymous() {
 				anonymous++
 				continue
@@ -1012,14 +1023,20 @@ func hubbleEndpoints(labels map[string]string) (TrafficEndpoint, TrafficEndpoint
 	return read("source_namespace", "source_workload"), read("destination_namespace", "destination_workload"), ""
 }
 
-// linkerdScrape reports whether a Linkerd outbound series is a request sent
-// to a pod IP rather than to a Service or an authority — which is what a
-// Prometheus scrape of a meshed pod is. See the Linkerd row.
-func linkerdScrape(labels map[string]string) bool {
-	if labels["dst_namespace"] != "" {
-		return labels["dst_service"] == ""
+// linkerdNowhere reports whether a Linkerd outbound series names no
+// destination at all: outside the mesh and without an authority. The same
+// rule as the Linkerd row's second branch, for a series that arrives anyway.
+func linkerdNowhere(labels map[string]string) bool {
+	return labels["dst_namespace"] == "" && labels["authority"] == ""
+}
+
+func isMonitor(endpoint TrafficEndpoint, monitors []TrafficEndpoint) bool {
+	for _, monitor := range monitors {
+		if endpoint.Workload != "" && endpoint.Namespace == monitor.Namespace && endpoint.Workload == monitor.Workload {
+			return true
+		}
 	}
-	return labels["authority"] == ""
+	return false
 }
 
 func firstNonEmptyLabel(labels map[string]string, names ...string) string {

@@ -595,11 +595,12 @@ func TestMapTrafficIstioLive(t *testing.T) {
 	findEdge(t, layer, "storefront/shopper", "storefront/orders-db")
 }
 
-// The real Linkerd answer, taken before the scrape filter: linkerd-viz's own
-// Prometheus scraping every meshed pod (dst_* without dst_service), plus an
-// anonymous series with neither. Only the application's request remains.
+// The real Linkerd answer: linkerd-viz's own Prometheus scraping every meshed
+// pod, plus a series naming no destination. Told apart by their SOURCE — the
+// discovered backend — only the application's request remains.
 func TestMapTrafficLinkerdLiveDropsMonitoringScrapes(t *testing.T) {
-	layer := domain.MapTraffic(domain.TrafficLinkerd, domain.TrafficWindow5m, loadTrafficFixture(t, "linkerd-live"), nil, nil)
+	viz := domain.TrafficEndpoint{Namespace: "linkerd-viz", Workload: "prometheus"}
+	layer := domain.MapTraffic(domain.TrafficLinkerd, domain.TrafficWindow5m, loadTrafficFixture(t, "linkerd-live"), nil, nil, viz)
 
 	if layer.Status != domain.BackendAnswered || len(layer.Edges) != 1 {
 		t.Fatalf("%s, %d edges: %+v", layer.Status, len(layer.Edges), layer.Edges)
@@ -610,20 +611,52 @@ func TestMapTrafficLinkerdLiveDropsMonitoringScrapes(t *testing.T) {
 	}
 }
 
-func TestLinkerdExpressionsRequireAServiceOrAnAuthority(t *testing.T) {
+// A destination's labels cannot tell a scrape from traffic: a request to a
+// headless Service (a StatefulSet's database) also carries dst_* without
+// dst_service. So the meshed branch must not require dst_service, and only a
+// series naming no destination at all is refused.
+func TestLinkerdKeepsHeadlessServiceTraffic(t *testing.T) {
 	queries, err := domain.TrafficExpressions(domain.TrafficLinkerd, nil, domain.TrafficWindow5m)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, query := range queries {
+		if strings.Contains(query.Expression, "dst_service!=") {
+			t.Errorf("%s drops headless-Service traffic: %s", query.Role, query.Expression)
+		}
 		for _, operand := range splitTopLevelOr(strings.TrimSuffix(strings.TrimPrefix(query.Expression, "histogram_quantile("), ")")) {
-			meshed := strings.Contains(operand, `dst_namespace!=""`)
-			if meshed && !strings.Contains(operand, `dst_service!=""`) {
-				t.Errorf("%s: a meshed operand admits pod-IP scrapes: %s", query.Role, operand)
-			}
-			if !meshed && strings.Contains(operand, `dst_namespace=""`) && !strings.Contains(operand, `authority!=""`) {
-				t.Errorf("%s: an outside-the-mesh operand admits anonymous requests: %s", query.Role, operand)
+			if strings.Contains(operand, `dst_namespace=""`) && !strings.Contains(operand, `authority!=""`) {
+				t.Errorf("%s: an outside-the-mesh operand admits series naming nothing: %s", query.Role, operand)
 			}
 		}
+	}
+
+	headless := map[string]string{
+		"namespace": "warehouse", "deployment": "picker",
+		"dst_namespace": "warehouse", "dst_statefulset": "orders-db",
+	}
+	results := map[domain.TrafficRole][]domain.PromSeries{
+		domain.TrafficRoleRate: {{Labels: headless, Points: []domain.SeriesPoint{{Value: 2}}}},
+	}
+	viz := domain.TrafficEndpoint{Namespace: "linkerd-viz", Workload: "prometheus"}
+	layer := domain.MapTraffic(domain.TrafficLinkerd, domain.TrafficWindow5m, results, nil, nil, viz)
+	if got := findEdge(t, layer, "warehouse/picker", "warehouse/orders-db"); got.RequestsPerSec != 2 {
+		t.Errorf("picker->orders-db: %+v", got)
+	}
+}
+
+// One request per expression, and the count is what the Wails layer sizes
+// its timeout by.
+func TestMaxTrafficQueriesIsTheLargestSourcesExpressionCount(t *testing.T) {
+	most := 0
+	for _, source := range domain.TrafficSourceNames() {
+		queries, err := domain.TrafficExpressions(source, nil, domain.TrafficWindow5m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		most = max(most, len(queries))
+	}
+	if got := domain.MaxTrafficQueries(); got != most {
+		t.Errorf("MaxTrafficQueries() = %d, the largest source sends %d", got, most)
 	}
 }

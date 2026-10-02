@@ -1075,12 +1075,14 @@ about before adding a fourth:
     chosen it is accepted for traffic although the node check can only say
     "unverifiable" (it never scrapes cAdvisor, and it is in-cluster by
     construction); fleet and mismatch are still refused.
-  - **Monitoring scrapes are not traffic.** linkerd-viz's meshed Prometheus
-    scraping every proxy shows up as outbound requests addressed to a pod IP:
-    `dst_*` set but no `dst_service`, and no `authority`. The meshed branch
-    requires `dst_service!=""` and the outside-the-mesh branch
-    `authority!=""` (with `linkerdScrape` as the client-side guard). Any other
-    request sent straight to a pod IP is left out by the same rule.
+  - **Monitoring scrapes are not traffic, and are told apart by SOURCE.**
+    linkerd-viz's meshed Prometheus scraping every proxy shows up as outbound
+    requests with `dst_*` but no `dst_service` — exactly like a request to a
+    headless Service (a StatefulSet's database), so the destination cannot be
+    the test. `TrafficService` names every discovered backend (namespace +
+    Service, which for linkerd-viz is also the Deployment) and `MapTraffic`
+    drops what they sent. The outside-the-mesh branch still requires an
+    `authority`: without one a series names no destination.
 - **kube-state-metrics is discovered the same way, and is a SEPARATE
   question** — `app/adapters/k8s/kubestate.go`, beside `prometheus.go` and
   following it in every particular: two label selectors
