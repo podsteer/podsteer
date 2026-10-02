@@ -15,6 +15,7 @@ import (
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // progressInterval is how often a running transfer reports its byte count.
@@ -345,7 +346,13 @@ func (f *FileCopyAPI) run(ctx context.Context, transferID, direction, localPath 
 		f.app.emit("filecopy:progress", FileCopyProgressEvent{TransferID: transferID, Bytes: bytes})
 	})
 
-	summary, err := transfer(ctx, throttle.add)
+	// A panic in a transfer is a failed transfer, not a dead process: the
+	// pane is waiting on the done event, which is sent below either way.
+	var summary domain.TransferSummary
+	var err error
+	if safego.Run("file transfer", func() { summary, err = transfer(ctx, throttle.add) }) {
+		err = errors.New("the transfer stopped unexpectedly")
+	}
 	// The final figure, whatever the interval says: the last event before
 	// "done" must show the whole transfer.
 	throttle.flush()

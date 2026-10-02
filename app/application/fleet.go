@@ -14,6 +14,7 @@ import (
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // FleetServiceDeps are the collaborators FleetService needs.
@@ -457,8 +458,14 @@ func readOne[T any](ctx context.Context, s *FleetService, name string, namespace
 	readCtx, release := outlive(ctx)
 	go func() {
 		defer release()
-		items, missing, err := read(readCtx, id)
-		done <- answer{items: items, missing: missing, err: err}
+		var a answer
+		if safego.Run("fleet read "+id.String(), func() {
+			items, missing, err := read(readCtx, id)
+			a = answer{items: items, missing: missing, err: err}
+		}) {
+			a = answer{err: errors.New("the read stopped unexpectedly")}
+		}
+		done <- a
 	}()
 
 	timer := time.NewTimer(s.budget)

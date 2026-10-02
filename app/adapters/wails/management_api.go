@@ -15,6 +15,7 @@ import (
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // generateStreamID creates a unique identifier for a log stream.
@@ -142,6 +143,7 @@ func (m *ManagementAPI) StreamLogs(clusterID, namespace, podName, containerName 
 
 	// Start streaming in a goroutine.
 	go func() {
+		defer safego.Recover("log stream")
 		defer func() {
 			cancel()
 			m.streamsMu.Lock()

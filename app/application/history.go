@@ -10,6 +10,7 @@ import (
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // This file records what a cluster looked like over time, so the dashboard can
@@ -166,6 +167,9 @@ func (s *HistoryService) Close() {
 // run is the sampler loop. It is the only goroutine this service starts.
 func (s *HistoryService) run(ctx context.Context) {
 	defer close(s.done)
+	// A backstop: the work inside the loop is contained per iteration, so this
+	// only catches the loop machinery itself.
+	defer safego.Recover("history sampler")
 
 	sampleTicks, stopSamples := s.newTicker(s.SamplingInterval())
 	// Through a closure, because the sampler is rebuilt on reconfigure and a
@@ -178,7 +182,7 @@ func (s *HistoryService) run(ctx context.Context) {
 
 	// Prune once at startup: retention has to be enforced against what a
 	// previous run left behind, not only against what this one writes.
-	s.prune(ctx)
+	safego.Run("history prune", func() { s.prune(ctx) })
 
 	// One sample immediately, so a chart has a point to draw within seconds
 	// of the application opening rather than after the first half minute.
@@ -192,7 +196,7 @@ func (s *HistoryService) run(ctx context.Context) {
 		case <-sampleTicks:
 			s.sampleAll(ctx)
 		case <-prunes.C:
-			s.prune(ctx)
+			safego.Run("history prune", func() { s.prune(ctx) })
 		case <-s.reconfigure:
 			// Rebuild rather than Reset: the new cadence should start from
 			// now, so shortening it takes effect immediately instead of after
@@ -227,20 +231,31 @@ func (s *HistoryService) sampleAll(ctx context.Context) {
 			return
 		}
 
-		overview, err := s.assess(ctx, cluster.ID(), interval)
-		if err != nil {
-			s.logger.Debug("skipping sample",
-				slog.String("cluster", cluster.ID().String()),
-				slog.String("error", err.Error()))
-			continue
-		}
+		// ONE CLUSTER'S PANIC IS THAT CLUSTER'S GAP. The assessment is a
+		// full read of the cluster mapped through code that has met input it
+		// did not expect before; a nil dereference there used to end the
+		// process, and now costs one sample for one cluster.
+		safego.Run("history sample "+cluster.ID().String(), func() {
+			s.sampleCluster(ctx, cluster, interval)
+		})
+	}
+}
 
-		sample := domain.NewSampleFromOverview(overview)
-		if err := s.history.Append(ctx, cluster.ID(), sample); err != nil {
-			s.logger.Warn("recording sample failed",
-				slog.String("cluster", cluster.ID().String()),
-				slog.String("error", err.Error()))
-		}
+// sampleCluster records one cluster's sample.
+func (s *HistoryService) sampleCluster(ctx context.Context, cluster domain.Cluster, interval time.Duration) {
+	overview, err := s.assess(ctx, cluster.ID(), interval)
+	if err != nil {
+		s.logger.Debug("skipping sample",
+			slog.String("cluster", cluster.ID().String()),
+			slog.String("error", err.Error()))
+		return
+	}
+
+	sample := domain.NewSampleFromOverview(overview)
+	if err := s.history.Append(ctx, cluster.ID(), sample); err != nil {
+		s.logger.Warn("recording sample failed",
+			slog.String("cluster", cluster.ID().String()),
+			slog.String("error", err.Error()))
 	}
 }
 

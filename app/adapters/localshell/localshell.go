@@ -51,6 +51,7 @@ import (
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // hangupGrace is how long a shell is given to leave on its own after the
@@ -362,18 +363,22 @@ func (m *Manager) dropOverlay(dir string) {
 // channel, which is what makes "stopped" mean "gone" rather than "asked".
 func (m *Manager) pump(entry *session, out io.Writer, onExit func(reason string)) {
 	buf := make([]byte, readBuffer)
-	for {
-		n, err := entry.proc.Read(buf)
-		if n > 0 && out != nil {
-			// A failed write is the frontend having gone away, which is not a
-			// reason to kill somebody's shell mid-command — the pane's own
-			// teardown decides that.
-			_, _ = out.Write(buf[:n])
+	// A panic in the read or the write ends the pump, and the reaping below
+	// still runs: a session whose pump died must not stay on the table.
+	safego.Run("local shell pump", func() {
+		for {
+			n, err := entry.proc.Read(buf)
+			if n > 0 && out != nil {
+				// A failed write is the frontend having gone away, which is
+				// not a reason to kill somebody's shell mid-command — the
+				// pane's own teardown decides that.
+				_, _ = out.Write(buf[:n])
+			}
+			if err != nil {
+				return
+			}
 		}
-		if err != nil {
-			break
-		}
-	}
+	})
 
 	// Reaped before the record is dropped, so a stopped session is never
 	// reported gone while a zombie is still on the process table.

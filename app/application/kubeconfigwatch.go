@@ -11,6 +11,7 @@ import (
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // KubeconfigWatcher notices when the kubeconfig PodSteer reads has changed on
@@ -147,7 +148,8 @@ func (w *KubeconfigWatcher) Start(ctx context.Context) {
 			case <-w.stop:
 				return
 			case <-ticker.C:
-				w.check(ctx)
+				// One bad check must not end the watch for good.
+				safego.Run("kubeconfig watch", func() { w.check(ctx) })
 			}
 		}
 	}()
