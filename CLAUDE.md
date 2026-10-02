@@ -463,14 +463,17 @@ replacing it. `$lib/namespaceScope` has the type, normalisation and the label
 rule (All / `shop` / `keda +2` with every name in the title / `N namespaces`);
 `NamespacePicker.svelte` is the one picker (All + filter + checkboxes, a draft
 applied once, Apply disabled for an empty set, a remembered name the cluster
-no longer lists kept as "not found"). Every list goes through the client's
+no longer lists kept as "not found"). The navigator's picker stays enabled on
+cluster-scoped kinds (its tooltip says the filter does not apply there), and on
+All clusters it offers the union of the open clusters' namespaces, naming the
+clusters that hold one when not all do ($lib/navigatorNamespaces). Every list goes through the client's
 `…In` wrappers; the topology draws `session.scope` too. Persistence migrates
 and never writes the old shape: `preferences.namespacesByCluster` (from
 `namespaceByCluster`: '' → [], name → [name]) and `SavedView.namespaces` (from
 `namespace`, compared as a set). Single by nature, and the UI says so: the
-RBAC page reviews ONE namespace picked from the set (every namespace on All;
-`default` there, else the first), captioned "Permissions are reviewed per
-namespace"; the create dialog and the cluster shell default to
+RBAC page reviews ONE namespace picked from the set (the first of a set; on
+All, '' — the backend's own default — until somebody picks one), captioned
+"Permissions are reviewed per namespace"; the create dialog and the cluster shell default to
 `singleNamespace` and ask when it is ''; vulnerability marks match on
 namespace + Kind/name. kubectl strings use `kubectl.scopeFlags`: `-A` for All,
 `-n x` for one, one command per namespace for a set; export filenames say

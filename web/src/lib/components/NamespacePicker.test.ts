@@ -123,3 +123,40 @@ describe('the namespace picker', () => {
     expect(container.querySelector('[role="dialog"]')).toBeNull()
   })
 })
+
+describe('closing from outside the panel', () => {
+  it('cancels on Escape even when focus is not inside it', async () => {
+    const { trigger, onapply, container } = mount({ namespaces: ['shop'], all: false })
+    await fireEvent.click(trigger)
+    ;(document.activeElement as HTMLElement | null)?.blur()
+
+    await fireEvent.keyDown(window, { key: 'Escape' })
+
+    expect(onapply).not.toHaveBeenCalled()
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('cancels when focus moves to something outside the picker', async () => {
+    const outside = document.createElement('button')
+    document.body.appendChild(outside)
+    const { trigger, getByLabelText, onapply, container } = mount({ namespaces: ['shop'], all: false })
+    await fireEvent.click(trigger)
+
+    await fireEvent.focusOut(getByLabelText('Filter namespaces'), { relatedTarget: outside })
+
+    expect(onapply).not.toHaveBeenCalled()
+    expect(container.querySelector('[role="dialog"]')).toBeNull()
+    outside.remove()
+  })
+
+  it('stays open while focus moves within it', async () => {
+    const { trigger, getByLabelText, getByRole, container } = mount({ namespaces: ['shop'], all: false })
+    await fireEvent.click(trigger)
+
+    await fireEvent.focusOut(getByLabelText('Filter namespaces'), {
+      relatedTarget: getByRole('button', { name: 'Apply' }),
+    })
+
+    expect(container.querySelector('[role="dialog"]')).not.toBeNull()
+  })
+})

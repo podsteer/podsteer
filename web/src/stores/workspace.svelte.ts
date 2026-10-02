@@ -635,3 +635,13 @@ fleet.openClusters = () => workspace.sessions.map((session) => session.cluster.i
 // returning a confident count. See stripModel in $lib/fleet.
 fleet.silentClusters = () =>
   workspace.sessions.filter((session) => !session.answering).map((session) => session.cluster.id)
+
+// The namespaces each open tab's cluster lists, for the window-wide picker on
+// All clusters — whose choices are their union (see fleetNamespaceChoices).
+fleet.clusterNamespaces = () =>
+  Object.fromEntries(
+    workspace.sessions.map((session) => [session.cluster.id, session.namespaces.map((namespace) => namespace.name)]),
+  )
+fleet.refreshNamespaces = () => {
+  for (const session of workspace.sessions) void session.refreshNamespaces()
+}

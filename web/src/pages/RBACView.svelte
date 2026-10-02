@@ -96,8 +96,10 @@
    * A rules review (SelfSubjectRulesReview) is per namespace by definition —
    * there is no review of a set — so the filter cannot simply apply here as
    * it does on a list. The page offers the selected namespaces (every one,
-   * when the filter is All) and reviews the one chosen: the first by
-   * default, or `default` on All, which is where the review used to land.
+   * when the filter is All) and reviews the one chosen: the first of a set
+   * by default. On All nothing is chosen until somebody picks, and the review
+   * asks with '' — the backend's own default, where it always landed — so
+   * the namespace list arriving never re-asks about a different namespace.
    * Per tab and in memory; the filter is what is remembered.
    */
   let chosenNamespace = $state('')
@@ -107,8 +109,8 @@
   const reviewNamespace = $derived(
     reviewChoices.includes(chosenNamespace)
       ? chosenNamespace
-      : session.isAllNamespaces && reviewChoices.includes('default')
-        ? 'default'
+      : session.isAllNamespaces
+        ? ''
         : (reviewChoices[0] ?? ''),
   )
 

@@ -52,6 +52,8 @@
   import { kindSetMatches } from '$lib/kindSets'
   import { categoryMeta, iconForKind } from '$lib/kindIcons'
   import NamespacePicker from './NamespacePicker.svelte'
+  import { navigatorNamespacePicker } from '$lib/navigatorNamespaces'
+  import { fleet } from '$stores/fleet.svelte'
   import {
     Blocks,
     ChevronDown,
@@ -80,7 +82,8 @@
 
   /**
    * What the namespace picker offers: every namespace the cluster lists, a
-   * phase beside any that is not active.
+   * phase beside any that is not active — on All clusters, every open
+   * cluster's (see $lib/navigatorNamespaces).
    *
    * A name the filter holds that is NOT here — deleted while the tab was
    * open, remembered from before, or on an account that may list objects in
@@ -88,16 +91,14 @@
    * found" itself, so the trigger never describes a filter the list cannot
    * show while the whole tree below is still scoped to it.
    */
-  const namespaceChoices = $derived(
-    session.namespaces.map((namespace) => ({
-      name: namespace.name,
-      hint: namespace.isActive ? undefined : namespace.phase.toLowerCase(),
-    })),
-  )
-
-  /** Cluster-scoped kinds ignore the filter, and the picker says so. */
-  const clusterScopedTitle = $derived(
-    session.selectedKind && !session.isNamespaced ? `${session.selectedKind.title} are cluster-scoped` : undefined,
+  const picker = $derived(
+    navigatorNamespacePicker({
+      fleet: session.viewMode === 'fleet',
+      namespaces: session.namespaces,
+      clusterNamespaces: fleet.clusterNamespaces,
+      kindTitle: session.selectedKind?.title,
+      isNamespaced: session.isNamespaced,
+    }),
   )
 
   const onOverview = $derived(session.selectedKindId === OVERVIEW_KIND_ID)
@@ -416,11 +417,10 @@
   <div class="flex h-14 shrink-0 items-center border-b border-outline-variant/60 px-3">
     <NamespacePicker
       value={session.scopeOnScreen}
-      choices={namespaceChoices}
-      disabled={clusterScopedTitle !== undefined}
-      title={clusterScopedTitle}
+      choices={picker.choices}
+      title={picker.title}
       onapply={(scope) => void session.selectNamespaces(scope.namespaces)}
-      onopen={() => void session.refreshNamespaces()}
+      onopen={() => (session.viewMode === 'fleet' ? fleet.refreshNamespaces() : void session.refreshNamespaces())}
       class="w-full"
     />
   </div>

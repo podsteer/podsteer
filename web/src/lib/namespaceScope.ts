@@ -75,3 +75,31 @@ export function namespaceLabelOf(scope: NamespaceScope): NamespaceLabel {
   if (names.length <= 3) return { label: `${names[0]} +${names.length - 1}`, title }
   return { label: `${names.length} namespaces`, title }
 }
+
+/** A namespace the picker offers, with an optional detail beside it. */
+export interface NamespaceChoice {
+  name: string
+  hint?: string
+}
+
+/**
+ * The window-wide picker's choices on All clusters: the UNION of every open
+ * cluster's namespaces, sorted, so a name in the window's set is offered
+ * rather than "not found" because the tab in front lacks it. A name only
+ * some clusters have says which — a set means nothing on the others.
+ */
+export function fleetNamespaceChoices(byCluster: Record<string, readonly string[]>): NamespaceChoice[] {
+  const clusters = Object.keys(byCluster)
+  const holders = new Map<string, string[]>()
+  for (const cluster of clusters) {
+    for (const name of new Set(byCluster[cluster])) {
+      const list = holders.get(name)
+      if (list) list.push(cluster)
+      else holders.set(name, [cluster])
+    }
+  }
+  return [...holders.keys()].sort().map((name) => {
+    const on = holders.get(name)!
+    return on.length === clusters.length ? { name } : { name, hint: `only on ${on.join(', ')}` }
+  })
+}

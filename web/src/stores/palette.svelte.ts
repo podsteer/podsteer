@@ -49,6 +49,7 @@ import {
 import { toApiError } from '$lib/api/errors'
 import { toCSV } from '$lib/csv'
 import { buildExportFilename } from '$lib/exportFilename'
+import { fleetNamespaceChoices } from '$lib/namespaceScope'
 import { fleetRowTarget, type FleetTarget } from '$lib/fleet'
 import {
   buildCommands,
@@ -228,9 +229,17 @@ class CommandPaletteStore {
       otherClusterTabs: this.#tabs
         .filter((tab) => tab.id !== session?.cluster.id)
         .map((tab) => ({ id: tab.id })),
-      namespaces: session ? session.namespaces.map((namespace) => namespace.name) : [],
-      showsAllNamespaces: session ? session.scope.all : true,
-      selectedNamespaces: session ? session.selectedNamespaces : [],
+      // On All clusters the window's set spans every open cluster, so the
+      // names offered do too — the same union the navigator's picker shows.
+      namespaces: !session
+        ? []
+        : session.viewMode === 'fleet'
+          ? fleetNamespaceChoices(fleet.clusterNamespaces()).map((choice) => choice.name)
+          : session.namespaces.map((namespace) => namespace.name),
+      // The scope ON SCREEN — the window's set on All clusters, the tab's
+      // elsewhere — because that is the set the handlers below change.
+      showsAllNamespaces: session ? session.scopeOnScreen.all : true,
+      selectedNamespaces: session ? session.scopeNamespaces : [],
       selectedKindSingular: session?.selectedKind?.singular,
       canExportCSV: activeTable.present && (session?.visibleCount ?? 0) > 0,
     }
@@ -244,7 +253,9 @@ class CommandPaletteStore {
     setNamespace: (namespace) => this.#session?.selectNamespace(namespace),
     addNamespace: (namespace) => {
       const session = this.#session
-      if (session && !session.inScope(namespace)) void session.toggleNamespace(namespace)
+      // toggleNamespace REMOVES a name already in the set, so "Add" checks
+      // the set it toggles — the on-screen one — and never takes one out.
+      if (session && !session.scopeNamespaces.includes(namespace)) void session.toggleNamespace(namespace)
     },
     openSettings: () => settingsDialog.show(),
     openAbout: () => settingsDialog.show('about'),
@@ -679,7 +690,7 @@ class CommandPaletteStore {
     const kind =
       session.selectedKind?.singular ??
       (session.viewMode === 'applications' ? 'application' : session.viewMode)
-    const filename = buildExportFilename(session.cluster.id, kind, session.selectedNamespaces)
+    const filename = buildExportFilename(session.cluster.id, kind, session.scopeNamespaces)
 
     try {
       if ('save' in data) await data.save(filename)

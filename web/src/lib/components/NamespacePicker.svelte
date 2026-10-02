@@ -170,6 +170,28 @@
     }
   }
 
+  /**
+   * Escape cancels wherever focus is while the picker is open — the panel
+   * holds the escape layer, so no other layer will act on it — but only
+   * while it is the innermost layer.
+   */
+  function onWindowKeydown(event: KeyboardEvent): void {
+    if (!open || event.key !== 'Escape' || !claim?.owns()) return
+    event.preventDefault()
+    event.stopPropagation()
+    hide()
+  }
+
+  /** Cancels when focus leaves for something outside the picker — Tab past
+      the buttons, say. A blur to nothing (the window losing focus) is not
+      leaving. */
+  function onFocusOut(event: FocusEvent): void {
+    if (!open) return
+    const next = event.relatedTarget as HTMLElement | null
+    if (!next || next.closest('[data-namespace-picker]')) return
+    hide(false)
+  }
+
   /** Cancels on a click elsewhere, without a backdrop over the app. */
   function onPointerDown(event: PointerEvent): void {
     if (!open) return
@@ -185,9 +207,9 @@
   $effect(() => () => claim?.release())
 </script>
 
-<svelte:window onpointerdown={onPointerDown} />
+<svelte:window onpointerdown={onPointerDown} onkeydown={onWindowKeydown} />
 
-<div data-namespace-picker class="relative {className}">
+<div data-namespace-picker class="relative {className}" onfocusout={onFocusOut}>
   <button
     bind:this={trigger}
     type="button"

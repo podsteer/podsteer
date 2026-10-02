@@ -129,6 +129,17 @@ class Fleet {
   silentClusters: () => string[] = () => []
 
   /**
+   * The namespace names each open cluster lists, by cluster id — what the
+   * window-wide picker offers (their union). Assigned by $stores/workspace,
+   * like openClusters.
+   */
+  clusterNamespaces: () => Record<string, string[]> = () => ({})
+
+  /** Re-reads every open cluster's namespace list, for the picker opening.
+      Assigned by $stores/workspace. */
+  refreshNamespaces: () => void = () => {}
+
+  /**
    * Each cluster's last answer, per table, in tab order.
    *
    * FOR PODS, THE VERDICTS WITHOUT THE ROWS. The merged pod table is

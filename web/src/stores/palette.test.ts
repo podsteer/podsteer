@@ -14,9 +14,9 @@ vi.mock('$lib/api/client', async () => {
   }
 })
 
-import { ClusterSession, RICH_KIND_IDS } from './session.svelte'
+import { ClusterSession, FLEET_KIND_ID, RICH_KIND_IDS } from './session.svelte'
 import { palette } from './palette.svelte'
-import type { Cluster, Node, Pod, ResourceKind, ResourceTable } from '$lib/api/client'
+import type { Cluster, Namespace, Node, Pod, ResourceKind, ResourceTable } from '$lib/api/client'
 
 const cluster = { id: 'dev', name: 'dev', defaultNamespace: 'default' } as unknown as Cluster
 
@@ -384,5 +384,37 @@ describe('the Clusters group', () => {
 
     await clusters!.entries[0].run()
     expect(focusCluster).toHaveBeenCalledWith('staging')
+  })
+})
+
+describe('namespace commands on All clusters', () => {
+  it('reads and changes the WINDOW’s set there, so "Add namespace" never removes one', async () => {
+    const { fleet } = await import('./fleet.svelte')
+    const session = makeSession()
+    session.selectedKindId = FLEET_KIND_ID
+    session.selectedNamespaces = ['x']
+    session.namespaces = [{ name: 'x' }] as Namespace[]
+    // The names offered are every open cluster's, not this tab's.
+    const before = fleet.clusterNamespaces
+    fleet.clusterNamespaces = () => ({ dev: ['x'], staging: ['b', 'c'] })
+    fleet.chooseNamespaces(['a', 'b'])
+    const toggle = vi.spyOn(session, 'toggleNamespace').mockResolvedValue()
+
+    palette.sync(session, [{ id: 'dev' }], vi.fn())
+    palette.show()
+    palette.setQuery('namespace')
+    const titles = palette.groups.find((g) => g.name === 'Namespaces')?.entries.map((e) => e.title) ?? []
+
+    // b is in the window's set already; c is not.
+    expect(titles).not.toContain('Add namespace b')
+    expect(titles).toContain('Add namespace c')
+    await palette.groups
+      .find((g) => g.name === 'Namespaces')
+      ?.entries.find((e) => e.title === 'Add namespace c')
+      ?.run()
+    expect(toggle).toHaveBeenCalledWith('c')
+
+    fleet.chooseNamespaces([])
+    fleet.clusterNamespaces = before
   })
 })
