@@ -283,3 +283,37 @@ func mustPod(t testing.TB, name string, usage domain.Metrics) domain.Pod {
 	}
 	return pod
 }
+
+// TestCountsShareOneScope pins that every count on a page is taken after the
+// cluster selection: a merged list narrowed to one cluster says "N of M"
+// about that cluster, not M of every cluster's pods.
+func TestCountsShareOneScope(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	pod := func(cluster, name string, phase domain.PodPhase) domain.Pod {
+		p, err := domain.NewPod(domain.PodSpec{Name: name, Namespace: "shop", ClusterID: domain.ClusterID(cluster), Phase: phase})
+		if err != nil {
+			t.Fatalf("NewPod() error = %v", err)
+		}
+		return p
+	}
+	pods := []domain.Pod{
+		pod("prod", "a", domain.PodPhasePending),
+		pod("prod", "b", domain.PodPhaseSucceeded),
+		pod("staging", "c", domain.PodPhasePending),
+		pod("staging", "d", domain.PodPhasePending),
+		pod("staging", "e", domain.PodPhaseSucceeded),
+	}
+
+	page := domain.QueryPods(pods, domain.PodQuery{Limit: 10, Clusters: []string{"prod"}}, now, collation.Key)
+	if page.Total != 2 || page.Unhealthy != 1 || page.Matched != 2 || page.ChipCounts[domain.PodChipPending] != 1 {
+		t.Fatalf("narrowed to prod: total %d unhealthy %d matched %d pending %d, want 2, 1, 2, 1",
+			page.Total, page.Unhealthy, page.Matched, page.ChipCounts[domain.PodChipPending])
+	}
+
+	page = domain.QueryPods(pods, domain.PodQuery{Limit: 10}, now, collation.Key)
+	if page.Total != 5 || page.Unhealthy != 3 {
+		t.Fatalf("every cluster: total %d unhealthy %d, want 5 and 3", page.Total, page.Unhealthy)
+	}
+}

@@ -328,10 +328,13 @@ type PodPage struct {
 	// Matched counts the rows the search and the chips kept — what the
 	// pager and the row count read.
 	Matched int
-	// Total counts every row before any filter.
+	// Total counts the rows before the search and the chips — after the
+	// cluster selection, which is the same scope Matched and ChipCounts are
+	// counted in: on a merged list narrowed to two clusters, "of N" means of
+	// those two clusters' pods.
 	Total int
-	// Unhealthy counts the rows, before any filter, that are not healthy —
-	// the header's "N unhealthy".
+	// Unhealthy counts the unhealthy rows in that same scope — the header's
+	// "N unhealthy".
 	Unhealthy int
 	// ChipCounts counts, per chip, the rows the SEARCH kept that the chip
 	// would select — against the searched rows rather than the chipped
@@ -593,13 +596,16 @@ func QueryPods(pods []Pod, q PodQuery, now time.Time, collation CollationKey) Po
 
 	page := PodPage{
 		Matched:    len(result.order),
-		Total:      len(pods),
 		ChipCounts: result.chipCounts,
 	}
 	if result.queryErr != nil {
 		page.QueryError = result.queryErr.Error()
 	}
 	for i := range rows {
+		if len(q.Clusters) > 0 && !slices.Contains(q.Clusters, rows[i].Cluster) {
+			continue
+		}
+		page.Total++
 		if !rows[i].IsHealthy {
 			page.Unhealthy++
 		}
