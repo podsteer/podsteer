@@ -170,3 +170,27 @@ func inflight(cache *filesystemCache, id domain.ClusterID) bool {
 	_, ok := cache.inflight[id]
 	return ok
 }
+
+// TestFilesystemClaimSeesASweepThatJustFinished pins the one-lock decision:
+// a caller that missed the cache a moment before a sweep stored its answer
+// must be handed that answer by claim, not made the leader of a second
+// sweep. With the cache read and the claim under separate locks, this is
+// exactly the window that let a redundant sweep through.
+func TestFilesystemClaimSeesASweepThatJustFinished(t *testing.T) {
+	t.Parallel()
+
+	var cache filesystemCache
+	_, cached, first, leader := cache.claim("prod")
+	if cached || !leader {
+		t.Fatal("the first caller must lead")
+	}
+	cache.finish("prod", first, sweepOutcome{result: map[string]domain.NodeFilesystems{"worker-1": {Measured: true}}, remember: true})
+
+	entry, cached, call, leader := cache.claim("prod")
+	if !cached || leader || call != nil {
+		t.Fatalf("claim after a stored sweep = (cached %v, leader %v), want the stored answer", cached, leader)
+	}
+	if len(entry.result) != 1 {
+		t.Fatalf("entry = %+v, want the sweep's result", entry)
+	}
+}

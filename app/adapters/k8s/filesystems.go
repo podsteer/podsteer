@@ -184,14 +184,13 @@ func (c *filesystemCache) do(
 	id domain.ClusterID,
 	sweep func(context.Context) sweepOutcome,
 ) (map[string]domain.NodeFilesystems, error) {
-	if cached, refused, ok := c.get(id); ok {
-		if refused != nil {
-			return nil, refused
+	entry, cached, call, leader := c.claim(id)
+	if cached {
+		if entry.refused != nil {
+			return nil, entry.refused
 		}
-		return cached, nil
+		return entry.result, nil
 	}
-
-	call, leader := c.claim(id)
 	if leader {
 		sweepCtx, release := detach(ctx)
 		go func() {
@@ -206,21 +205,29 @@ func (c *filesystemCache) do(
 	return call.result, call.err
 }
 
-// claim returns the sweep in flight for id, and whether the caller has just
-// started it and so must run it.
-func (c *filesystemCache) claim(id domain.ClusterID) (*sweepCall, bool) {
+// claim decides, under ONE lock, what a caller does: answer from a fresh
+// cache entry, follow the sweep in flight, or lead a new one.
+//
+// One decision rather than a cache read followed by a claim, because between
+// two separate locks a sweep can finish: the caller misses the cache, then
+// finds nothing in flight, and leads a second sweep a moment after the first
+// one's answer was stored.
+func (c *filesystemCache) claim(id domain.ClusterID) (entry filesystemEntry, cached bool, call *sweepCall, leader bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if entry, ok := c.entries[id]; ok && time.Since(entry.at) <= filesystemTTL {
+		return entry, true, nil, false
+	}
 	if call, ok := c.inflight[id]; ok {
-		return call, false
+		return filesystemEntry{}, false, call, false
 	}
 	if c.inflight == nil {
 		c.inflight = make(map[domain.ClusterID]*sweepCall, 2)
 	}
-	call := &sweepCall{done: make(chan struct{})}
+	call = &sweepCall{done: make(chan struct{})}
 	c.inflight[id] = call
-	return call, true
+	return filesystemEntry{}, false, call, true
 }
 
 // finish stores a sweep's answer when it is worth keeping, and publishes it
