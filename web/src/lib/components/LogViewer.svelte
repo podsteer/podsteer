@@ -46,7 +46,15 @@
   import { splitOnQuery } from '$lib/textSearch'
   import { matches, parseQuery, type Query } from '$lib/query'
   import { formatLogTimestamp, parseLogTimestamp, type TimestampMode } from '$lib/logTimestamps'
-  import { detectSeverity, parseStructuredLine, type Severity, type StructuredLine } from '$lib/logFormat'
+  import { detectSeverity, parseStructuredLine, type StructuredLine } from '$lib/logFormat'
+  import {
+    LEVEL_KEYS,
+    buildHistogram,
+    countLevels,
+    formatBucketWidth,
+    type HistogramSample,
+    type LevelKey,
+  } from '$lib/logHistogram'
   import { ansiToSpans, type AnsiSpan } from '$lib/ansi'
 import { prefixColourClass } from '$lib/logPrefixColour'
   import { ANSI_DARK, ANSI_LIGHT, isLightTheme, onThemeChange } from '$lib/terminalTheme'
@@ -142,17 +150,27 @@ import { prefixColourClass } from '$lib/logPrefixColour'
     { value: 'relative', label: 'Relative' },
   ]
 
-  const SEVERITIES: Severity[] = ['error', 'warn', 'info', 'debug']
+  const SEVERITIES = LEVEL_KEYS
 
   /** Tailwind classes for a severity chip in its ACTIVE (filtering) state —
       the same three gauge colours the rest of the application already uses
       for "bad/caution/fine", plus a neutral tone for debug, which is none of
       those. */
-  const SEVERITY_ACTIVE_CLASS: Record<Severity, string> = {
+  const SEVERITY_ACTIVE_CLASS: Record<LevelKey, string> = {
     error: 'bg-gauge-critical/16 text-gauge-critical-ink',
     warn: 'bg-gauge-warn/16 text-gauge-warn-ink',
     info: 'bg-gauge-normal/16 text-gauge-normal-ink',
     debug: 'bg-surface-container-high text-on-surface',
+    unknown: 'bg-surface-container-high text-on-surface-variant',
+  }
+
+  /** Histogram segment fills — the same tokens as the chips above. */
+  const LEVEL_BAR_CLASS: Record<LevelKey, string> = {
+    error: 'bg-gauge-critical',
+    warn: 'bg-gauge-warn',
+    info: 'bg-gauge-normal',
+    debug: 'bg-on-surface-variant/60',
+    unknown: 'bg-outline-variant',
   }
 
   /**
@@ -266,7 +284,7 @@ import { prefixColourClass } from '$lib/logPrefixColour'
   /** Severity chips currently narrowing the view. Empty means "show every
       level" — a plain filter, not a special case, since an empty Set never
       matches anything in `.has()` either way. */
-  let activeSeverities = $state<Set<Severity>>(new Set())
+  let activeSeverities = $state<Set<LevelKey>>(new Set())
 
   /** Which fold groups (keyed by the header line's `seq`) are expanded. A
       group not in this set — the default for one just formed — is shown
@@ -391,17 +409,15 @@ import { prefixColourClass } from '$lib/logPrefixColour'
   /** Each line's detected severity, or `undefined` — computed once per line
       (through the memoised parse) regardless of how often this recomputes. */
   const rowSeverity = $derived.by(() => {
-    const map = new Map<number, Severity | undefined>()
-    for (const row of decorated) map.set(row.log.seq, detectSeverity(structuredOf(row.log)))
+    const map = new Map<number, LevelKey>()
+    for (const row of decorated) map.set(row.log.seq, detectSeverity(structuredOf(row.log)) ?? 'unknown')
     return map
   })
 
   /** How many currently-decorated lines fall under each chip — shown on the
       chips themselves so "error 0" is visibly different from "error 12". */
   const severityCounts = $derived.by(() => {
-    const counts: Record<Severity, number> = { error: 0, warn: 0, info: 0, debug: 0 }
-    for (const severity of rowSeverity.values()) if (severity) counts[severity]++
-    return counts
+    return countLevels(rowSeverity.values())
   })
 
   /** Narrowed to the active severity chips, or everything when none are
@@ -410,10 +426,7 @@ import { prefixColourClass } from '$lib/logPrefixColour'
   const severityFilteredRows = $derived(
     activeSeverities.size === 0
       ? decorated
-      : decorated.filter((row) => {
-          const severity = rowSeverity.get(row.log.seq)
-          return severity !== undefined && activeSeverities.has(severity)
-        }),
+      : decorated.filter((row) => activeSeverities.has(rowSeverity.get(row.log.seq) ?? 'unknown')),
   )
 
   const matchingRows = $derived(queryActive ? severityFilteredRows.filter((row) => row.matches) : [])
@@ -458,6 +471,30 @@ import { prefixColourClass } from '$lib/logPrefixColour'
     return hidden
   })
 
+  /**
+   * Volume histogram over the whole buffered window (not the filtered view,
+   * so it stays a stable overview). Rebuilt once per `logs`/severity change —
+   * O(n) over memoised per-line parses, never per frame or per scroll.
+   */
+  const histogram = $derived.by(() => {
+    const samples: HistogramSample[] = []
+    for (const log of logs) {
+      const ts = timestampOf(log).timestamp
+      samples.push({ seq: log.seq, ts: ts ? ts.getTime() : null, level: rowSeverity.get(log.seq) ?? 'unknown' })
+    }
+    return buildHistogram(samples)
+  })
+
+  function barTitle(bucket: { start: number; count: number }, width: number): string {
+    return `${bucket.count} line${bucket.count === 1 ? '' : 's'} from ${new Date(bucket.start).toLocaleTimeString()} (${formatBucketWidth(width)} bucket)`
+  }
+
+  /** Scrolls to the first VISIBLE line at or after the bucket's first line. */
+  function jumpToBucket(firstSeq: number): void {
+    const pos = rows.findIndex((row) => row.log.seq >= firstSeq)
+    if (pos >= 0) revealRow(pos)
+  }
+
   function toggleGroup(seq: number): void {
     const next = new Set(expandedGroups)
     if (next.has(seq)) next.delete(seq)
@@ -465,7 +502,7 @@ import { prefixColourClass } from '$lib/logPrefixColour'
     expandedGroups = next
   }
 
-  function toggleSeverity(severity: Severity): void {
+  function toggleSeverity(severity: LevelKey): void {
     const next = new Set(activeSeverities)
     if (next.has(severity)) next.delete(severity)
     else next.add(severity)
@@ -1322,6 +1359,34 @@ import { prefixColourClass } from '$lib/logPrefixColour'
        in its first 64 characters (see logFormat.ts) — and the wording below
        says so rather than claiming every matched line was actually tagged
        at that severity by the process that wrote it. -->
+  {#if histogram}
+    <div
+      class="flex h-10 items-end gap-px border-b border-outline-variant bg-surface-container-low px-3 pt-1"
+      role="group"
+      aria-label="Log volume over time, {formatBucketWidth(histogram.bucketMs)} buckets. Activate a bar to jump to its first line."
+    >
+      {#each histogram.buckets as bucket (bucket.start)}
+        <button
+          type="button"
+          disabled={bucket.count === 0}
+          onclick={() => jumpToBucket(bucket.firstSeq)}
+          title={barTitle(bucket, histogram.bucketMs)}
+          aria-label={barTitle(bucket, histogram.bucketMs)}
+          class="flex h-full min-w-0 flex-1 flex-col-reverse justify-start enabled:hover:bg-surface-container focus-visible:outline-2 focus-visible:outline-primary"
+        >
+          {#each LEVEL_KEYS as level (level)}
+            {#if bucket.levels[level] > 0}
+              <span
+                class="block w-full {LEVEL_BAR_CLASS[level]}"
+                style="height: {(bucket.levels[level] / histogram.max) * 100}%; min-height: 1px"
+              ></span>
+            {/if}
+          {/each}
+        </button>
+      {/each}
+    </div>
+  {/if}
+
   {#if logs.length > 0}
     <div class="flex flex-wrap items-center gap-1.5 border-b border-outline-variant bg-surface-container-low px-3 py-1.5">
       <span class="text-label-small text-on-surface-variant/70">By level, where a line says one:</span>
