@@ -137,3 +137,21 @@ func (h *HelmAPI) ReadRelease(clusterID, namespace, release string, revision int
 
 	return toHelmReleaseDetail(detail), nil
 }
+
+// ListReleasesIn is ListReleases over a set of namespaces; empty means every
+// one. See HelmService.ListReleasesIn for how the listings are merged.
+func (h *HelmAPI) ListReleasesIn(clusterID string, namespaces []string, refresh bool) (HelmListing, error) {
+	ctx, cancel := h.app.requestContext()
+	defer cancel()
+
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return HelmListing{}, apiError(h.logger, "ListReleasesIn", err)
+	}
+
+	listing, err := h.helm.ListReleasesIn(ctx, id, scope, refresh)
+	if err != nil {
+		return HelmListing{}, apiError(h.logger, "ListReleasesIn", err)
+	}
+	return toHelmListing(listing), nil
+}
