@@ -1450,8 +1450,12 @@ wins by terminating the busy worker) → `graphPositions` → `graphCull` → dr
 - **`layoutCompound` is not one dagre call.** One call on 5k boxes / 8k lines
   took 10–20 s; the graph is split by group, then into connected pieces (a
   box with >24 lines is a hub and joins only the piece it has most lines
-  into), each piece is dagre'd alone and shelf-packed. `graphLayoutBudget.test.ts`
-  holds it under 3 s (≈1.1 s measured). Lines between pieces are elbows.
+  into), each piece is dagre'd alone and shelf-packed. Lines between pieces
+  are elbows. `graphLayoutScale.test.ts` checks correctness at that size in
+  `npm test`; the 3 s budget (≈1.1 s measured) is `graphLayout.bench.ts`, run
+  by `npm run bench:layout` (vitest.bench.config.ts) and never by `npm test` —
+  a wall-clock assertion there flaked under a loaded full run. Run it after
+  touching the layout.
 - **The map never redraws on a tick and never re-fits on a redraw.** The
   backend's `topology:changed` shows "Changed — Refresh"; opt-in Live redraws
   after 1/2/5/15 s at <500/<2000/<5000/more boxes, coalesced not reset. Same
