@@ -1,0 +1,129 @@
+/**
+ * The topology and traffic contract between the Go backend and the interface.
+ *
+ * Written by hand ahead of the backend so the two halves could be built at
+ * the same time. The Go DTOs (`app/adapters/wails/dto_topology.go`,
+ * `dto_traffic.go`) carry exactly these JSON names; once their generated
+ * bindings exist this file re-exports those types, and it stays the one place
+ * the interface imports them from.
+ */
+
+/** How healthy a box is. `neutral` means nothing was checked, not that it is fine. */
+export type NodeState = 'ok' | 'warn' | 'bad' | 'neutral'
+
+/** Every relationship the topology draws. Each is one Kubernetes really has. */
+export type TopologyEdgeKind =
+  | 'owns'
+  | 'selects'
+  | 'routes'
+  | 'scales'
+  | 'protects'
+  | 'policy-selects'
+  | 'attaches'
+  | 'runs-as'
+
+/** Pods folded by the backend above the summary cap. The counts are complete. */
+export interface PodSummary {
+  total: number
+  ready: number
+  unhealthy: number
+}
+
+export interface TopologyNode {
+  id: string
+  /** The graph kind: pod, workload, replicaset, service, ingress, gateway, route, scaler, budget, policy, config, secret, claim, serviceaccount, object. */
+  kind: string
+  /** The Kubernetes Kind, verbatim, for navigation. */
+  apiKind: string
+  name: string
+  namespace: string
+  state: NodeState
+  detail: string
+  /** Sibling set for folding, as in the other map shapes. */
+  group: string
+  /** Labels of top-level objects only, for grouping by app or by label. */
+  labels?: Record<string, string>
+  /** Set only on a backend-folded pod set. */
+  podSummary?: PodSummary
+}
+
+export interface TopologyEdge {
+  from: string
+  to: string
+  kind: TopologyEdgeKind
+  label: string
+}
+
+export interface TopologyGraph {
+  nodes: TopologyNode[]
+  edges: TopologyEdge[]
+  /** Per Kubernetes Kind, COMPLETE even when pods are summarised. */
+  counts: Record<string, number>
+  unreadable: string[]
+  bounded: string
+  /** True when pods were folded in the backend because there were too many to draw. */
+  summarised: boolean
+  generatedAt: string
+}
+
+/** Emitted as `topology:changed` when something in a drawn scope changed. */
+export interface TopologyChanged {
+  clusterId: string
+  namespaces: string[]
+}
+
+export type TrafficSourceName = 'istio' | 'linkerd' | 'beyla' | 'caretta' | 'hubble'
+export type TrafficWindow = '5m' | '15m' | '1h'
+
+export interface TrafficSourceStatus {
+  source: TrafficSourceName
+  available: boolean
+  /** What was found, or what would be needed. */
+  detail: string
+}
+
+export interface TrafficSources {
+  /** The Prometheus the queries go to, as the metrics query feature names it. */
+  backend: string
+  sources: TrafficSourceStatus[]
+  /** The metrics query backend status: enabled, not enabled, unreachable… */
+  status: string
+  message: string
+}
+
+export interface TrafficEndpoint {
+  namespace: string
+  workload: string
+  service: string
+  external: string
+  unknown: boolean
+  /** The topology node this endpoint maps to, '' when unmapped. */
+  nodeId: string
+}
+
+export interface TrafficEdge {
+  source: TrafficEndpoint
+  dest: TrafficEndpoint
+  protocol: string
+  requestsPerSec: number
+  errorsPerSec: number
+  bytesPerSec: number
+  connections: number
+  /** Milliseconds; -1 when the source does not expose latency. */
+  p50: number
+  p95: number
+  p99: number
+}
+
+export interface TrafficLayer {
+  source: TrafficSourceName
+  window: TrafficWindow
+  edges: TrafficEdge[]
+  unmapped: TrafficEndpoint[]
+  status: string
+  message: string
+  /** Which backend answered and when, as the metrics query feature reports it. */
+  provenance: unknown
+  /** The PromQL that was sent, shown to the operator. */
+  expressions: string[]
+}
