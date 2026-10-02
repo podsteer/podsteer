@@ -340,6 +340,25 @@ export const EVENTS_SOURCE = 'events'
 export const HELM_KIND_ID = 'podsteer/helm'
 
 /**
+ * The topology: every object in one or more namespaces and every relationship
+ * between them, drawn as one map — the dependency map's fifth shape.
+ *
+ * A PSEUDO-ENTRY for the reason the others are: there is nothing to GET
+ * called a topology. It is assembled in Go from a dozen lists, on open and on
+ * Refresh — NEVER on the tick. A namespace-wide read every ten seconds would
+ * be a dozen LISTs a tick for as long as the page sat open; the backend's
+ * change feed says "Changed" instead, and the page redraws when asked (or,
+ * opted in, when Live mode's debounce elapses). See TopologyView.svelte.
+ */
+export const TOPOLOGY_KIND_ID = 'podsteer/topology'
+
+/** What the topology draws: some namespaces, or all of them. */
+export interface TopologyScope {
+  namespaces: string[]
+  all: boolean
+}
+
+/**
  * The multi-kind view, the SEVENTH pinned pseudo-entry.
  *
  * NOT A KIND, and here for the plainest version of the reason: it is SEVERAL
@@ -476,6 +495,7 @@ export type ViewMode =
   | 'rbac'
   | 'timeline'
   | 'helm'
+  | 'topology'
   | 'multi-kind'
   | 'security'
   | 'pods'
@@ -607,6 +627,16 @@ export class ClusterSession {
 
   /** The kind currently selected in the navigator. */
   selectedKindId = $state<string>(DEFAULT_KIND_ID)
+
+  /**
+   * What the topology draws, once somebody has chosen; null until then, which
+   * means "whatever the namespace filter says" — see `topologyScopeNow`.
+   *
+   * Per tab and in memory, like the selection: a scope names namespaces of
+   * one cluster, and remembering it on disk would be the first thing in the
+   * settings file that describes a cluster's contents.
+   */
+  topologyScope = $state.raw<TopologyScope | null>(null)
   /** The namespace filter. ALL_NAMESPACES means every namespace. */
   namespace = $state<string>(ALL_NAMESPACES)
   /** The client-side search term. */
@@ -939,6 +969,7 @@ export class ClusterSession {
     if (id === RBAC_KIND_ID) return 'rbac'
     if (id === TIMELINE_KIND_ID) return 'timeline'
     if (id === HELM_KIND_ID) return 'helm'
+    if (id === TOPOLOGY_KIND_ID) return 'topology'
     if (id === MULTI_KIND_ID) return 'multi-kind'
     if (id === SECURITY_KIND_ID || id === VULNERABILITIES_KIND_ID) return 'security'
     if (id === RICH_KIND_IDS.pods) return 'pods'
@@ -987,6 +1018,7 @@ export class ClusterSession {
       this.viewMode !== 'rbac' &&
       this.viewMode !== 'timeline' &&
       this.viewMode !== 'helm' &&
+      this.viewMode !== 'topology' &&
       this.viewMode !== 'security',
   )
 
@@ -1304,6 +1336,7 @@ export class ClusterSession {
         return this.standaloneCount
       case 'overview':
       case 'timeline':
+      case 'topology':
         return 0
       case 'pods':
         // Filtered in Go: the page is all the webview holds.
@@ -1805,6 +1838,46 @@ export class ClusterSession {
   }
 
   /**
+   * The topology's scope as it stands: the one chosen on the page, or else
+   * the namespace filter's — one namespace, or all of them.
+   */
+  readonly topologyScopeNow = $derived.by<TopologyScope>(
+    () =>
+      this.topologyScope ??
+      (this.namespace === ALL_NAMESPACES
+        ? { namespaces: [], all: true }
+        : { namespaces: [this.namespace], all: false }),
+  )
+
+  /**
+   * Opens the topology on a scope — "Open topology" on a namespace's row and
+   * drawer — or on the namespace filter's when none is given.
+   */
+  openTopology = async (scope?: TopologyScope): Promise<void> => {
+    if (scope) this.topologyScope = scope
+    await this.selectKind(TOPOLOGY_KIND_ID)
+  }
+
+  /**
+   * Opens the overview on one finding: what a findings badge on the topology
+   * leads to. The overview is where findings are read, snoozed and acted on;
+   * the badge only says that one names a box.
+   */
+  openFinding = async (findingId: string): Promise<void> => {
+    await this.selectKind(OVERVIEW_KIND_ID)
+    if (typeof document === 'undefined') return
+    // The overview renders on the next frame; bring the card into view then.
+    requestAnimationFrame(() => {
+      const card = document.querySelector(`[data-finding-id="${CSS.escape(findingId)}"]`)
+      card?.scrollIntoView({
+        block: 'center',
+        behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      })
+      if (card instanceof HTMLElement) card.focus({ preventScroll: true })
+    })
+  }
+
+  /**
    * Finds the row object for an object being opened, when one was not handed
    * in. Null when the list holds no such row, which is not an error: the
    * panel falls back to what the manifest alone can show.
@@ -1912,6 +1985,12 @@ export class ClusterSession {
    */
   browseKind = async (kindId: string, namespace: string): Promise<void> => {
     const changed = kindId !== this.selectedKindId || namespace !== this.namespace
+    // The topology keeps a scope of its own once one is chosen; browsing to it
+    // for a namespace means THAT namespace, not whatever was drawn last.
+    if (kindId === TOPOLOGY_KIND_ID) {
+      this.topologyScope =
+        namespace === ALL_NAMESPACES ? { namespaces: [], all: true } : { namespaces: [namespace], all: false }
+    }
 
     this.selectedKindId = kindId
     this.namespace = namespace
@@ -2707,6 +2786,12 @@ export class ClusterSession {
         // without anything here asking. See decision 6 in
         // podsteer/business-docs.
         return Promise.resolve(null)
+      case 'topology':
+        // NOTHING. The topology is a dozen LISTs across a scope that can be
+        // the whole cluster; it reads when it opens and when somebody asks,
+        // and the backend's change feed is what says it is out of date. See
+        // TOPOLOGY_KIND_ID.
+        return Promise.resolve(null)
       case 'security':
         // NOTHING, and for both of the reasons above at once. The static
         // posture findings ride the assessment that runs under every view
@@ -2834,6 +2919,9 @@ export class ClusterSession {
       case 'helm':
         // Nothing to hold, for the same reason as RBAC: the page owns the one
         // listing it asked for, and this tick never asked for anything.
+        break
+      case 'topology':
+        // Nothing to hold: the page owns its graph, and this tick never asked.
         break
       case 'multi-kind':
         this.multiKindTables = rows as ResourceTable[]

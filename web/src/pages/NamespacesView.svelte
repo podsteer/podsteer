@@ -57,7 +57,7 @@
    * cluster's real setting.
    */
   function actionsFor(namespace: NamespaceSummary): RowAction[] {
-    return toRowActions(
+    const actions = toRowActions(
       rowActionsFor('Namespace'),
       {
         overview: () => void session.openDetailFor({ tab: 'overview' }, namespace.name, ''),
@@ -65,6 +65,15 @@
       },
       false,
     )
+    // After Overview, before the local item: it reads the cluster, so it sits
+    // with the items that do, and RowMenu's separator stays where it was.
+    actions.splice(1, 0, {
+      label: 'Open topology',
+      kind: 'reference',
+      local: false,
+      onclick: () => void session.openTopology({ namespaces: [namespace.name], all: false }),
+    })
+    return actions
   }
 
   /**
