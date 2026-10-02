@@ -32,23 +32,15 @@ import (
 // bends, and the graph says so with Summarised.
 const TopologyPodCap = 3000
 
-// TopologyNamespaceListCap is how many namespaces are read one at a time.
-// Beyond it a cluster-wide list is one request instead of many, and the
-// answer is filtered to the scope here.
-const TopologyNamespaceListCap = 3
-
 // TopologyBounded is the line a topology carries about what it did not read.
 const TopologyBounded = "Config, Secrets and claims are named from templates, not read"
 
 // ErrEmptyTopologyScope is returned for a topology asked for no namespace.
 var ErrEmptyTopologyScope = errors.New("a topology needs at least one namespace, or all of them")
 
-// TopologyScope is which namespaces a topology covers.
-type TopologyScope struct {
-	// Namespaces are sorted and distinct. Empty when All.
-	Namespaces []NamespaceName
-	All        bool
-}
+// TopologyScope is which namespaces a topology covers: the same set every
+// list takes, see NamespaceScope.
+type TopologyScope = NamespaceScope
 
 // NewTopologyScope validates a scope. Blank entries are ignored; a scope with
 // nothing left in it and not All is an error rather than a silent "all".
@@ -57,39 +49,14 @@ func NewTopologyScope(namespaces []string, all bool) (TopologyScope, error) {
 		return TopologyScope{All: true}, nil
 	}
 
-	seen := make(map[NamespaceName]bool, len(namespaces))
-	var out []NamespaceName
-	for _, raw := range namespaces {
-		name, err := NewNamespaceName(raw)
-		if err != nil {
-			return TopologyScope{}, err
-		}
-		if name.IsAll() || seen[name] {
-			continue
-		}
-		seen[name] = true
-		out = append(out, name)
+	scope, err := NewNamespaceScope(namespaces)
+	if err != nil {
+		return TopologyScope{}, err
 	}
-	if len(out) == 0 {
+	if scope.All {
 		return TopologyScope{}, ErrEmptyTopologyScope
 	}
-	slices.Sort(out)
-	return TopologyScope{Namespaces: out}, nil
-}
-
-// Includes reports whether a namespace is inside the scope.
-func (s TopologyScope) Includes(namespace NamespaceName) bool {
-	if s.All {
-		return true
-	}
-	_, found := slices.BinarySearch(s.Namespaces, namespace)
-	return found
-}
-
-// ListsClusterWide reports whether the sources are better read with one
-// cluster-wide list per kind than with one list per namespace.
-func (s TopologyScope) ListsClusterWide() bool {
-	return s.All || len(s.Namespaces) > TopologyNamespaceListCap
+	return scope, nil
 }
 
 // EdgeKind is which relationship an edge draws.

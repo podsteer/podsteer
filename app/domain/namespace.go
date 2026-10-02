@@ -262,3 +262,76 @@ func NewNamespaceSummaries(namespaces []Namespace, pods []Pod, metricsAvailable 
 
 	return summaries
 }
+
+// NamespaceListCap is how many namespaces are read one at a time. Beyond it a
+// cluster-wide list is one request instead of many, and the answer is
+// filtered to the scope.
+const NamespaceListCap = 3
+
+// NamespaceScope is which namespaces a list covers: every one, or a named
+// set. It is what a single NamespaceName could not say — "keda and argocd".
+type NamespaceScope struct {
+	// Namespaces are sorted and distinct. Empty when All.
+	Namespaces []NamespaceName
+	All        bool
+}
+
+// NewNamespaceScope validates a scope. Blank entries are ignored and an
+// empty result means every namespace — the convention the bridge uses, where
+// an empty slice is All.
+func NewNamespaceScope(raw []string) (NamespaceScope, error) {
+	seen := make(map[NamespaceName]bool, len(raw))
+	var out []NamespaceName
+	for _, entry := range raw {
+		name, err := NewNamespaceName(entry)
+		if err != nil {
+			return NamespaceScope{}, err
+		}
+		if name.IsAll() || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	if len(out) == 0 {
+		return NamespaceScope{All: true}, nil
+	}
+	slices.Sort(out)
+	return NamespaceScope{Namespaces: out}, nil
+}
+
+// ScopeOf is the scope a single namespace names: All for NamespaceAll.
+func ScopeOf(namespace NamespaceName) NamespaceScope {
+	if namespace.IsAll() {
+		return NamespaceScope{All: true}
+	}
+	return NamespaceScope{Namespaces: []NamespaceName{namespace}}
+}
+
+// Includes reports whether a namespace is inside the scope.
+func (s NamespaceScope) Includes(namespace NamespaceName) bool {
+	if s.All {
+		return true
+	}
+	_, found := slices.BinarySearch(s.Namespaces, namespace)
+	return found
+}
+
+// ListsClusterWide reports whether the scope is better read with one
+// cluster-wide list than with one list per namespace.
+func (s NamespaceScope) ListsClusterWide() bool {
+	return s.All || len(s.Namespaces) > NamespaceListCap
+}
+
+// Key names the scope for a cache or a late answer: empty for All, else the
+// names joined by a comma, which a DNS label cannot contain.
+func (s NamespaceScope) Key() string {
+	if s.All {
+		return ""
+	}
+	names := make([]string, len(s.Namespaces))
+	for i, name := range s.Namespaces {
+		names[i] = name.String()
+	}
+	return strings.Join(names, ",")
+}
