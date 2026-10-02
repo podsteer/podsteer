@@ -93,6 +93,86 @@
   const upgradeTargetValue = $derived(session.upgradeTarget ?? overview?.upgrade.targetMinor ?? '')
 
   /**
+   * The note beside the version, as an icon rather than a pill.
+   *
+   * Pills on the verdict card competed with the figures they qualified, and
+   * their native `title` tooltips reached nobody on a touch screen or a
+   * keyboard. End of life is the one that stays visible without a hover —
+   * the warning triangle in the warning colour — because it is usually the
+   * reason the card is amber at all. Silent for a supported release that is
+   * nowhere near its date: there is nothing to say.
+   */
+  const versionHint = $derived.by(() => {
+    const support = overview?.support
+    if (!support?.minor) return null
+    switch (support.state) {
+      case 'ended':
+        return {
+          tone: 'warning' as const,
+          label: `Kubernetes ${support.minor} is out of support`,
+          text: support.endOfLife
+            ? `End of life. ${support.minor} stopped receiving patches on ${support.endOfLife}, ${-support.days} days ago — including fixes for vulnerabilities disclosed since.`
+            : `End of life. ${support.minor} stopped receiving patches before any release this build has dates for.`,
+        }
+      case 'ending':
+        return {
+          tone: 'info' as const,
+          label: `Kubernetes ${support.minor} is nearing end of life`,
+          text: `${support.minor} stops receiving patches on ${support.endOfLife}, in ${support.days} days. Worth scheduling the upgrade now.`,
+        }
+      case 'unknown':
+        // Newer than the table this build was compiled with — a fact about
+        // PodSteer, not about the cluster, so never a warning.
+        return {
+          tone: 'info' as const,
+          label: `Support window for Kubernetes ${support.minor} unknown`,
+          text: `This build's support table was compiled on ${support.compiledAt} and does not cover ${support.minor}, so nothing is claimed about it.`,
+        }
+      default:
+        return null
+    }
+  })
+
+  /**
+   * The note beside "Check against": all three answers the selector can get
+   * — something to migrate, nothing to migrate, not checked — plus whether
+   * the target itself is still patched. An upgrade from an old cluster
+   * usually lands on a minor that is out of support too, and "nothing to
+   * migrate" alone would read as "safe to stop there".
+   */
+  const upgradeHint = $derived.by(() => {
+    const upgrade = overview?.upgrade
+    if (!upgrade?.targetMinor) {
+      // NOT THE SAME AS CLEAN, and it must not read as it.
+      return {
+        tone: 'info' as const,
+        label: 'Upgrade impact not checked',
+        text: "Not checked. PodSteer could not read what this cluster's API server serves, so it has nothing to compare against a target. This says nothing about whether an upgrade is safe.",
+      }
+    }
+
+    const target = upgrade.targetMinor
+    const migrate =
+      upgrade.count > 0
+        ? `${upgrade.count} ${upgrade.count === 1 ? 'API needs' : 'APIs need'} migrating before ${target}. The findings below name them.`
+        : `Nothing to migrate. Nothing this cluster serves is removed in ${target}, and nothing was seen writing through a version that is.`
+
+    const support = upgrade.targetSupport
+    const targetEnded = support?.state === 'ended'
+    const supportNote = targetEnded
+      ? ` ${target} is itself out of support${support.endOfLife ? ` since ${support.endOfLife}` : ''} — plan to continue past it.`
+      : support?.state === 'ending'
+        ? ` ${target} stops receiving patches on ${support.endOfLife}.`
+        : ''
+
+    return {
+      tone: upgrade.count > 0 || targetEnded ? ('warning' as const) : ('info' as const),
+      label: upgrade.count > 0 ? `${upgrade.count} to migrate before ${target}` : `Upgrade impact for ${target}`,
+      text: migrate + supportNote,
+    }
+  })
+
+  /**
    * Findings the operator should act on, and the rest.
    *
    * The two lists of issues come from the session rather than being filtered
@@ -536,28 +616,8 @@
                    number simply sits there looking like any other. Silent
                    when the table does not cover the release: claiming a fresh
                    version is unsupported would be worse than saying nothing. -->
-              {#if overview.support.state === 'unknown' && overview.support.minor}
-                <!-- Newer than the table this build was compiled with, which
-                     is a fact about PodSteer and not about the cluster. Said
-                     quietly, and only on hover, because it is not a problem. -->
-                <span
-                  class="text-label-small text-on-surface-variant/50"
-                  title="This build's support table was compiled on {overview.support.compiledAt} and does not cover {overview.support.minor}"
-                >
-                  ?
-                </span>
-              {:else if overview.support.state === 'ended' || overview.support.state === 'ending'}
-                <span
-                  class="rounded-full px-1.5 py-0.5 text-label-small
-                         {overview.support.state === 'ended'
-                           ? 'bg-warning-container text-on-warning-container'
-                           : 'bg-surface-container-high text-on-surface-variant'}"
-                  title={overview.support.state === 'ended'
-                    ? `${overview.support.minor} stopped receiving patches on ${overview.support.endOfLife}`
-                    : `${overview.support.minor} stops receiving patches on ${overview.support.endOfLife}`}
-                >
-                  {overview.support.state === 'ended' ? 'End of life' : `${overview.support.days}d left`}
-                </span>
+              {#if versionHint}
+                <InfoHint label={versionHint.label} text={versionHint.text} tone={versionHint.tone} />
               {/if}
             </dd>
           </div>
@@ -588,28 +648,9 @@
                   "assessed and clean".
                 -->
                 {#if overview.upgrade.count > 0}
-                  <span
-                    class="rounded-full bg-warning-container px-1.5 py-0.5 text-label-small text-on-warning-container"
-                    title="{overview.upgrade.count} {overview.upgrade.count === 1 ? 'API needs' : 'APIs need'} migrating before {overview.upgrade.targetMinor}"
-                  >
-                    {overview.upgrade.count} to migrate
-                  </span>
-                {:else if overview.upgrade.targetMinor}
-                  <span
-                    class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small text-on-surface-variant"
-                    title="Nothing this cluster serves is removed in {overview.upgrade.targetMinor}, and nothing was seen writing through a version that is"
-                  >
-                    nothing to migrate
-                  </span>
-                {:else}
-                  <!-- NOT THE SAME AS CLEAN, and it must not read as it. -->
-                  <span
-                    class="rounded-full bg-surface-container-high px-1.5 py-0.5 text-label-small text-on-surface-variant/70"
-                    title="PodSteer could not read what this cluster's API server serves, so it has nothing to compare against a target. This says nothing about whether an upgrade is safe."
-                  >
-                    not checked
-                  </span>
+                  <span class="text-label-large tabular-nums text-warning">{overview.upgrade.count}</span>
                 {/if}
+                <InfoHint label={upgradeHint.label} text={upgradeHint.text} tone={upgradeHint.tone} />
               </dd>
             </div>
           {/if}

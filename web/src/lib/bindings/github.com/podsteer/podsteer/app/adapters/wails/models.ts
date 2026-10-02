@@ -4197,6 +4197,13 @@ export interface UpgradeSummary {
      * severity.
      */
     "count": number;
+
+    /**
+     * TargetSupport is the support verdict for TargetMinor itself, so the
+     * header can say when the version being checked against is out of
+     * support too.
+     */
+    "targetSupport": ReleaseSupport;
 }
 
 /**

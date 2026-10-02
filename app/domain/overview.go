@@ -1017,6 +1017,11 @@ type UpgradeSummary struct {
 	// severity: an API about to break, one served but unused, or one merely
 	// deprecated that survives this target regardless.
 	Count int
+	// TargetSupport is what the support-window table says about the target
+	// itself. An upgrade can land on a minor that is already past end of
+	// life — the next minor after an old cluster usually is — and "nothing
+	// to migrate" says nothing about whether the destination is patched.
+	TargetSupport ReleaseSupport
 }
 
 // NewOverview assesses a cluster snapshot.
@@ -1060,7 +1065,11 @@ func NewOverview(input OverviewInput) Overview {
 	if targetMinor != "" && input.APIsKnown {
 		target := ServerVersion{GitVersion: "v" + targetMinor}
 		upgradeFindings = UpgradeImpact(input.ServedAPIs, input.Version, target, input.APIUsage)
-		upgrade = UpgradeSummary{TargetMinor: targetMinor, Count: len(upgradeFindings)}
+		upgrade = UpgradeSummary{
+			TargetMinor:   targetMinor,
+			Count:         len(upgradeFindings),
+			TargetSupport: SupportFor(target, now),
+		}
 	}
 
 	findings := make([]Finding, 0, 16)

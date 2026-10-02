@@ -20,18 +20,26 @@
   escape an ancestor that clips, so the panel is `position: fixed` and placed
   from the button's measured rectangle — below it by default, above only when
   below would run off the bottom, and never past either side.
+
+  `tone="warning"` swaps the icon for a triangle in the warning colour, for a
+  note that qualifies a figure by saying something is wrong with it — a
+  control plane past end of life. Same component rather than a second one, so
+  every hint on the page opens, positions and closes the same way; the colour
+  is what keeps a warning visible before anybody hovers.
 -->
 <script lang="ts">
-  import { Info } from '@lucide/svelte'
+  import { AlertTriangle, Info } from '@lucide/svelte'
 
   interface Props {
     /** The note itself. */
     text: string
     /** Names what the note is about, for anyone who cannot see the icon. */
     label: string
+    /** `warning` for a note that says something is wrong. */
+    tone?: 'info' | 'warning'
   }
 
-  let { text, label }: Props = $props()
+  let { text, label, tone = 'info' }: Props = $props()
 
   let clicked = $state(false)
   let pointed = $state(false)
@@ -123,10 +131,16 @@
     }}
     onkeydown={onKeydown}
     class="state-layer flex size-5 shrink-0 items-center justify-center rounded-full
-           text-on-surface-variant/60 transition-colors duration-100
-           hover:bg-surface-container hover:text-on-surface-variant"
+           transition-colors duration-100 hover:bg-surface-container
+           {tone === 'warning'
+             ? 'text-warning hover:text-warning'
+             : 'text-on-surface-variant/60 hover:text-on-surface-variant'}"
   >
-    <Info class="size-3.5" strokeWidth={2} />
+    {#if tone === 'warning'}
+      <AlertTriangle class="size-3.5" strokeWidth={2} />
+    {:else}
+      <Info class="size-3.5" strokeWidth={2} />
+    {/if}
   </button>
 
   {#if open && position}

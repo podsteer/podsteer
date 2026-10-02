@@ -369,10 +369,18 @@ type UpgradeSummary struct {
 	// Count is how many upgrade-impact findings were raised, at any
 	// severity.
 	Count int `json:"count"`
+	// TargetSupport is the support verdict for TargetMinor itself, so the
+	// header can say when the version being checked against is out of
+	// support too.
+	TargetSupport ReleaseSupport `json:"targetSupport"`
 }
 
 func toUpgradeSummary(upgrade domain.UpgradeSummary) UpgradeSummary {
-	return UpgradeSummary{TargetMinor: upgrade.TargetMinor, Count: upgrade.Count}
+	return UpgradeSummary{
+		TargetMinor:   upgrade.TargetMinor,
+		Count:         upgrade.Count,
+		TargetSupport: toReleaseSupport(upgrade.TargetSupport),
+	}
 }
 
 // NodeLoad is one node's share of the work.

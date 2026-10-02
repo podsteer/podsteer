@@ -11,6 +11,7 @@ package domain_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/podsteer/podsteer/app/domain"
 )
@@ -432,6 +433,40 @@ func TestNewOverviewWithAPIsUnknownProducesNoUpgradeAssessment(t *testing.T) {
 		if finding.Category == domain.CategoryFindingUpgrade {
 			t.Errorf("findings = %v, want no Upgrade-category finding when APIs are unknown", overview.Findings)
 		}
+	}
+}
+
+// The upgrade summary carries the target's own support verdict, because the
+// next minor after an old cluster is usually out of support too, and "nothing
+// to migrate" must not read as "safe to stop there".
+func TestNewOverviewUpgradeCarriesTargetSupport(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		target string
+		want   domain.SupportState
+	}{
+		{name: "next minor already ended", target: "", want: domain.SupportEnded},
+		{name: "chosen target still patched", target: "1.36", want: domain.SupportActive},
+		{name: "chosen target newer than the table", target: "1.99", want: domain.SupportUnknown},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			overview := domain.NewOverview(domain.OverviewInput{
+				Now:           now,
+				Version:       domain.ServerVersion{GitVersion: "v1.32.7"},
+				TargetVersion: tt.target,
+				APIsKnown:     true,
+			})
+
+			if got := overview.Upgrade.TargetSupport.State; got != tt.want {
+				t.Errorf("target support = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
