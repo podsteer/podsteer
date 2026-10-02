@@ -123,6 +123,9 @@ type Adapter struct {
 	// two caches above it holds nothing for long — it exists to stop the same
 	// request leaving twice in one tick. See readcache.go.
 	reads readCache
+	// changes tells the topology that something in a cluster changed: the
+	// watch stores' events and every write. See topology.go; nil is a no-op.
+	changes *changeNotifier
 }
 
 // Compile-time proof that the adapter satisfies every outbound port it claims.
@@ -156,10 +159,16 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 	factory := newClientFactory(cfg)
 	factory.logger = scoped
 
+	changes := &changeNotifier{}
+	watches := newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery)
+	// Before anything can start a reflector: ensure runs only on a read.
+	watches.changes = changes
+
 	return &Adapter{
 		factory:    factory,
 		logger:     scoped,
-		watches:    newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery),
+		changes:    changes,
+		watches:    watches,
 		forwards:   portForwards{byID: make(map[string]*forwarder)},
 		nodeShells: nodeShells{byID: make(map[string]domain.NodeShell)},
 
@@ -329,4 +338,7 @@ func (a *Adapter) StopAllWatches() {
 func (a *Adapter) forgetReads(id domain.ClusterID) {
 	a.reads.forget(id.String())
 	a.helm.forget(id)
+	// A write is a change, and the writes say which cluster but not where in
+	// it; the topology's feed coalesces this with whatever the watch saw.
+	a.changes.changed(id, domain.NamespaceAll)
 }

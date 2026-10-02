@@ -218,6 +218,9 @@ type TopologyController struct {
 	Suspended              bool
 	// Attached is what the object's own pod template names.
 	Attached []AttachedRef
+	// ClaimTemplates are a StatefulSet's volumeClaimTemplates. Each pod's
+	// claim is named <template>-<pod>, which is the name drawn.
+	ClaimTemplates []string
 }
 
 // ObjectKey names an object some other object refers to.
@@ -560,6 +563,11 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 			// controller that created each — see NewWorkloadGraph.
 			if c, listed := controllers[parent]; listed {
 				b.attach(sp.node, c.Namespace, c.Attached)
+				for _, template := range c.ClaimTemplates {
+					b.attach(sp.node, c.Namespace, []AttachedRef{{
+						Kind: GraphClaim, Name: template + "-" + pod.Name(), Via: "claim template",
+					}})
+				}
 			}
 		}
 	}
@@ -685,7 +693,11 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 		}, true)
 		for _, parent := range route.Parents {
 			from := topologyID(parent.Kind, parent.Namespace, parent.Name)
-			if !gateways[from] {
+			switch {
+			case parent.Kind == "Service":
+				// A mesh (GAMMA) route attaches to a Service, not a Gateway.
+				from = service(parent.Namespace, parent.Name)
+			case !gateways[from]:
 				detail := "not found"
 				if !scope.Includes(parent.Namespace) {
 					detail = "outside the scope"

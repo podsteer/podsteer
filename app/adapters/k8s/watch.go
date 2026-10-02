@@ -181,6 +181,11 @@ type watchManager struct {
 	mu     sync.Mutex
 	closed bool
 	sets   map[domain.ClusterID]*watchSet
+
+	// changes hears every add, update and delete a store sees after its
+	// initial list, for the topology's "Changed" badge. Set once by New
+	// before any reflector can start; nil (as in most tests) is a no-op.
+	changes *changeNotifier
 }
 
 // watchKind names one thing a cluster is watched for.
@@ -459,6 +464,17 @@ func (m *watchManager) run(ctx context.Context, id domain.ClusterID, store *kind
 		// onWatchError's stall call, which carries the same ordering.)
 	})
 
+	// EVERY CHANGE AFTER THE INITIAL LIST IS ANNOUNCED, and announcing never
+	// blocks: the sink coalesces (ports.ChangeSink forbids it blocking), and
+	// this runs on the informer's own delivery goroutine. The initial list is
+	// not a change — it is the store catching up with what a read already saw.
+	if m.changes != nil {
+		if _, err := informer.AddEventHandler(changeHandler(id, m.changes)); err != nil {
+			m.logger.DebugContext(ctx, "not announcing changes",
+				slog.String("cluster", id.String()), slog.String("error", err.Error()))
+		}
+	}
+
 	// PUBLISHED BEFORE ANYTHING CAN FLIP THE STATE. A reader takes the
 	// informer only after seeing `serving`, so the atomic store below is the
 	// happens-before edge between the two; the other order is a read of a nil
@@ -495,6 +511,31 @@ func (m *watchManager) run(ctx context.Context, id domain.ClusterID, store *kind
 
 	informer.Run(ctx.Done())
 	<-supervised
+}
+
+// changeHandler tells the notifier which namespace an event happened in.
+func changeHandler(id domain.ClusterID, changes *changeNotifier) cache.ResourceEventHandler {
+	notify := func(object any) {
+		defer safego.Recover("watch change " + id.String())
+		key, err := cache.DeletionHandlingMetaNamespaceKeyFunc(object)
+		if err != nil {
+			return
+		}
+		namespace, _, err := cache.SplitMetaNamespaceKey(key)
+		if err != nil {
+			return
+		}
+		changes.changed(id, domain.NamespaceName(namespace))
+	}
+	return cache.ResourceEventHandlerDetailedFuncs{
+		AddFunc: func(object any, initial bool) {
+			if !initial {
+				notify(object)
+			}
+		},
+		UpdateFunc: func(_, object any) { notify(object) },
+		DeleteFunc: notify,
+	}
 }
 
 // guardTransform makes a transform's panic an error. The transform runs on a

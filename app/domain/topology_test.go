@@ -549,3 +549,26 @@ func BenchmarkNewTopologyGraph10kPods(b *testing.B) {
 		_ = domain.NewTopologyGraph(in)
 	}
 }
+
+func TestTopologyStatefulSetClaimsAreNamedPerPod(t *testing.T) {
+	in := domain.TopologyInput{
+		Scope: scopeOf(t, "shop"),
+		Controllers: []domain.TopologyController{
+			{Kind: "StatefulSet", Name: "db", Namespace: "shop", Desired: 2, Ready: 2, ClaimTemplates: []string{"data"}},
+		},
+		Pods: []domain.Pod{
+			topoPod(t, "shop", "db-0", nil, ctl("StatefulSet", "db"), true),
+			topoPod(t, "shop", "db-1", nil, ctl("StatefulSet", "db"), true),
+		},
+	}
+	graph := domain.NewTopologyGraph(in)
+	checkTopology(t, graph)
+	for _, pod := range []string{"db-0", "db-1"} {
+		if !hasTopoEdge(graph, "pod/shop/"+pod, "persistentvolumeclaim/shop/data-"+pod, domain.EdgeAttaches) {
+			t.Errorf("claim of %s missing", pod)
+		}
+	}
+	if graph.Counts["PersistentVolumeClaim"] != 2 {
+		t.Errorf("Counts = %v", graph.Counts)
+	}
+}
