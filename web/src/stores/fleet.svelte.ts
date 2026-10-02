@@ -200,6 +200,9 @@ class Fleet {
       newer one — the same guard ClusterSession.refresh uses. */
   #generation = 0
 
+  /** What the last successful read was of — see refresh. */
+  #readScope = ''
+
   /** The merged pod table's page, each row stamped with its cluster. */
   podRows = $state.raw<FleetRow<Pod>[]>([])
 
@@ -265,6 +268,7 @@ class Fleet {
     if (namespace === this.namespace) return
     this.namespace = namespace
     this.#generation++
+    this.#readScope = ''
     this.pods = []
     this.podRows = []
     this.podCounts = { ...this.podCounts, matched: 0, total: 0, unhealthy: 0, chipCounts: {} }
@@ -290,7 +294,12 @@ class Fleet {
     const ids = this.openClusters()
     const tab = this.tab
     const generation = ++this.#generation
-    this.status = 'loading'
+    // 'loading' ONLY FOR A NEW QUESTION — another table, namespace or set of
+    // clusters, or the first read. A page, a sort or a chip on the merged
+    // pods asks again constantly, and flipping to loading for each made the
+    // view say "Reading clusters…" over rows it already had.
+    const scope = `${tab}|${namespace}|${ids.join(',')}`
+    if (scope !== this.#readScope) this.status = 'loading'
 
     try {
       switch (tab) {
@@ -383,6 +392,7 @@ class Fleet {
       }
       this.status = 'ready'
       this.lastReadAt = Date.now()
+      this.#readScope = scope
     } catch (cause) {
       if (generation === this.#generation) this.status = 'error'
       throw cause

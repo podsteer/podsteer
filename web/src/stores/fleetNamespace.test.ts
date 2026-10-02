@@ -103,4 +103,22 @@ describe('the All clusters namespace', () => {
     expect(prod).toMatchObject({ cluster: 'prod', status: 'unreachable', rows: 7, stale: true })
     expect(staging).toMatchObject({ cluster: 'staging', status: 'forbidden', rows: 0, stale: false, ageSeconds: null })
   })
+
+  it('stays ready while the same table is asked for another page', async () => {
+    queryFleetPods.mockResolvedValue(answer('prod', ['a']))
+    await fleet.refresh(fleet.namespace, query)
+    expect(fleet.status).toBe('ready')
+
+    let settle: (value: unknown) => void = () => {}
+    queryFleetPods.mockReturnValue(new Promise((resolve) => (settle = resolve)))
+    const next = fleet.refresh(fleet.namespace, { ...query, offset: 50 })
+    expect(fleet.status).toBe('ready')
+    settle(answer('prod', ['b']))
+    await next
+
+    fleet.chooseNamespace('default')
+    queryFleetPods.mockReturnValue(new Promise(() => {}))
+    void fleet.refresh(fleet.namespace, query)
+    expect(fleet.status).toBe('loading')
+  })
 })
