@@ -30,6 +30,7 @@
   import { operatorPanelFor } from '$lib/operators/panel'
   import StandardApiDetail from './StandardApiDetail.svelte'
   import { standardPanelFor } from '$lib/standardapis/panel'
+  import { podGroupNameOf } from '$lib/standardapis/scheduling'
   import type { MetricsBackend } from '$lib/api/client'
   import { parseQuantity } from '$lib/sort'
   import { capacityNote } from '$lib/nodeCapacity'
@@ -899,6 +900,18 @@
         label: 'Spread',
         value: `max skew ${constraint.maxSkew} across ${constraint.topologyKey}, ` +
           `${constraint.whenUnsatisfiable === 'DoNotSchedule' ? 'or do not schedule' : 'best effort'}`,
+      })
+    }
+
+    // The pod's own declaration of its gang, in the API's own field —
+    // spec.schedulingGroup.podGroupName, the PodGroup in this pod's namespace.
+    // Never inferred from labels or owners.
+    const groupName = podGroupNameOf(parsedManifest)
+    if (groupName) {
+      rows.push({
+        label: 'Pod group',
+        value: groupName,
+        onclick: follow('PodGroup', groupName, String(metadata.namespace ?? '')),
       })
     }
 

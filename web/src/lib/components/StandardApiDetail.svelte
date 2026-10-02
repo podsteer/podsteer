@@ -42,6 +42,7 @@
     resourceClaimTemplate,
     type ClaimSpecView,
   } from '$lib/standardapis/devices'
+  import { podGroup, workload, type SchedulingPolicyView } from '$lib/standardapis/scheduling'
   import {
     MUTATING_POLICY_KIND,
     VALIDATING_POLICY_KIND,
@@ -89,6 +90,9 @@
       ? admissionPolicyBinding(manifest)
       : null,
   )
+
+  const workloadView = $derived(panel === 'workload' ? workload(manifest) : null)
+  const podGroupView = $derived(panel === 'pod-group' ? podGroup(manifest) : null)
 
   // --- Shared rendering ------------------------------------------------------
 
@@ -255,6 +259,79 @@
 
     return rows
   }
+
+  // --- Gang scheduling -------------------------------------------------------
+
+  /** A policy as one line: the API's own word, and a gang's minimum beside it. */
+  function policyLine(view: SchedulingPolicyView): string {
+    if (!view.policy) return '—'
+    return view.minCount !== null ? `${view.policy} · min count ${view.minCount}` : view.policy
+  }
+
+  const workloadRows = $derived.by<DetailRow[]>(() => {
+    const view = workloadView
+    if (!view) return []
+
+    const rows: DetailRow[] = []
+    if (view.controller) {
+      const { apiGroup, kind, name } = view.controller
+      rows.push({
+        label: 'Controller',
+        value: `${kind || '—'} ${name || '—'}`,
+        // The reference carries a group and no namespace: the controller is in
+        // this Workload's own.
+        onclick: apiGroup && kind && name ? follow(kind, name, namespace) : undefined,
+        info: apiGroup ? `API group ${apiGroup}` : undefined,
+      })
+    }
+    if (view.compositeTemplates > 0) {
+      rows.push({
+        label: 'Composite templates',
+        value: String(view.compositeTemplates),
+        info: 'Hierarchical groups (alpha). Counted here, not expanded.',
+      })
+    }
+    return rows
+  })
+
+  const podGroupRows = $derived.by<DetailRow[]>(() => {
+    const view = podGroupView
+    if (!view) return []
+
+    const rows: DetailRow[] = [{ label: 'Scheduling policy', value: policyLine(view) }]
+    if (view.workload) {
+      rows.push({
+        label: 'Workload',
+        value: view.workload.name,
+        onclick: follow('Workload', view.workload.name, view.workload.namespace || namespace),
+      })
+    }
+    if (view.parentCompositePodGroup) {
+      rows.push({
+        label: 'Parent group',
+        value: view.parentCompositePodGroup,
+        onclick: follow('CompositePodGroup', view.parentCompositePodGroup, namespace),
+      })
+    }
+    if (view.priorityClassName) {
+      rows.push({
+        label: 'Priority class',
+        value: view.priorityClassName,
+        onclick: follow('PriorityClass', view.priorityClassName),
+      })
+    }
+    if (view.priority !== null) rows.push({ label: 'Priority', value: String(view.priority) })
+    if (view.preemptionPolicy) rows.push({ label: 'Preemption policy', value: view.preemptionPolicy })
+    if (view.disruptionMode) rows.push({ label: 'Disruption mode', value: view.disruptionMode })
+    for (const claim of view.resourceClaims) {
+      rows.push({ label: 'Shared claim', value: claim })
+    }
+    rows.push(...conditionRows('Initially scheduled', view.scheduled))
+    if (view.disruptionTarget) {
+      rows.push(...conditionRows('Disruption target', view.disruptionTarget))
+    }
+    return rows
+  })
 
   // --- Gateway API -----------------------------------------------------------
 
@@ -995,6 +1072,55 @@
 {:else if binding}
   <DetailSection level="h3" id="standard-binding" title="Policy binding">
     <DetailList rows={bindingRows} />
+  </DetailSection>
+{/if}
+
+{#if workloadView}
+  <DetailSection
+    level="h3"
+    id="standard-workload"
+    title="Workload"
+    hint={String(workloadView.templates.length)}
+  >
+    {#if workloadRows.length > 0}
+      <DetailList rows={workloadRows} />
+    {/if}
+    {#if workloadView.templates.length === 0}
+      <p class="text-body-small text-on-surface-variant/70">This Workload declares no pod group templates.</p>
+    {:else}
+      {#each workloadView.templates as template (template.name)}
+        <p class="mt-3 text-label-large text-on-surface">{template.name || 'template'}</p>
+        <DetailList
+          rows={[
+            { label: 'Scheduling policy', value: policyLine(template) },
+            ...(template.priorityClassName
+              ? [
+                  {
+                    label: 'Priority class',
+                    value: template.priorityClassName,
+                    onclick: follow('PriorityClass', template.priorityClassName),
+                  },
+                ]
+              : []),
+            ...(template.disruptionMode
+              ? [{ label: 'Disruption mode', value: template.disruptionMode }]
+              : []),
+          ]}
+        />
+      {/each}
+    {/if}
+    <p class="mt-3 text-body-small text-on-surface-variant/60">
+      The template. The PodGroups a controller creates from it carry the runtime state.
+    </p>
+  </DetailSection>
+{:else if podGroupView}
+  <DetailSection
+    level="h3"
+    id="standard-podgroup"
+    title="Pod group"
+    hint={podGroupView.minCount !== null ? `min ${podGroupView.minCount}` : podGroupView.policy}
+  >
+    <DetailList rows={podGroupRows} />
   </DetailSection>
 {/if}
 

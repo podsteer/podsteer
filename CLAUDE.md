@@ -3050,6 +3050,17 @@ every cluster has it, and both of these are behind feature gates most clusters
 do not turn on. A catalog entry was the wrong mechanism precisely because it
 pins ONE version, which is the thing `resource.k8s.io` will not hold still on.
 
+**Gang scheduling (`scheduling.k8s.io` `Workload` and `PodGroup`, beta in 1.37)
+is the fourth group here**, in `standardapis/scheduling.ts`. The group is
+adopted (`adoptedGroups`) for the same reason as the other two; PriorityClass
+shares it and is therefore listed too, with no panel. Read from the v1beta1
+reference only: a gang policy is `schedulingPolicy.gang.minCount`, a PodGroup's
+`spec.workloadRef` is `{name, namespace}` (no template-name field is documented,
+so none is read), and the scheduler's verdict is the `PodGroupInitiallyScheduled`
+condition. The ONE pod link is `spec.schedulingGroup.podGroupName`, shown as a
+"Pod group" row in the pod's Scheduling section; nothing is inferred from
+labels. `CompositePodGroup` (alpha) is counted on a Workload, not rendered.
+
 ## A node shell is a pod PodSteer owns, and must be deleted like one
 
 The node shell (`app/adapters/k8s/nodeshell.go`, `TerminalAPI.StartNodeShellSession`)

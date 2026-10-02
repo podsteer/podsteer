@@ -371,7 +371,7 @@ func TestAdoptedGroupsSurviveTheSuffixRule(t *testing.T) {
 	// the suffix rule was the only thing deciding, and it hid them: a cluster
 	// has ResourceClaims because somebody enabled DRA and installed a driver,
 	// and MutatingAdmissionPolicy because somebody turned its gate on.
-	for _, group := range []string{"resource.k8s.io", "admissionregistration.k8s.io"} {
+	for _, group := range []string{"resource.k8s.io", "admissionregistration.k8s.io", "scheduling.k8s.io"} {
 		if isKubernetesGroup(group) {
 			t.Fatalf("%q was hidden, though it is only present when its feature gate is on", group)
 		}
