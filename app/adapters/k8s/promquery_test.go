@@ -326,7 +326,7 @@ func TestTheNodeProbeAnswerIsDeduplicatedAndSorted(t *testing.T) {
 
 	seen := map[string]struct{}{}
 	for _, result := range decoded.Data.Result {
-		if name := result.Metric[domain.NodeProbeLabel]; name != "" {
+		if name := domain.NodeIdentity(result.Metric); name != "" {
 			seen[name] = struct{}{}
 		}
 	}

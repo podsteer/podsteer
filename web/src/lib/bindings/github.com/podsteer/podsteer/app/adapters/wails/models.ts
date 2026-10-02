@@ -2273,6 +2273,44 @@ export interface MetricsBackend {
 }
 
 /**
+ * MetricsBackendCandidate is one discovered backend for the Settings picker.
+ * Pinning one is SettingsAPI.SetMetricsQuery's preferred namespace and
+ * service.
+ */
+export interface MetricsBackendCandidate {
+    "namespace": string;
+    "service": string;
+    "port": string;
+
+    /**
+     * Product is "Prometheus", "VictoriaMetrics"…
+     */
+    "product": string;
+
+    /**
+     * Rank is discovery's order; 0 is what PodSteer picks when nothing is
+     * pinned.
+     */
+    "rank": number;
+
+    /**
+     * Verified is the node check's remembered answer — verified, fleet,
+     * mismatch, unverifiable — or "" when this backend has not been checked.
+     */
+    "verified": string;
+
+    /**
+     * Detail says what the candidate is for, in words.
+     */
+    "detail": string;
+
+    /**
+     * LinkerdViz marks linkerd-viz's own Prometheus.
+     */
+    "linkerdViz": boolean;
+}
+
+/**
  * Namespace is a namespace as presented to the UI.
  */
 export interface Namespace {

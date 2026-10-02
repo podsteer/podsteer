@@ -326,6 +326,18 @@ read in this file, so it is set out in full.
   no URL is typed anywhere, and the webview's content security policy is
   untouched. "It talks to your clusters, and to GitHub only if you let it"
   stays literally true.
+- **One fallback, when the backend itself refuses that proxy.** A monitoring
+  backend behind a service mesh's own policy — linkerd-viz's Prometheus is
+  the case that found it — answers the API server's proxy with its own 403.
+  PodSteer then makes the same GET once over an **ephemeral port-forward** to
+  one of the backend's pods: it reads the Service and lists its pods to find
+  one, opens the forward (the `create` verb on `pods/portforward`, recorded
+  in the audit log as such), sends the query to `127.0.0.1` on this machine,
+  and stops the forward before the answer is returned. Nothing is kept open
+  and no proxy setting applies to that loopback request. It is used only for
+  the backend's OWN refusal: when the API server refuses your account, that
+  is reported as it is and never routed around. If your account may not open
+  port-forwards, the panel says that permission is what is missing.
 - **The socket is not the new part; the query is.** The monitoring backend
   receives expressions this application wrote, attributed to your identity,
   and **it logs them** — a Prometheus query log, a Thanos or Mimir access log,
@@ -399,7 +411,11 @@ only, the same response cap — and these are the differences:
 - **A backend that holds other clusters is refused for traffic**, whatever the
   fleet setting says. Charts can be narrowed to your nodes; traffic is grouped
   by workload, so there is no way to narrow it and a workload of the same name
-  in another cluster would be counted as yours.
+  in another cluster would be counted as yours. A backend the node check
+  cannot verify either way (one that never scrapes the kubelet, such as
+  linkerd-viz's) is checked by its answer instead: it is drawn only when
+  every namespace it names is one of yours and at least one of its workloads
+  is on your map.
 - **Nothing is installed and no other API is used.** When a source is absent,
   the layer says what it would need. PodSteer does not deploy a mesh, an agent
   or an exporter, and it does not talk to Hubble Relay's gRPC API — Hubble

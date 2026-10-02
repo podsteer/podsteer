@@ -80,6 +80,7 @@ type trafficFixture struct {
 	discovery *stubDiscovery
 	nodes     *stubNodes
 	query     *countingQuery
+	metrics   *application.MetricsQueryService
 }
 
 func newTrafficFixture(t *testing.T, mode domain.MetricsQueryMode, backendNodes []string) trafficFixture {
@@ -120,7 +121,7 @@ func newTrafficFixtureWith(t *testing.T, mode domain.MetricsQueryMode, backendNo
 	if err != nil {
 		t.Fatal(err)
 	}
-	return trafficFixture{service: service, traffic: traffic, discovery: discovery, nodes: nodes, query: query}
+	return trafficFixture{service: service, traffic: traffic, discovery: discovery, nodes: nodes, query: query, metrics: metrics}
 }
 
 // OFF SENDS NOTHING, counted rather than inferred from the status.
@@ -388,8 +389,16 @@ func vizBackend() domain.MetricsBackend {
 // linkerd-viz's Prometheus holds no cAdvisor series, so the node check can
 // only answer "unverifiable" — and it is in-cluster by construction. Chosen,
 // it answers Linkerd traffic rather than being refused.
+func warehouseNodes() application.TrafficNodeReader {
+	return stubTrafficNodes{nodes: []domain.TrafficNodeRef{
+		{ID: "deploy/picker", APIKind: "Deployment", Name: "picker", Namespace: "warehouse"},
+		{ID: "deploy/inventory-api", APIKind: "Deployment", Name: "inventory-api", Namespace: "warehouse"},
+		{ID: "sts/orders-db", APIKind: "StatefulSet", Name: "orders-db", Namespace: "warehouse"},
+	}}
+}
+
 func TestTrafficReadsLinkerdFromAChosenLinkerdVizPrometheus(t *testing.T) {
-	f := newTrafficFixture(t, domain.MetricsQueryManual, nil)
+	f := newTrafficFixtureWith(t, domain.MetricsQueryManual, nil, warehouseNodes())
 	f.discovery.backends = []domain.MetricsBackend{vizBackend()}
 	f.traffic.answers["count(request_total"] = []domain.PromSeries{one(43, nil)}
 	f.traffic.answers[`request_total{direction="outbound",dst_namespace!=""`] = []domain.PromSeries{one(3.9, map[string]string{
@@ -408,15 +417,80 @@ func TestTrafficReadsLinkerdFromAChosenLinkerdVizPrometheus(t *testing.T) {
 		t.Errorf("provenance %+v should say the backend was not node-verified", layer.Provenance)
 	}
 
-	// The same backend is still refused for the charts' sake elsewhere; here
-	// it is only a general Prometheus that must not be accepted unverified.
-	f2 := newTrafficFixture(t, domain.MetricsQueryManual, nil)
-	unverified, err := f2.service.Traffic(context.Background(), "dev", nil, true, domain.TrafficIstio, domain.TrafficWindow5m)
+	if !strings.Contains(layer.Message, "checked by the workloads it names") {
+		t.Errorf("the answer does not say how it was checked: %q", layer.Message)
+	}
+}
+
+type stubNamespaces struct{ names []string }
+
+func (s stubNamespaces) ListNamespaces(_ context.Context, _ domain.ClusterID, _ domain.Projection) ([]domain.Namespace, error) {
+	var out []domain.Namespace
+	for _, name := range s.names {
+		namespace, err := domain.NewNamespace(name, domain.NamespacePhaseActive, time.Now())
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, namespace)
+	}
+	return out, nil
+}
+
+// A backend the node check could not verify (Istio's sample Prometheus with
+// no node label, before the probe learned the others) is checked by what it
+// answers: a namespace this cluster does not have, or workloads none of
+// which are on this map, and nothing is drawn.
+func TestAnUnverifiableBackendNamingAnotherClusterIsRefused(t *testing.T) {
+	istioEdge := func(namespace string) []domain.PromSeries {
+		return []domain.PromSeries{one(4, map[string]string{
+			"source_workload": "web", "source_workload_namespace": namespace,
+			"destination_workload": "api", "destination_workload_namespace": namespace,
+			"destination_service_name": "api", "request_protocol": "http",
+		})}
+	}
+	newService := func(t *testing.T, namespaces []string, reader application.TrafficNodeReader) (*application.TrafficService, *countingTraffic) {
+		f := newTrafficFixtureWith(t, domain.MetricsQueryManual, nil, reader)
+		service, err := application.NewTrafficService(application.TrafficServiceDeps{
+			Metrics: f.metrics, Query: f.traffic, Nodes: reader, Namespaces: stubNamespaces{names: namespaces},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return service, f.traffic
+	}
+
+	// Foreign namespace: refused, and named.
+	service, traffic := newService(t, []string{"shop"}, nil)
+	traffic.answers["istio_requests_total{reporter="] = istioEdge("elsewhere")
+	layer, err := service.Traffic(context.Background(), "dev", nil, true, domain.TrafficIstio, domain.TrafficWindow5m)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if unverified.Status != domain.BackendUnverified {
-		t.Errorf("an unverifiable general backend: %s", unverified.Status)
+	if layer.Status != domain.BackendUnverified || !strings.Contains(layer.Message, "elsewhere") || len(layer.Edges) != 0 {
+		t.Errorf("foreign namespace: %s %q", layer.Status, layer.Message)
+	}
+
+	// Our namespace, our workloads: drawn.
+	service, traffic = newService(t, []string{"shop"}, stubTrafficNodes{nodes: []domain.TrafficNodeRef{
+		{ID: "deploy/web", APIKind: "Deployment", Name: "web", Namespace: "shop"},
+	}})
+	traffic.answers["istio_requests_total{reporter="] = istioEdge("shop")
+	layer, err = service.Traffic(context.Background(), "dev", nil, true, domain.TrafficIstio, domain.TrafficWindow5m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layer.Status != domain.BackendAnswered || len(layer.Edges) != 1 {
+		t.Errorf("own workloads: %s %q", layer.Status, layer.Message)
+	}
+
+	// A mismatch from the node check is still refused before anything is asked.
+	f := newTrafficFixture(t, domain.MetricsQueryManual, []string{"someone-elses"})
+	layer, err = f.service.Traffic(context.Background(), "dev", nil, true, domain.TrafficIstio, domain.TrafficWindow5m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layer.Status != domain.BackendUnverified || f.traffic.queryCalls.Load() != 0 {
+		t.Errorf("mismatch: %s, %d queries", layer.Status, f.traffic.queryCalls.Load())
 	}
 }
 
@@ -452,7 +526,7 @@ func TestTrafficNamesLinkerdVizWhenItIsNotChosen(t *testing.T) {
 // What linkerd-viz's own Prometheus sent is a scrape, and the source names it:
 // dropped by source, while a headless-Service request is kept.
 func TestTrafficDropsWhatTheMonitoringBackendSent(t *testing.T) {
-	f := newTrafficFixture(t, domain.MetricsQueryManual, nil)
+	f := newTrafficFixtureWith(t, domain.MetricsQueryManual, nil, warehouseNodes())
 	f.discovery.backends = []domain.MetricsBackend{vizBackend()}
 	f.traffic.answers["count(request_total"] = []domain.PromSeries{one(43, nil)}
 	f.traffic.answers[`request_total{direction="outbound",dst_namespace!=""`] = []domain.PromSeries{
@@ -466,5 +540,23 @@ func TestTrafficDropsWhatTheMonitoringBackendSent(t *testing.T) {
 	}
 	if len(layer.Edges) != 1 || layer.Edges[0].Dest.Workload != "orders-db" {
 		t.Fatalf("edges %+v", layer.Edges)
+	}
+}
+
+// The picker's list is discovery and nothing else: no node probe, no query.
+func TestBackendsListsDiscoveryWithoutQuerying(t *testing.T) {
+	f := newTrafficFixture(t, domain.MetricsQueryManual, []string{"node-a", "node-b"})
+	f.discovery.backends = []domain.MetricsBackend{testBackend(), vizBackend()}
+
+	candidates, err := f.metrics.Backends(context.Background(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 2 || candidates[0].Rank != 0 || candidates[1].Rank != 1 ||
+		!strings.Contains(candidates[1].Detail, "linkerd-viz") || candidates[0].Verification != "" {
+		t.Fatalf("%+v", candidates)
+	}
+	if calls := f.query.nodeCalls.Load() + f.traffic.probeCalls.Load() + f.traffic.queryCalls.Load(); calls != 0 {
+		t.Fatalf("%d requests to list candidates", calls)
 	}
 }

@@ -15,6 +15,14 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * Backends lists every backend discovery found in a cluster, best first. It
+ * lists Services and reads nothing from any of them.
+ */
+export function Backends(clusterID: string): $CancellablePromise<$models.MetricsBackendCandidate[] | null> {
+    return $Call.ByID(200935977, clusterID);
+}
+
+/**
  * GetSeries asks the cluster's monitoring backend for one metric over a
  * window.
  * 

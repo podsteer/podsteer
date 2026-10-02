@@ -113,6 +113,7 @@ export type {
     KubeconfigSource,
     LocalShellSupportDTO,
     MetricsBackend,
+    MetricsBackendCandidate,
     Namespace,
     NamespaceInventory,
     NamespaceLoad,

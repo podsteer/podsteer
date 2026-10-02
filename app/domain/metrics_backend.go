@@ -113,3 +113,17 @@ func (b MetricsBackend) Describe() string {
 	}
 	return fmt.Sprintf("%s in %s", b.Product(), b.Namespace)
 }
+
+// MetricsBackendCandidate is one discovered backend as the Settings picker
+// offers it: the backend, where discovery ranked it, and what PodSteer
+// already knows about it. Nothing about it was queried to produce this.
+type MetricsBackendCandidate struct {
+	Backend MetricsBackend
+	// Rank is the position in discovery's ranking, 0 being the automatic pick.
+	Rank int
+	// Verification is the node check's last answer for this backend, when
+	// one is remembered; empty when it has not been checked.
+	Verification BackendVerification
+	// Detail says in words what the candidate is for.
+	Detail string
+}

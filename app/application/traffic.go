@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,20 +47,28 @@ type TrafficNodeReader interface {
 	TrafficNodes(ctx context.Context, id domain.ClusterID, namespaces []domain.NamespaceName, all bool) ([]domain.TrafficNodeRef, error)
 }
 
+// TrafficNamespaceReader lists the cluster's namespaces, which is half of how
+// an answer from a backend the node check could not verify is checked.
+type TrafficNamespaceReader interface {
+	ListNamespaces(ctx context.Context, id domain.ClusterID, projection domain.Projection) ([]domain.Namespace, error)
+}
+
 // TrafficServiceDeps are what the service is built from.
 type TrafficServiceDeps struct {
-	Metrics *MetricsQueryService
-	Query   ports.TrafficQueryPort
-	Nodes   TrafficNodeReader
-	Logger  *slog.Logger
+	Metrics    *MetricsQueryService
+	Query      ports.TrafficQueryPort
+	Nodes      TrafficNodeReader
+	Namespaces TrafficNamespaceReader
+	Logger     *slog.Logger
 }
 
 // TrafficService answers ports.TrafficUseCase.
 type TrafficService struct {
-	metrics *MetricsQueryService
-	query   ports.TrafficQueryPort
-	nodes   TrafficNodeReader
-	logger  *slog.Logger
+	metrics    *MetricsQueryService
+	query      ports.TrafficQueryPort
+	nodes      TrafficNodeReader
+	namespaces TrafficNamespaceReader
+	logger     *slog.Logger
 
 	probes  probeCache
 	probing singleflight.Group
@@ -80,10 +90,11 @@ func NewTrafficService(deps TrafficServiceDeps) (*TrafficService, error) {
 		logger = slog.Default()
 	}
 	return &TrafficService{
-		metrics: deps.Metrics,
-		query:   deps.Query,
-		nodes:   deps.Nodes,
-		logger:  logger.With(slog.String("service", "traffic")),
+		metrics:    deps.Metrics,
+		query:      deps.Query,
+		nodes:      deps.Nodes,
+		namespaces: deps.Namespaces,
+		logger:     logger.With(slog.String("service", "traffic")),
 	}, nil
 }
 
@@ -129,13 +140,14 @@ func (s *TrafficService) gate(ctx context.Context, id domain.ClusterID) (traffic
 		return trafficGate{refused: true, status: failed.Status, message: failed.Message, provenance: failed.Provenance}, nil
 	}
 
-	// LINKERD-VIZ'S PROMETHEUS CANNOT BE VERIFIED AND NEEDS NOT BE. The node
-	// check reads cAdvisor series, which it never scrapes, so it always
-	// answers "unverifiable" — and it is in-cluster by construction: it is
-	// installed by the extension into this cluster and discovers only this
-	// cluster's proxies. A fleet or mismatch answer is still refused.
-	vizAccepted := backend.LinkerdViz && verification == domain.VerificationUnverifiable
-	if verification != domain.VerificationVerified && !vizAccepted {
+	// UNVERIFIABLE IS NOT REFUSED HERE, FOR TRAFFIC. The node check needs
+	// cAdvisor series, which linkerd-viz's Prometheus never scrapes and a
+	// mesh add-on Prometheus may not label by node, so "nothing to compare"
+	// is the ordinary answer from exactly the backends traffic lives in. The
+	// answer is checked instead by the workloads it names (see
+	// checkWorkloadEvidence) before anything is drawn. A fleet or a mismatch
+	// is positive evidence of another cluster and is still refused here.
+	if verification != domain.VerificationVerified && verification != domain.VerificationUnverifiable {
 		// A FLEET BACKEND IS REFUSED WHATEVER THE FLEET SETTING SAYS. The
 		// chart narrows a fleet backend to this cluster's node names; traffic
 		// is grouped by workload, not node, so there is no matcher that makes
@@ -214,6 +226,75 @@ func (s *TrafficService) Sources(ctx context.Context, id domain.ClusterID) (doma
 			gate.backend.Describe())
 	}
 	return answer, nil
+}
+
+// checkWorkloadEvidence decides whether an answer from a backend the node
+// check could not verify is about THIS cluster, and returns the refusal
+// sentence when it is not (or cannot be told).
+//
+// TWO TESTS, BOTH ON THE ANSWER ITSELF. Every namespace it names must be one
+// of this cluster's — a namespace this cluster does not have is positive
+// evidence of another cluster's data — and at least one of its workloads must
+// be a box on this map, because "default" and "kube-system" exist everywhere
+// and namespaces alone prove little. Either test that cannot be run (an
+// account that may not list namespaces, no topology to attach to) leaves the
+// other; with neither, nothing is drawn.
+func (s *TrafficService) checkWorkloadEvidence(
+	ctx context.Context,
+	id domain.ClusterID,
+	backend domain.MetricsBackend,
+	layer domain.TrafficLayer,
+	nodes []domain.TrafficNodeRef,
+) string {
+	checked := false
+
+	if s.namespaces != nil {
+		if listed, err := s.namespaces.ListNamespaces(ctx, id, domain.Projection{}); err == nil && len(listed) > 0 {
+			checked = true
+			ours := make(map[string]struct{}, len(listed))
+			for _, namespace := range listed {
+				ours[namespace.Name().String()] = struct{}{}
+			}
+			var foreign []string
+			for _, edge := range layer.Edges {
+				for _, endpoint := range []domain.TrafficEndpoint{edge.Source, edge.Dest} {
+					if endpoint.Namespace == "" {
+						continue
+					}
+					if _, ok := ours[endpoint.Namespace]; !ok && !slices.Contains(foreign, endpoint.Namespace) {
+						foreign = append(foreign, endpoint.Namespace)
+					}
+				}
+			}
+			if len(foreign) > 0 {
+				slices.Sort(foreign)
+				return fmt.Sprintf(
+					"%s names namespaces this cluster does not have (%s), so it appears to hold another cluster's data. Nothing is drawn.",
+					backend.Describe(), strings.Join(foreign, ", "))
+			}
+		}
+	}
+
+	if nodes != nil {
+		checked = true
+		attached := false
+		for _, edge := range layer.Edges {
+			if edge.Source.NodeID != "" || edge.Dest.NodeID != "" {
+				attached = true
+				break
+			}
+		}
+		if !attached {
+			return fmt.Sprintf(
+				"%s could not be checked by node, and none of the workloads its answer names is on this map, so PodSteer cannot tell it holds this cluster's data. Nothing is drawn.",
+				backend.Describe())
+		}
+	}
+
+	if !checked {
+		return domain.UnverifiedResult(backend, domain.VerificationUnverifiable).Message
+	}
+	return ""
 }
 
 // monitors names every discovered monitoring backend as a source workload,
@@ -362,6 +443,16 @@ func (s *TrafficService) Traffic(
 	mapped := domain.MapTraffic(source, window, results, nodes, namespaces, s.monitors(ctx, id, gate.backend)...)
 	mapped.Provenance = layer.Provenance
 	mapped.Expressions = layer.Expressions
+
+	if gate.verification == domain.VerificationUnverifiable && len(mapped.Edges) > 0 {
+		if refusal := s.checkWorkloadEvidence(ctx, id, gate.backend, mapped, nodes); refusal != "" {
+			layer.Status, layer.Message = domain.BackendUnverified, refusal
+			return layer, nil
+		}
+		mapped.Message = fmt.Sprintf(
+			"%s could not be checked by node, so its answer was checked by the workloads it names: every namespace in it is one of this cluster's, and its workloads are on this map.",
+			gate.backend.Describe())
+	}
 
 	if len(mapped.Edges) > domain.MaxTrafficEdges {
 		mapped.Status = domain.BackendTooLarge

@@ -241,7 +241,7 @@ func TestTheNodeProbeUsesTheMetricTheChartsUse(t *testing.T) {
 	if !strings.Contains(domain.NodeProbeExpression, "container_memory_working_set_bytes") {
 		t.Fatalf("the node probe does not use the charts' own metric: %s", domain.NodeProbeExpression)
 	}
-	if !strings.Contains(domain.NodeProbeExpression, "by ("+domain.NodeProbeLabel+")") {
+	if !strings.Contains(domain.NodeProbeExpression, "by ("+domain.NodeProbeLabel+",") {
 		t.Fatalf("the node probe does not group by %q: %s", domain.NodeProbeLabel, domain.NodeProbeExpression)
 	}
 
@@ -488,5 +488,33 @@ func TestNoExpressionGroupsByPod(t *testing.T) {
 				t.Errorf("%s/%s aggregates by pod: %s", metric, scope, entry.Template)
 			}
 		}
+	}
+}
+
+// Istio's sample Prometheus (1.30.5, live) names a cAdvisor series' node by
+// kubernetes_io_hostname and instance, never by node.
+func TestANodeIsIdentifiedByWhicheverLabelTheScrapeConfigSet(t *testing.T) {
+	cases := []struct {
+		labels map[string]string
+		want   string
+	}{
+		{map[string]string{"node": "a", "kubernetes_io_hostname": "b", "instance": "c"}, "a"},
+		{map[string]string{"instance": "podsteer-demo-worker", "job": "kubernetes-nodes-cadvisor", "kubernetes_io_hostname": "podsteer-demo-worker"}, "podsteer-demo-worker"},
+		{map[string]string{"instance": "172.18.0.2:10250"}, "172.18.0.2"},
+		{map[string]string{"instance": "[fd00::2]:10250"}, "fd00::2"},
+		{map[string]string{}, ""},
+	}
+	for _, c := range cases {
+		if got := domain.NodeIdentity(c.labels); got != c.want {
+			t.Errorf("NodeIdentity(%v) = %q, want %q", c.labels, got, c.want)
+		}
+	}
+
+	node, err := domain.NewNode(domain.NodeSpec{Name: "worker", ClusterID: "dev", InternalIP: "172.18.0.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := domain.MapNodeIdentities([]string{"172.18.0.2", "other"}, []domain.Node{node}); got[0] != "worker" || got[1] != "other" {
+		t.Errorf("mapped %v", got)
 	}
 }

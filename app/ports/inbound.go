@@ -538,6 +538,10 @@ type MetricsQueryUseCase interface {
 		scope domain.MetricScope,
 		window time.Duration,
 	) (domain.BackendSeriesResult, error)
+
+	// Backends lists every backend discovery found, best first, for the
+	// Settings picker. A service listing only: nothing is queried.
+	Backends(ctx context.Context, id domain.ClusterID) ([]domain.MetricsBackendCandidate, error)
 }
 
 // VendorCLIService is what the frontend asks about cloud CLIs.

@@ -354,7 +354,10 @@ func run() error {
 		Metrics: metricsQueryService,
 		Query:   kubernetes,
 		Nodes:   topologyService,
-		Logger:  logger,
+		// The cluster's namespaces, half of how an answer from a backend
+		// the node check could not verify is checked before it is drawn.
+		Namespaces: kubernetes,
+		Logger:     logger,
 	})
 	if err != nil {
 		return fmt.Errorf("wiring traffic service: %w", err)

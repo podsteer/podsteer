@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"regexp"
 	"strings"
@@ -206,10 +207,60 @@ var Expressions = map[MetricID]map[MetricScope]PromExpression{
 // perfectly ordinary single-cluster backend as a fleet. Asking with the
 // series the feature is built on means the check cannot pass while the
 // feature would fail.
-const NodeProbeExpression = `count by (node) (container_memory_working_set_bytes)`
+//
+// GROUPED BY EVERY LABEL A SCRAPE CONFIG NAMES A NODE WITH, because not every
+// one adds `node`. Istio's sample Prometheus (samples/addons, seen live on
+// 1.30.5) scrapes cAdvisor with the kubelet's own node labels mapped in, so
+// the node is `kubernetes_io_hostname` and `instance`, and a probe grouped by
+// `node` alone answered one empty-labelled series — read as "nothing to
+// compare" and refused. NodeIdentity picks the first that is set. Bounded by
+// the node count all the same: each is one value per node.
+const NodeProbeExpression = `count by (node, kubernetes_io_hostname, instance) (container_memory_working_set_bytes)`
 
-// NodeProbeLabel is the label NodeProbeExpression groups by.
+// NodeProbeLabel is the label the per-node charts group by.
 const NodeProbeLabel = "node"
+
+// NodeIdentityLabels are the labels a node probe answer may name a node by,
+// most specific first.
+var NodeIdentityLabels = []string{NodeProbeLabel, "kubernetes_io_hostname", "instance"}
+
+// NodeIdentity reads which node a probe answer is about: the first identity
+// label set, with a port stripped from an `instance` ("10.0.0.4:10250").
+// The caller maps an address to a node name; see MapNodeIdentities.
+func NodeIdentity(labels map[string]string) string {
+	for _, label := range NodeIdentityLabels {
+		value := labels[label]
+		if value == "" {
+			continue
+		}
+		if label == "instance" {
+			if host, _, err := net.SplitHostPort(value); err == nil {
+				return host
+			}
+		}
+		return value
+	}
+	return ""
+}
+
+// MapNodeIdentities turns node identities that are addresses into the names
+// of the nodes that hold them, leaving names as they are.
+func MapNodeIdentities(identities []string, nodes []Node) []string {
+	byAddress := make(map[string]string, len(nodes))
+	for _, node := range nodes {
+		if ip := node.InternalIP(); ip != "" {
+			byAddress[ip] = node.Name()
+		}
+	}
+	mapped := make([]string, 0, len(identities))
+	for _, identity := range identities {
+		if name, ok := byAddress[identity]; ok {
+			identity = name
+		}
+		mapped = append(mapped, identity)
+	}
+	return mapped
+}
 
 // QueryStep chooses the step for a range, aiming at queryTargetPoints.
 //

@@ -228,6 +228,41 @@ func (s *MetricsQueryService) Series(
 	return domain.AnsweredResult(backend, verification, len(narrowTo) > 0, expression, step, series), nil
 }
 
+// Backends lists every discovered backend for the Settings picker, best
+// first. DISCOVERY ONLY — a service listing, cached — and the verification
+// shown is the one already remembered, never a fresh probe: opening a picker
+// is not a reason to send anything to somebody's Prometheus.
+func (s *MetricsQueryService) Backends(ctx context.Context, id domain.ClusterID) ([]domain.MetricsBackendCandidate, error) {
+	backends, err := s.discovery.ListMetricsBackends(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("discovering a metrics backend in %q: %w", id, err)
+	}
+
+	candidates := make([]domain.MetricsBackendCandidate, 0, len(backends))
+	for rank, backend := range backends {
+		candidate := domain.MetricsBackendCandidate{Backend: backend, Rank: rank}
+		if cached, ok := s.verifications.get(id, backend); ok && cached.failure == nil {
+			candidate.Verification = cached.verification
+		}
+		switch {
+		case backend.LinkerdViz:
+			candidate.Detail = "linkerd-viz's own Prometheus: holds Linkerd's traffic metrics, not the kubelet series the charts read."
+		case rank == 0:
+			candidate.Detail = "PodSteer's automatic pick."
+		}
+		switch candidate.Verification {
+		case domain.VerificationVerified:
+			candidate.Detail = strings.TrimSpace(candidate.Detail + " Holds this cluster's nodes and no others.")
+		case domain.VerificationFleet:
+			candidate.Detail = strings.TrimSpace(candidate.Detail + " Holds other clusters' nodes as well.")
+		case domain.VerificationMismatch:
+			candidate.Detail = strings.TrimSpace(candidate.Detail + " Holds none of this cluster's nodes.")
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates, nil
+}
+
 // Invalidate drops what is remembered about one cluster.
 //
 // Called from the same place the adapter's own Invalidate is, and for the
@@ -371,6 +406,9 @@ func (s *MetricsQueryService) checkNodes(
 		return "", nil, err
 	}
 
+	// An identity read from `instance` is an address; the node that holds it
+	// is the name compared.
+	theirs = domain.MapNodeIdentities(theirs, nodes)
 	verification := domain.VerifyBackendNodes(theirs, ours)
 	s.verifications.put(id, generation, backend, verification, ours)
 	s.logger.Debug("verified a metrics backend",
@@ -400,6 +438,24 @@ func (s *MetricsQueryService) failed(backend domain.MetricsBackend, err error) d
 			Message: fmt.Sprintf(
 				"Your account may not reach %s through the API server's proxy. That is a permission on your cluster (get on services/proxy), not a setting here. PodSteer stops asking for a few minutes after a refusal, so a permission granted now takes a moment to take effect.",
 				backend.Describe()),
+			Provenance: provenance,
+		}
+	case errors.Is(err, ports.ErrMetricsForwardRefused):
+		// THE PROXY WAS REFUSED BY THE BACKEND, AND THE FALLBACK BY THE
+		// CLUSTER. Both halves said, because the fix is the second: a
+		// permission the operator can ask for.
+		return domain.BackendSeriesResult{
+			Status: domain.BackendForbidden,
+			Message: fmt.Sprintf(
+				"%s refused the API server's proxy: %s. PodSteer then tried an ephemeral port-forward to its pod, which your account may not open — that needs create on pods/portforward (and get on the Service, list on its pods) in %s.",
+				backend.Describe(), messageAfterSentinel(err, ports.ErrMetricsForwardRefused), backend.Namespace),
+			Provenance: provenance,
+		}
+	case errors.Is(err, ports.ErrMetricsProxyRefused):
+		return domain.BackendSeriesResult{
+			Status: domain.BackendForbidden,
+			Message: fmt.Sprintf("%s could not be read: %s.",
+				backend.Describe(), messageAfterSentinel(err, ports.ErrMetricsProxyRefused)),
 			Provenance: provenance,
 		}
 	case errors.Is(err, ports.ErrMetricsBackendAuth):

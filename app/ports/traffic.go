@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/podsteer/podsteer/app/domain"
@@ -51,3 +52,14 @@ type TrafficUseCase interface {
 		window domain.TrafficWindow,
 	) (domain.TrafficLayer, error)
 }
+
+// ErrMetricsProxyRefused is a monitoring backend (or the mesh in front of it)
+// refusing the API server's proxy with its own 403, after the ephemeral
+// port-forward fallback could not be made either. Its text says who refused
+// and why the forward failed.
+var ErrMetricsProxyRefused = errors.New("the monitoring backend refused the API server's proxy")
+
+// ErrMetricsForwardRefused is the account being refused the port-forward
+// PodSteer falls back to when a backend refuses the proxy: the `create` verb
+// on pods/portforward (or reading the Service and its pods to find one).
+var ErrMetricsForwardRefused = errors.New("the account may not open a port-forward to the monitoring backend")
