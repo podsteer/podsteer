@@ -175,6 +175,11 @@ type TrafficEdge struct {
 	// P50, P95, P99 are milliseconds; -1 when the source does not expose
 	// latency for this edge.
 	P50, P95, P99 float64
+	// LatencyBeyondBuckets is set when a percentile fell in the histogram's
+	// +Inf bucket: slower than the largest bucket bound, by an amount the
+	// histogram cannot say. That percentile stays -1, and this is what tells
+	// it apart from "not exposed".
+	LatencyBeyondBuckets bool
 }
 
 // TrafficLayer is the answer for one source over one window.
@@ -226,6 +231,27 @@ type trafficMetric struct {
 	matchers string
 	// quantile, when set, makes this a histogram_quantile over name_bucket.
 	quantile float64
+	// branches, when set, replaces the spec's branches for this row.
+	branches []trafficBranch
+}
+
+// trafficBranch is one operand of an expression's `or`.
+//
+// EVERY ROW OF A SOURCE GROUPS BY THE SAME LABELS — the spec's key labels
+// plus the branch's own — and those labels are exactly what the source's
+// endpoint reader turns into an edge. That is what makes a percentile mean
+// something: a quantile grouped by a label the edge does not carry (an
+// authority, a replica set across a rollout) is several quantiles for one
+// edge, and keeping any one of them is arbitrary. A label only some edges
+// are identified by goes on the branch that selects those edges.
+type trafficBranch struct {
+	// matchers are label matchers, comma-separated, no braces.
+	matchers string
+	// extraBy are identity labels only this branch's series carry.
+	extraBy []string
+	// dstUnknown marks a branch whose destination has no namespace label,
+	// so only the source-side namespace filter applies to it.
+	dstUnknown bool
 }
 
 // trafficSpec is everything this file knows about one source.
@@ -234,17 +260,18 @@ type trafficSpec struct {
 	probe string
 	// requirement is the sentence shown when it is not.
 	requirement string
-	// alternatives are matcher sets combined with `or`. Two reporters seeing
-	// the same request produce identical label sets after aggregation, and
-	// `or` keeps the left one — so listing the preferred reporter first
-	// counts each request once while still keeping edges only the second
-	// reporter saw.
-	alternatives []string
+	// branches are combined with `or`. Two reporters seeing the same request
+	// produce identical label sets after aggregation, and `or` keeps the
+	// left one — so listing the preferred reporter first counts each request
+	// once while still keeping edges only the second reporter saw.
+	branches []trafficBranch
 	// srcNamespace and dstNamespace are the labels a namespace matcher goes
 	// on; empty means the source cannot be filtered server-side.
 	srcNamespace, dstNamespace string
-	by                         []string
-	metrics                    []trafficMetric
+	// keyBy are the labels that identify an edge, and every row groups by
+	// them (plus `le` for a histogram, plus a branch's extraBy).
+	keyBy   []string
+	metrics []trafficMetric
 	// latencyScale converts the source's latency unit to milliseconds.
 	latencyScale float64
 	// endpoints reads a series' labels.
@@ -268,16 +295,31 @@ var trafficSpecs = map[TrafficSource]trafficSpec{
 	TrafficIstio: {
 		probe:       `count({__name__=~"istio_requests_total|istio_tcp_sent_bytes_total"})`,
 		requirement: "Needs Istio's standard metrics (istio_requests_total, istio_tcp_*) scraped from the sidecars or waypoints into this backend.",
-		// The source proxy first: it is the only one that sees a request to a
-		// destination outside the mesh. The destination proxy second, for
-		// requests from callers without a proxy of their own.
-		alternatives: []string{`reporter="source"`, `reporter="destination"`},
+		// The source proxy first, the destination proxy second for callers
+		// without a proxy of their own; the two meshed branches group by the
+		// same labels, so `or` keeps one answer per request. A destination
+		// outside the mesh is only ever seen by the source proxy, and is
+		// identified by the host it asked for (destination_service), so that
+		// branch alone groups by it.
+		//
+		// KNOWN DOUBLE COUNT, shared with Kiali: when the source proxy lacks
+		// the destination's peer metadata (no metadata exchange — a
+		// non-HTTP/2 upstream, a peer outside the mesh's trust, an old
+		// sidecar), it reports destination_workload="unknown" and the request
+		// lands in the external branch, while the destination proxy reports
+		// the same request in the meshed branch. Their label sets differ, so
+		// `or` cannot dedupe them and that request is counted on two edges.
+		branches: []trafficBranch{
+			{matchers: `reporter="source",destination_workload!="unknown"`},
+			{matchers: `reporter="destination"`},
+			{matchers: `reporter="source",destination_workload="unknown"`, extraBy: []string{"destination_service"}, dstUnknown: true},
+		},
 		srcNamespace: "source_workload_namespace",
 		dstNamespace: "destination_workload_namespace",
-		by: []string{
+		keyBy: []string{
 			"source_workload", "source_workload_namespace",
 			"destination_workload", "destination_workload_namespace",
-			"destination_service", "destination_service_name", "request_protocol",
+			"destination_service_name", "request_protocol",
 		},
 		metrics: []trafficMetric{
 			{role: TrafficRoleRate, name: "istio_requests_total"},
@@ -303,15 +345,23 @@ var trafficSpecs = map[TrafficSource]trafficSpec{
 	// equivalents on outbound traffic. Outbound is measured at the caller,
 	// so the caller's labels are the source and dst_* the destination.
 	TrafficLinkerd: {
-		probe:        `count(request_total{direction="outbound"})`,
-		requirement:  "Needs the Linkerd proxy's request_total and response_total, as linkerd-viz's Prometheus scrapes them. When linkerd-viz brings its own Prometheus, choose it under Settings → Clusters.",
-		alternatives: []string{`direction="outbound"`},
+		probe:       `count(request_total{direction="outbound"})`,
+		requirement: "Needs the Linkerd proxy's request_total and response_total, as linkerd-viz's Prometheus scrapes them. When linkerd-viz brings its own Prometheus, choose it under Settings → Clusters.",
+		// A meshed destination is identified by its dst_* labels; the
+		// authority only identifies one outside the mesh, so only that
+		// branch groups by it. replicaset is NOT a key: it changes across a
+		// rollout while the Deployment does not, and grouping by it would
+		// split one edge's percentile in two.
+		branches: []trafficBranch{
+			{matchers: `direction="outbound",dst_namespace!=""`},
+			{matchers: `direction="outbound",dst_namespace=""`, extraBy: []string{"authority"}, dstUnknown: true},
+		},
 		srcNamespace: "namespace",
 		dstNamespace: "dst_namespace",
-		by: []string{
-			"namespace", "deployment", "statefulset", "daemonset", "k8s_job", "replicaset",
-			"dst_namespace", "dst_deployment", "dst_statefulset", "dst_daemonset", "dst_job", "dst_replicaset",
-			"dst_service", "authority",
+		keyBy: []string{
+			"namespace", "deployment", "statefulset", "daemonset", "k8s_job",
+			"dst_namespace", "dst_deployment", "dst_statefulset", "dst_daemonset", "dst_job",
+			"dst_service",
 		},
 		metrics: []trafficMetric{
 			{role: TrafficRoleRate, name: "request_total"},
@@ -337,10 +387,10 @@ var trafficSpecs = map[TrafficSource]trafficSpec{
 	TrafficBeyla: {
 		probe:        `count({__name__=~"beyla_network_flow_bytes_total|obi_network_flow_bytes_total"})`,
 		requirement:  "Needs Beyla's or OBI's network metrics (network.enable, beyla_network_flow_bytes_total or obi_network_flow_bytes_total) with the default k8s.src/dst.owner.name and namespace attributes, exported to this backend.",
-		alternatives: []string{""},
+		branches:     []trafficBranch{{}},
 		srcNamespace: "k8s_src_namespace",
 		dstNamespace: "k8s_dst_namespace",
-		by:           []string{"k8s_src_owner_name", "k8s_src_namespace", "k8s_dst_owner_name", "k8s_dst_namespace"},
+		keyBy:        []string{"k8s_src_owner_name", "k8s_src_namespace", "k8s_dst_owner_name", "k8s_dst_namespace"},
 		metrics: []trafficMetric{
 			{role: TrafficRoleBytes, name: `{__name__=~"beyla_network_flow_bytes_total|obi_network_flow_bytes_total"`},
 		},
@@ -357,10 +407,10 @@ var trafficSpecs = map[TrafficSource]trafficSpec{
 	TrafficCaretta: {
 		probe:        `count(caretta_links_observed)`,
 		requirement:  "Needs Caretta's caretta_links_observed metric scraped into this backend.",
-		alternatives: []string{""},
+		branches:     []trafficBranch{{}},
 		srcNamespace: "client_namespace",
 		dstNamespace: "server_namespace",
-		by:           []string{"client_name", "client_namespace", "client_kind", "server_name", "server_namespace", "server_kind"},
+		keyBy:        []string{"client_name", "client_namespace", "client_kind", "server_name", "server_namespace", "server_kind"},
 		metrics: []trafficMetric{
 			{role: TrafficRoleBytes, name: "caretta_links_observed"},
 		},
@@ -372,40 +422,46 @@ var trafficSpecs = map[TrafficSource]trafficSpec{
 	// https://docs.cilium.io/en/stable/observability/metrics/
 	// hubble_flows_processed_total (flow), hubble_http_requests_total and
 	// hubble_http_request_duration_seconds (httpV2; labels method, protocol,
-	// status, reporter). Endpoint labels exist only when configured, through
-	// sourceContext/destinationContext (a `source`/`destination` label —
-	// `workload` gives namespace/name, `workload-name` the name alone) or
-	// labelsContext (source_namespace, source_workload,
-	// destination_namespace, destination_workload). HTTP metrics are off by
-	// default. No server-side namespace filter: the label may not exist.
+	// status, reporter). Endpoint labels exist only when configured. ONLY
+	// labelsContext (source_namespace, source_workload, destination_namespace,
+	// destination_workload) is read: the sourceContext/destinationContext
+	// `source`/`destination` label changes meaning with its option — `pod`
+	// fans out per pod, `workload-name` drops the namespace — so grouping by
+	// it is either a pod fan-out or a second identity for the same edge.
+	// HTTP metrics are off by default. No server-side namespace filter: the
+	// label may not exist.
 	TrafficHubble: {
-		probe:        `count(hubble_flows_processed_total)`,
-		requirement:  "Needs Hubble metrics with endpoint labels: flow (and httpV2 for requests and latency) with labelsContext=source_namespace,source_workload,destination_namespace,destination_workload, or sourceContext=workload and destinationContext=workload.",
-		alternatives: []string{""},
-		by: []string{
-			"source", "destination",
-			"source_namespace", "source_workload", "destination_namespace", "destination_workload",
-		},
+		probe:       `count(hubble_flows_processed_total)`,
+		requirement: "Needs Hubble metrics with endpoint labels: flow (and httpV2 for requests and latency) with labelsContext=source_namespace,source_workload,destination_namespace,destination_workload.",
+		branches:    []trafficBranch{{}},
+		keyBy:       []string{"source_namespace", "source_workload", "destination_namespace", "destination_workload"},
 		metrics: []trafficMetric{
+			// FLOW EVENTS, NOT CONNECTIONS, AND NOT DEDUPLICATED. A flow
+			// between pods on two nodes is observed by both nodes' agents
+			// (leaving one, arriving at the other), and a policy verdict is an
+			// event of its own, so this counts events per second — an activity
+			// measure for comparing edges, not a count of anything. The
+			// metrics page documents no subtype filter that observes each flow
+			// exactly once (subtype="to-endpoint" would drop egress to the
+			// world), so none is applied.
 			{role: TrafficRoleConnections, name: "hubble_flows_processed_total", matchers: `verdict="FORWARDED"`},
 			// The server's view first, the client's second: both report the
 			// same request when both ends are Cilium-managed.
-			{role: TrafficRoleRate, name: "hubble_http_requests_total"},
-			{role: TrafficRoleErrors, name: "hubble_http_requests_total", matchers: `status=~"5.."`},
-			{role: TrafficRoleP50, name: "hubble_http_request_duration_seconds", quantile: 0.5},
-			{role: TrafficRoleP95, name: "hubble_http_request_duration_seconds", quantile: 0.95},
-			{role: TrafficRoleP99, name: "hubble_http_request_duration_seconds", quantile: 0.99},
+			{role: TrafficRoleRate, name: "hubble_http_requests_total", branches: hubbleHTTPBranches},
+			{role: TrafficRoleErrors, name: "hubble_http_requests_total", matchers: `status=~"5.."`, branches: hubbleHTTPBranches},
+			{role: TrafficRoleP50, name: "hubble_http_request_duration_seconds", quantile: 0.5, branches: hubbleHTTPBranches},
+			{role: TrafficRoleP95, name: "hubble_http_request_duration_seconds", quantile: 0.95, branches: hubbleHTTPBranches},
+			{role: TrafficRoleP99, name: "hubble_http_request_duration_seconds", quantile: 0.99, branches: hubbleHTTPBranches},
 		},
 		latencyScale:  1000,
 		endpoints:     hubbleEndpoints,
-		missingLabels: "Hubble's series came back without endpoint labels. The flow and httpV2 metrics need labelsContext=source_namespace,source_workload,destination_namespace,destination_workload (or sourceContext=workload, destinationContext=workload) before they name who talked to whom.",
+		missingLabels: "Hubble's series came back without endpoint labels. The flow and httpV2 metrics need labelsContext=source_namespace,source_workload,destination_namespace,destination_workload before they name who talked to whom.",
 	},
 }
 
-// hubbleHTTPAlternatives applies to Hubble's httpV2 rows only: the flow
-// metric has no reporter label, and `reporter="server"` on it would match
-// nothing.
-var hubbleHTTPAlternatives = []string{`reporter="server"`, `reporter="client"`}
+// hubbleHTTPBranches applies to Hubble's httpV2 rows only: the flow metric
+// has no reporter label, and `reporter="server"` on it would match nothing.
+var hubbleHTTPBranches = []trafficBranch{{matchers: `reporter="server"`}, {matchers: `reporter="client"`}}
 
 // TrafficProbes returns the presence check for every source: one instant
 // count() each, so the answer is one number whatever the backend holds.
@@ -437,26 +493,26 @@ func TrafficExpressions(source TrafficSource, namespaces []NamespaceName, window
 		return nil, fmt.Errorf("%w: %q", ErrUnknownTrafficWindow, window)
 	}
 
-	if filters := namespaceFilters(spec, namespaces); filters != nil {
-		queries := composeTraffic(source, spec, window, filters)
+	if alternation := namespaceAlternation(spec, namespaces); alternation != "" {
+		queries := composeTraffic(spec, window, alternation)
 		if allWithinBudget(queries) {
 			return queries, nil
 		}
 	}
 
-	queries := composeTraffic(source, spec, window, []string{""})
+	queries := composeTraffic(spec, window, "")
 	if !allWithinBudget(queries) {
 		return nil, fmt.Errorf("%w: a %s expression", ErrQueryTooLong, source)
 	}
 	return queries, nil
 }
 
-// namespaceFilters returns the matchers that narrow to namespaces on either
-// end, or nil when no server-side narrowing applies.
-func namespaceFilters(spec trafficSpec, namespaces []NamespaceName) []string {
+// namespaceAlternation returns the regex alternation that narrows to
+// namespaces, or "" when no server-side narrowing applies.
+func namespaceAlternation(spec trafficSpec, namespaces []NamespaceName) string {
 	if len(namespaces) == 0 || len(namespaces) > trafficNamespaceFilterMax ||
 		spec.srcNamespace == "" || spec.dstNamespace == "" {
-		return nil
+		return ""
 	}
 
 	quoted := make([]string, 0, len(namespaces))
@@ -466,18 +522,10 @@ func namespaceFilters(spec trafficSpec, namespaces []NamespaceName) []string {
 		}
 	}
 	if len(quoted) == 0 {
-		return nil
+		return ""
 	}
 	sort.Strings(quoted)
-	alternation := strings.Join(quoted, "|")
-
-	// EITHER END IN SCOPE. A selector ANDs its matchers, so "source or
-	// destination" is two branches joined by `or`, which dedupes the series
-	// both branches return.
-	return []string{
-		fmt.Sprintf(`%s=~"%s"`, spec.srcNamespace, alternation),
-		fmt.Sprintf(`%s=~"%s"`, spec.dstNamespace, alternation),
-	}
+	return strings.Join(quoted, "|")
 }
 
 func allWithinBudget(queries []TrafficQuery) bool {
@@ -489,31 +537,47 @@ func allWithinBudget(queries []TrafficQuery) bool {
 	return true
 }
 
-func composeTraffic(source TrafficSource, spec trafficSpec, window TrafficWindow, filters []string) []TrafficQuery {
-	by := strings.Join(spec.by, ", ")
+func composeTraffic(spec trafficSpec, window TrafficWindow, alternation string) []TrafficQuery {
 	queries := make([]TrafficQuery, 0, len(spec.metrics))
 
 	for _, metric := range spec.metrics {
-		alternatives := spec.alternatives
-		if source == TrafficHubble && strings.HasPrefix(metric.name, "hubble_http_") {
-			alternatives = hubbleHTTPAlternatives
+		branches := spec.branches
+		if metric.branches != nil {
+			branches = metric.branches
 		}
 
-		name, grouping := metric.name, by
+		name := metric.name
 		if metric.quantile > 0 {
 			name += "_bucket"
-			grouping = "le, " + by
 		}
 
-		branches := make([]string, 0, len(alternatives)*len(filters))
-		for _, alternative := range alternatives {
+		var operands []string
+		for _, branch := range branches {
+			by := append([]string(nil), spec.keyBy...)
+			by = append(by, branch.extraBy...)
+			if metric.quantile > 0 {
+				by = append([]string{"le"}, by...)
+			}
+
+			// EITHER END IN SCOPE. A selector ANDs its matchers, so "source
+			// or destination" is two operands joined by `or`, which dedupes
+			// the series both return. A branch whose destination has no
+			// namespace can only be narrowed by its source.
+			filters := []string{""}
+			if alternation != "" {
+				filters = []string{fmt.Sprintf(`%s=~"%s"`, spec.srcNamespace, alternation)}
+				if !branch.dstUnknown {
+					filters = append(filters, fmt.Sprintf(`%s=~"%s"`, spec.dstNamespace, alternation))
+				}
+			}
+
 			for _, filter := range filters {
-				branches = append(branches, fmt.Sprintf("sum by (%s) (rate(%s[%s]))",
-					grouping, selector(name, metric.matchers, alternative, filter), window))
+				operands = append(operands, fmt.Sprintf("sum by (%s) (rate(%s[%s]))",
+					strings.Join(by, ", "), selector(name, metric.matchers, branch.matchers, filter), window))
 			}
 		}
 
-		expression := strings.Join(branches, " or ")
+		expression := strings.Join(operands, " or ")
 		if metric.quantile > 0 {
 			expression = fmt.Sprintf("histogram_quantile(%g, %s)", metric.quantile, expression)
 		}
@@ -582,7 +646,8 @@ func MapTraffic(
 				continue
 			}
 			value := series.Points[len(series.Points)-1].Value
-			if math.IsNaN(value) || math.IsInf(value, 0) {
+			beyond := math.IsInf(value, 1) && isQuantileRole(role)
+			if math.IsNaN(value) || (math.IsInf(value, 0) && !beyond) {
 				continue
 			}
 			seriesSeen++
@@ -601,6 +666,10 @@ func MapTraffic(
 			if !ok {
 				edge = &TrafficEdge{Source: src, Dest: dst, Protocol: protocol, P50: -1, P95: -1, P99: -1}
 				edges[key] = edge
+			}
+			if beyond {
+				edge.LatencyBeyondBuckets = true
+				continue
 			}
 			applyRole(edge, role, value, spec.latencyScale)
 		}
@@ -696,13 +765,21 @@ func applyRole(edge *TrafficEdge, role TrafficRole, value, latencyScale float64)
 		edge.BytesPerSec += value
 	case TrafficRoleConnections:
 		edge.Connections += value
+	// A PERCENTILE IS NOT SUMMED, AND TWO FOR ONE EDGE KEEP THE WORSE. Every
+	// row groups by exactly the edge's key labels, so two answers for one edge
+	// should not happen; when a backend's labels make it happen anyway, the
+	// larger is kept so the result does not depend on answer order.
 	case TrafficRoleP50:
-		edge.P50 = value * latencyScale
+		edge.P50 = max(edge.P50, value*latencyScale)
 	case TrafficRoleP95:
-		edge.P95 = value * latencyScale
+		edge.P95 = max(edge.P95, value*latencyScale)
 	case TrafficRoleP99:
-		edge.P99 = value * latencyScale
+		edge.P99 = max(edge.P99, value*latencyScale)
 	}
+}
+
+func isQuantileRole(role TrafficRole) bool {
+	return role == TrafficRoleP50 || role == TrafficRoleP95 || role == TrafficRoleP99
 }
 
 // workloadKinds are the topology kinds a workload name can resolve to.
@@ -816,7 +893,7 @@ func istioEndpoints(labels map[string]string) (TrafficEndpoint, TrafficEndpoint,
 func linkerdEndpoints(labels map[string]string) (TrafficEndpoint, TrafficEndpoint, string) {
 	src := TrafficEndpoint{
 		Namespace: labels["namespace"],
-		Workload:  firstNonEmptyLabel(labels, "deployment", "statefulset", "daemonset", "k8s_job", "replicaset"),
+		Workload:  firstNonEmptyLabel(labels, "deployment", "statefulset", "daemonset", "k8s_job"),
 	}
 	if src.Workload == "" {
 		src.Unknown = true
@@ -824,7 +901,7 @@ func linkerdEndpoints(labels map[string]string) (TrafficEndpoint, TrafficEndpoin
 
 	dst := TrafficEndpoint{
 		Namespace: labels["dst_namespace"],
-		Workload:  firstNonEmptyLabel(labels, "dst_deployment", "dst_statefulset", "dst_daemonset", "dst_job", "dst_replicaset"),
+		Workload:  firstNonEmptyLabel(labels, "dst_deployment", "dst_statefulset", "dst_daemonset", "dst_job"),
 		Service:   labels["dst_service"],
 	}
 	if dst.Namespace == "" && dst.Workload == "" {
@@ -881,29 +958,18 @@ func carettaEndpoints(labels map[string]string) (TrafficEndpoint, TrafficEndpoin
 }
 
 func hubbleEndpoints(labels map[string]string) (TrafficEndpoint, TrafficEndpoint, string) {
-	read := func(context, namespace, workload string) TrafficEndpoint {
+	read := func(namespace, workload string) TrafficEndpoint {
 		endpoint := TrafficEndpoint{Namespace: labels[namespace], Workload: labels[workload]}
 		if endpoint.Workload == "" {
-			// sourceContext=workload writes namespace/name in one label;
-			// workload-name writes the name alone.
-			if value := labels[context]; value != "" {
-				if ns, name, split := strings.Cut(value, "/"); split {
-					endpoint.Namespace, endpoint.Workload = ns, name
-				} else if strings.HasPrefix(value, "reserved:") {
-					endpoint.External = strings.TrimPrefix(value, "reserved:")
-				} else {
-					endpoint.Workload = value
-				}
-			}
-		}
-		if endpoint.Workload == "" && endpoint.External == "" {
+			// The world, the host, or a pod with no workload: labelsContext
+			// leaves the label empty and says nothing more.
 			endpoint.Unknown = true
 		}
 		return endpoint
 	}
 	// Protocol left empty so flows and HTTP for the same pair land on one
 	// edge; MapTraffic names it from what was measured.
-	return read("source", "source_namespace", "source_workload"), read("destination", "destination_namespace", "destination_workload"), ""
+	return read("source_namespace", "source_workload"), read("destination_namespace", "destination_workload"), ""
 }
 
 func firstNonEmptyLabel(labels map[string]string, names ...string) string {

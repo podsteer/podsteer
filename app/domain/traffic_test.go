@@ -6,6 +6,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -22,7 +24,9 @@ import (
 //     https://opentelemetry.io/docs/zero-code/obi/network/
 //   - caretta.json https://github.com/groundcover-com/caretta (README example)
 //   - hubble.json  https://docs.cilium.io/en/stable/observability/metrics/
-//     (labelsContext and sourceContext=workload forms, plus reserved:world)
+//     (labelsContext labels; an empty destination for the world; a +Inf p99)
+//   - linkerd-two-authorities.json — one meshed pair answered twice, as a
+//     grouping by authority returns it
 //   - hubble-nolabels.json — Hubble's default flow metric, no context options
 //
 // Each file maps a role to the answer that role's expression would get.
@@ -406,13 +410,86 @@ func TestMapTrafficHubble(t *testing.T) {
 
 	web := findEdge(t, layer, "storefront/web", "storefront/api")
 	if web.Connections != 40 || web.RequestsPerSec != 10 || web.P95 != 20 || web.Protocol != "http" {
-		t.Errorf("web->api (labelsContext): %+v", web)
+		t.Errorf("web->api: %+v", web)
+	}
+	// p99 fell in the +Inf bucket: still -1, but said to be beyond the
+	// buckets rather than not exposed.
+	if web.P99 != -1 || !web.LatencyBeyondBuckets {
+		t.Errorf("a +Inf percentile: p99 %v, beyond %v", web.P99, web.LatencyBeyondBuckets)
 	}
 	db := findEdge(t, layer, "storefront/api", "storefront/db")
-	if db.Connections != 7 || db.Protocol != "tcp" || db.Dest.NodeID != "ss/db" {
-		t.Errorf("api->db (sourceContext=workload): %+v", db)
+	if db.Connections != 7 || db.Protocol != "tcp" || db.Dest.NodeID != "ss/db" || db.LatencyBeyondBuckets {
+		t.Errorf("api->db: %+v", db)
 	}
-	findEdge(t, layer, "storefront/web", "external:world")
+	// The world: labelsContext leaves the destination empty.
+	findEdge(t, layer, "storefront/web", "unknown")
+}
+
+// ONE PERCENTILE PER EDGE, whatever order the answers arrive in. The
+// expressions no longer group a meshed Linkerd pair by authority; this is
+// the answer such a grouping produced, and the edge still gets one value.
+func TestTwoAnswersForOneEdgeGiveOneDeterministicPercentile(t *testing.T) {
+	results := loadTrafficFixture(t, "linkerd-two-authorities")
+
+	for range 2 {
+		layer := domain.MapTraffic(domain.TrafficLinkerd, domain.TrafficWindow5m, results, nil, nil)
+		if len(layer.Edges) != 1 {
+			t.Fatalf("edges %+v", layer.Edges)
+		}
+		edge := layer.Edges[0]
+		if edge.RequestsPerSec != 10 || edge.P95 != 80 {
+			t.Errorf("rate %v (want the sum, 10), p95 %v (want the worse, 80)", edge.RequestsPerSec, edge.P95)
+		}
+		slices.Reverse(results[domain.TrafficRoleP95])
+	}
+}
+
+// Every row of a source groups by the same labels in each branch, so a
+// percentile and a rate describe the same edge — and a meshed Linkerd or
+// Istio branch never groups by the label that only identifies an external
+// destination.
+func TestQuantilesGroupByExactlyTheEdgeKey(t *testing.T) {
+	byClause := regexp.MustCompile(`sum by \(([^)]*)\)`)
+	for _, source := range domain.TrafficSourceNames() {
+		queries, err := domain.TrafficExpressions(source, nil, domain.TrafficWindow5m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rateGroups []string
+		for _, query := range queries {
+			if query.Role == domain.TrafficRoleRate || (rateGroups == nil && query.Role == domain.TrafficRoleBytes) {
+				for _, match := range byClause.FindAllStringSubmatch(query.Expression, -1) {
+					rateGroups = append(rateGroups, match[1])
+				}
+			}
+		}
+		for _, query := range queries {
+			if !strings.HasPrefix(query.Expression, "histogram_quantile(") {
+				continue
+			}
+			for i, match := range byClause.FindAllStringSubmatch(query.Expression, -1) {
+				if want := "le, " + rateGroups[i]; match[1] != want {
+					t.Errorf("%s %s operand %d groups by (%s), the rate by (%s)", source, query.Role, i, match[1], rateGroups[i])
+				}
+			}
+		}
+	}
+
+	linkerd, _ := domain.TrafficExpressions(domain.TrafficLinkerd, nil, domain.TrafficWindow5m)
+	for _, operand := range splitTopLevelOr(strings.TrimSuffix(strings.TrimPrefix(linkerd[2].Expression, "histogram_quantile(0.5, "), ")")) {
+		if strings.Contains(operand, `dst_namespace!=""`) && strings.Contains(operand, "authority") {
+			t.Errorf("a meshed Linkerd operand groups by authority: %s", operand)
+		}
+		if strings.Contains(operand, "replicaset") {
+			t.Errorf("a Linkerd operand groups by replicaset: %s", operand)
+		}
+	}
+	istio, _ := domain.TrafficExpressions(domain.TrafficIstio, nil, domain.TrafficWindow5m)
+	for _, operand := range splitTopLevelOr(istio[0].Expression) {
+		if strings.Contains(operand, `destination_workload!="unknown"`) && strings.Contains(operand, "destination_service,") {
+			t.Errorf("a meshed Istio operand groups by destination_service: %s", operand)
+		}
+	}
 }
 
 func TestMapTrafficSaysWhichLabelsWereMissing(t *testing.T) {

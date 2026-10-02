@@ -18,8 +18,10 @@
     },
     {
      "metric": {
-      "source": "storefront/api",
-      "destination": "storefront/db"
+      "source_namespace": "storefront",
+      "source_workload": "api",
+      "destination_namespace": "storefront",
+      "destination_workload": "db"
      },
      "value": [
       1759400000.123,
@@ -28,8 +30,10 @@
     },
     {
      "metric": {
-      "source": "storefront/web",
-      "destination": "reserved:world"
+      "source_namespace": "storefront",
+      "source_workload": "web",
+      "destination_namespace": "",
+      "destination_workload": ""
      },
      "value": [
       1759400000.123,
@@ -133,7 +137,7 @@
      },
      "value": [
       1759400000.123,
-      "0.1"
+      "+Inf"
      ]
     }
    ]

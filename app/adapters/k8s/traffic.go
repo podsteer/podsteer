@@ -2,7 +2,9 @@ package k8s
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/podsteer/podsteer/app/domain"
@@ -45,11 +47,30 @@ func (a *Adapter) QueryInstant(
 	for _, result := range decoded.Data.Result {
 		entry := domain.PromSeries{Labels: result.Metric}
 		// NaN — a histogram_quantile over no requests — is a gap, dropped
-		// exactly as decodePoint drops it from a range.
+		// exactly as decodePoint drops it from a range. +Inf is NOT: it is a
+		// histogram_quantile that fell in the +Inf bucket, which says
+		// "slower than every bucket", and domain.MapTraffic reports it as
+		// such rather than as a percentile the source does not expose.
 		if point, ok := decodePoint(result.Value); ok {
+			entry.Points = []domain.SeriesPoint{point}
+		} else if point, ok := decodePositiveInfinity(result.Value); ok {
 			entry.Points = []domain.SeriesPoint{point}
 		}
 		series = append(series, entry)
 	}
 	return series, nil
+}
+
+// decodePositiveInfinity reads a [unixSeconds, "+Inf"] pair, the one value
+// decodePoint drops that an instant traffic query must keep.
+func decodePositiveInfinity(pair []json.RawMessage) (domain.SeriesPoint, bool) {
+	if len(pair) != 2 {
+		return domain.SeriesPoint{}, false
+	}
+	var seconds float64
+	var raw string
+	if json.Unmarshal(pair[0], &seconds) != nil || json.Unmarshal(pair[1], &raw) != nil || raw != "+Inf" {
+		return domain.SeriesPoint{}, false
+	}
+	return domain.SeriesPoint{At: time.UnixMilli(int64(seconds * 1000)).UTC(), Value: math.Inf(1)}, true
 }

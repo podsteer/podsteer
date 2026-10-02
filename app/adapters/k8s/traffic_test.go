@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -55,7 +56,8 @@ func TestQueryInstantGoesThroughTheServiceProxyAsOneGet(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"vector","result":[` +
 			`{"metric":{"source_workload":"web","destination_workload":"api"},"value":[1759400000.1,"12.5"]},` +
-			`{"metric":{"source_workload":"web","destination_workload":"idle"},"value":[1759400000.1,"NaN"]}]}}`))
+			`{"metric":{"source_workload":"web","destination_workload":"idle"},"value":[1759400000.1,"NaN"]},` +
+			`{"metric":{"source_workload":"web","destination_workload":"slow"},"value":[1759400000.1,"+Inf"]}]}}`))
 	})
 
 	expression := `sum by (source_workload, destination_workload) (rate(istio_requests_total{reporter="source"}[5m]))`
@@ -81,7 +83,7 @@ func TestQueryInstantGoesThroughTheServiceProxyAsOneGet(t *testing.T) {
 		t.Errorf("time %q", got)
 	}
 
-	if len(series) != 2 || len(series[0].Points) != 1 || series[0].Points[0].Value != 12.5 {
+	if len(series) != 3 || len(series[0].Points) != 1 || series[0].Points[0].Value != 12.5 {
 		t.Fatalf("series %+v", series)
 	}
 	if series[0].Labels["destination_workload"] != "api" {
@@ -89,6 +91,10 @@ func TestQueryInstantGoesThroughTheServiceProxyAsOneGet(t *testing.T) {
 	}
 	if len(series[1].Points) != 0 {
 		t.Errorf("a NaN became a point: %+v", series[1])
+	}
+	// +Inf is kept: a percentile beyond every bucket, not a gap.
+	if len(series[2].Points) != 1 || !math.IsInf(series[2].Points[0].Value, 1) {
+		t.Errorf("+Inf was not kept: %+v", series[2])
 	}
 }
 
