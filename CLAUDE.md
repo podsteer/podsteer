@@ -417,6 +417,40 @@ suggestions; the webview's own usageHistory for pods (superseded for the drawer
 by the Go ring). `ListPods` itself is unchanged for every
 other caller (node/workload pods, MCP).
 
+## Lists take a namespace set
+
+The selector is multi-namespace, so every namespaced list has an `In` twin that
+takes a `domain.NamespaceScope` (All, or a sorted, distinct set of names) in
+place of one `NamespaceName`: `ListPodsIn`, `QueryPodsIn`, `MatchingPodsIn`,
+`ListPodKeysIn`, `ListWorkloadsIn`, `ListApplicationsIn`,
+`WorkloadConsumptionIn`, `ListEventsIn`, `ListTableIn`,
+`VulnerabilitySummariesIn`, `ListReleasesIn`, and the fleet's own. The old
+methods are one-line wrappers over `domain.ScopeOf(ns)`; the Wails `…In`
+methods take `namespaces []string` where the old ones took `namespace string`
+(empty slice = All) and the old Wails methods stay. `TopologyScope` is an alias
+of `NamespaceScope`.
+
+`application.readScoped` is the one rule, and it is the topology rule
+(`ListsClusterWide`, `NamespaceListCap` = 3) applied to lists: All or more than
+three names is ONE cluster-wide list filtered to the scope; three or fewer is
+one list per namespace. A cluster-wide list REFUSED (`ports.ErrForbidden`) for a
+named scope falls back to per-namespace lists, because an account bound to a few
+namespaces cannot list across the cluster; for All the refusal is the answer. A
+per-namespace failure FAILS THE LIST naming the namespace (`listing in "b"`) —
+a list never silently narrows. Pod usage follows the same shape and counts as
+measured only if every read answered. The read cache and the watch mirror are
+untouched: keys stay per namespace, the mirror stays cluster-wide.
+
+Merges: tables take their columns from the first answered namespace, append
+rows in scope order and are truncated if any read was; Helm listings keep the
+worst status and the oldest `ListedAt`; vulnerability summaries carry their namespace
+(grouped by namespace and Kind/name, filtered by scope on a wide read; a
+Forbidden status, which the adapter reports instead of an error, sends a
+named scope to per-namespace reads) and keep the least complete status. The
+zero `NamespaceScope` reads as All. The fleet keys late answers and the pod memo by
+`NamespaceScope.Key()`. Single by nature, not scoped: `SubjectRules`,
+`NamespaceInventory`, `FindClusterShells`.
+
 ## Custom columns quote metadata, and annotations travel by projection
 
 An operator can put any label or annotation key on any list as a column

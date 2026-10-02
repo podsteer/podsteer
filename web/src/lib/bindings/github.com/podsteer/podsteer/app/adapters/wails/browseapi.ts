@@ -99,6 +99,13 @@ export function ListEventsForResource(clusterID: string, $namespace: string, kin
 }
 
 /**
+ * ListEventsIn is ListEvents over a set of namespaces; empty means every one.
+ */
+export function ListEventsIn(clusterID: string, namespaces: string[] | null, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.Event[] | null> {
+    return $Call.ByID(2628539795, clusterID, namespaces, annotationKeys, expressions);
+}
+
+/**
  * ListKinds returns every browsable kind in a connected cluster.
  * 
  * The navigator tree is built from this rather than hard-coded in the
@@ -119,6 +126,13 @@ export function ListKinds(clusterID: string): $CancellablePromise<$models.Resour
  */
 export function ListTable(clusterID: string, kindID: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.ResourceTable> {
     return $Call.ByID(2074631175, clusterID, kindID, $namespace, annotationKeys, expressions);
+}
+
+/**
+ * ListTableIn is ListTable over a set of namespaces; the tables are merged.
+ */
+export function ListTableIn(clusterID: string, kindID: string, namespaces: string[] | null, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.ResourceTable> {
+    return $Call.ByID(447138860, clusterID, kindID, namespaces, annotationKeys, expressions);
 }
 
 /**
@@ -179,4 +193,12 @@ export function RevealSecretKey(clusterID: string, $namespace: string, name: str
  */
 export function VulnerabilitySummaries(clusterID: string, $namespace: string): $CancellablePromise<$models.VulnerabilityListing> {
     return $Call.ByID(119269035, clusterID, $namespace);
+}
+
+/**
+ * VulnerabilitySummariesIn is VulnerabilitySummaries over a set of
+ * namespaces. Like the single form it is called on its own, never from a list.
+ */
+export function VulnerabilitySummariesIn(clusterID: string, namespaces: string[] | null): $CancellablePromise<$models.VulnerabilityListing> {
+    return $Call.ByID(1916614520, clusterID, namespaces);
 }

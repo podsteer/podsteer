@@ -196,3 +196,130 @@ func fleetArgs(clusterIDs []string, namespace string) ([]domain.ClusterID, domai
 	}
 	return ids, ns, nil
 }
+
+// fleetScopeArgs is fleetArgs for a set of namespaces; empty means every one.
+func fleetScopeArgs(clusterIDs []string, namespaces []string) ([]domain.ClusterID, domain.NamespaceScope, error) {
+	ids := make([]domain.ClusterID, 0, len(clusterIDs))
+	for _, raw := range clusterIDs {
+		id, err := domain.NewClusterID(raw)
+		if err != nil {
+			return nil, domain.NamespaceScope{}, err
+		}
+		ids = append(ids, id)
+	}
+
+	scope, err := domain.NewNamespaceScope(namespaces)
+	if err != nil {
+		return nil, domain.NamespaceScope{}, err
+	}
+	return ids, scope, nil
+}
+
+// ListPodsIn is ListPods over a set of namespaces.
+func (f *FleetAPI) ListPodsIn(clusterIDs []string, namespaces []string) ([]ClusterPods, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return nil, apiError(f.logger, "ListPodsIn", err)
+	}
+
+	reads, err := f.fleet.ListPodsIn(ctx, ids, scope)
+	if err != nil {
+		return nil, apiError(f.logger, "ListPodsIn", err)
+	}
+	return toClusterPods(reads, time.Now()), nil
+}
+
+// QueryPodsIn is QueryPods over a set of namespaces.
+func (f *FleetAPI) QueryPodsIn(clusterIDs []string, namespaces []string, query PodQuery) (FleetPodPage, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return FleetPodPage{}, apiError(f.logger, "QueryPodsIn", err)
+	}
+
+	page, err := f.fleet.QueryPodsIn(ctx, ids, scope, query.toDomain())
+	if err != nil {
+		return FleetPodPage{}, apiError(f.logger, "QueryPodsIn", err)
+	}
+	return toFleetPodPage(page, time.Now()), nil
+}
+
+// ExportPodsCSVIn is ExportPodsCSV over a set of namespaces.
+func (f *FleetAPI) ExportPodsCSVIn(clusterIDs []string, namespaces []string, query PodQuery, columns []CSVColumn, suggestedName string) (string, error) {
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSVIn", err)
+	}
+
+	ctx, cancel := f.app.requestContext()
+	pods, err := f.fleet.MatchingPodsIn(ctx, ids, scope, query.toDomain())
+	cancel()
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSVIn", err)
+	}
+
+	path, err := writeCSVExport(f.chooseSavePath, suggestedName, renderPodCSV(columns, toPods(pods, time.Now())))
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSVIn", err)
+	}
+	return path, nil
+}
+
+// ListWorkloadsIn is ListWorkloads over a set of namespaces.
+func (f *FleetAPI) ListWorkloadsIn(clusterIDs []string, namespaces []string) ([]ClusterWorkloads, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return nil, apiError(f.logger, "ListWorkloadsIn", err)
+	}
+
+	reads, err := f.fleet.ListWorkloadsIn(ctx, ids, scope)
+	if err != nil {
+		return nil, apiError(f.logger, "ListWorkloadsIn", err)
+	}
+	return toClusterWorkloads(reads, time.Now()), nil
+}
+
+// ListEventsIn is ListEvents over a set of namespaces.
+func (f *FleetAPI) ListEventsIn(clusterIDs []string, namespaces []string) ([]ClusterEvents, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return nil, apiError(f.logger, "ListEventsIn", err)
+	}
+
+	reads, err := f.fleet.ListEventsIn(ctx, ids, scope)
+	if err != nil {
+		return nil, apiError(f.logger, "ListEventsIn", err)
+	}
+	return toClusterEvents(reads, time.Now()), nil
+}
+
+// ListTableIn is ListTable over a set of namespaces.
+func (f *FleetAPI) ListTableIn(clusterIDs []string, group, resource string, namespaces []string) ([]ClusterTable, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return nil, apiError(f.logger, "ListTableIn", err)
+	}
+	if strings.TrimSpace(resource) == "" {
+		return nil, apiError(f.logger, "ListTableIn", fmt.Errorf("%w: no resource named", domain.ErrInvalidResourceKind))
+	}
+
+	reads, err := f.fleet.ListTableIn(ctx, ids, group, resource, scope)
+	if err != nil {
+		return nil, apiError(f.logger, "ListTableIn", err)
+	}
+	return toClusterTables(reads), nil
+}

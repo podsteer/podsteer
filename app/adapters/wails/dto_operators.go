@@ -28,11 +28,14 @@ type VulnerabilitySummary struct {
 	// Subject is "Kind/name" — the same shape Pod.ControlledBy carries, which
 	// is how a row finds its own summary without either side re-deriving the
 	// other's format.
-	Subject  string `json:"subject"`
-	Critical int    `json:"critical"`
-	High     int    `json:"high"`
-	Medium   int    `json:"medium"`
-	Low      int    `json:"low"`
+	Subject string `json:"subject"`
+	// Namespace is the workload's namespace; match a row on it as well as
+	// on Subject, since the same Kind/name can exist in several.
+	Namespace string `json:"namespace"`
+	Critical  int    `json:"critical"`
+	High      int    `json:"high"`
+	Medium    int    `json:"medium"`
+	Low       int    `json:"low"`
 	// Unknown is the scanner's own bucket for a finding whose severity its
 	// sources do not state. Carried rather than folded into Low.
 	Unknown int `json:"unknown"`
@@ -84,14 +87,15 @@ func toVulnerabilitySummaries(summaries []domain.VulnerabilitySummary) []Vulnera
 	out := make([]VulnerabilitySummary, 0, len(summaries))
 	for _, summary := range summaries {
 		out = append(out, VulnerabilitySummary{
-			Subject:  summary.Subject,
-			Critical: summary.Counts.Critical,
-			High:     summary.Counts.High,
-			Medium:   summary.Counts.Medium,
-			Low:      summary.Counts.Low,
-			Unknown:  summary.Counts.Unknown,
-			Images:   emptyIfNilSlice(summary.Images),
-			Reports:  summary.Reports,
+			Subject:   summary.Subject,
+			Namespace: summary.Namespace.String(),
+			Critical:  summary.Counts.Critical,
+			High:      summary.Counts.High,
+			Medium:    summary.Counts.Medium,
+			Low:       summary.Counts.Low,
+			Unknown:   summary.Counts.Unknown,
+			Images:    emptyIfNilSlice(summary.Images),
+			Reports:   summary.Reports,
 		})
 	}
 	return out

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"time"
 
@@ -97,17 +98,25 @@ func NewWorkloadService(deps WorkloadServiceDeps) (*WorkloadService, error) {
 // API server returns pods in etcd key order, which shifts as objects come and
 // go and would make rows jump under the cursor.
 func (s *WorkloadService) ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error) {
+	return s.ListPodsIn(ctx, id, domain.ScopeOf(namespace), projection)
+}
+
+// ListPodsIn is ListPods over a scope of namespaces. See readScoped for how
+// the scope is read.
+func (s *WorkloadService) ListPodsIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, projection domain.Projection) ([]domain.Pod, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing pods: %w", err)
 	}
 
 	generation := s.usage.generationOf(id)
-	pods, err := s.workloads.ListPods(ctx, id, namespace, projection)
+	pods, err := readScoped(ctx, scope, domain.Pod.Namespace, func(ctx context.Context, namespace domain.NamespaceName) ([]domain.Pod, error) {
+		return s.workloads.ListPods(ctx, id, namespace, projection)
+	})
 	if err != nil {
-		return nil, fmt.Errorf("listing pods in %q of %q: %w", namespace, id, err)
+		return nil, fmt.Errorf("listing pods in %q of %q: %w", scope.Key(), id, err)
 	}
 
-	pods = s.withPodMetrics(ctx, id, namespace, pods)
+	pods = s.withPodMetricsIn(ctx, id, scope, pods)
 	s.usage.record(id, generation, pods, time.Now())
 
 	slices.SortStableFunc(pods, func(a, b domain.Pod) int {
@@ -123,13 +132,18 @@ func (s *WorkloadService) ListPods(ctx context.Context, id domain.ClusterID, nam
 // ListWorkloads returns controllers of the given kind, sorted by namespace
 // then name.
 func (s *WorkloadService) ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error) {
+	return s.ListWorkloadsIn(ctx, id, kind, domain.ScopeOf(namespace), projection)
+}
+
+// ListWorkloadsIn is ListWorkloads over a scope of namespaces.
+func (s *WorkloadService) ListWorkloadsIn(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, scope domain.NamespaceScope, projection domain.Projection) ([]domain.Workload, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("listing %ss: %w", kind, err)
 	}
 
-	workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace, projection)
+	workloads, err := s.readWorkloadsIn(ctx, id, kind, scope, projection)
 	if err != nil {
-		return nil, fmt.Errorf("listing %ss in %q of %q: %w", kind, namespace, id, err)
+		return nil, fmt.Errorf("listing %ss in %q of %q: %w", kind, scope.Key(), id, err)
 	}
 
 	slices.SortStableFunc(workloads, func(a, b domain.Workload) int {
@@ -156,6 +170,13 @@ func (s *WorkloadService) ListWorkloads(ctx context.Context, id domain.ClusterID
 // and a CronJob's Jobs. Both are small objects beside the pod list already
 // being fetched.
 func (s *WorkloadService) WorkloadConsumption(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) (map[string]domain.AggregateUsage, error) {
+	return s.WorkloadConsumptionIn(ctx, id, kind, domain.ScopeOf(namespace))
+}
+
+// WorkloadConsumptionIn is WorkloadConsumption over a scope of namespaces.
+// Keys are "namespace/name", so controllers of different namespaces do not
+// collide.
+func (s *WorkloadService) WorkloadConsumptionIn(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, scope domain.NamespaceScope) (map[string]domain.AggregateUsage, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return nil, fmt.Errorf("reading %s usage: %w", kind, err)
 	}
@@ -163,16 +184,16 @@ func (s *WorkloadService) WorkloadConsumption(ctx context.Context, id domain.Clu
 	// No projection on either read: the sums never look at an annotation,
 	// and the empty projection is what lets these coalesce with the
 	// assessment's own lists in the same tick.
-	workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace, domain.Projection{})
+	workloads, err := s.readWorkloadsIn(ctx, id, kind, scope, domain.Projection{})
 	if err != nil {
-		return nil, fmt.Errorf("listing %ss in %q of %q: %w", kind, namespace, id, err)
+		return nil, fmt.Errorf("listing %ss in %q of %q: %w", kind, scope.Key(), id, err)
 	}
 
-	pods, err := s.workloads.ListPods(ctx, id, namespace, domain.Projection{})
+	pods, err := s.readPodsIn(ctx, id, scope, domain.Projection{})
 	if err != nil {
-		return nil, fmt.Errorf("listing pods in %q of %q: %w", namespace, id, err)
+		return nil, fmt.Errorf("listing pods in %q of %q: %w", scope.Key(), id, err)
 	}
-	pods, measured := podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
+	pods, measured := podsWithUsageIn(ctx, s.metrics, s.logger, id, scope, pods)
 
 	var intermediates []domain.Workload
 	if hop, needed := intermediateKind(kind); needed {
@@ -181,14 +202,28 @@ func (s *WorkloadService) WorkloadConsumption(ctx context.Context, id domain.Clu
 		// the ordinary state of a CronJob between runs and a Deployment
 		// scaled to zero, so the two would be indistinguishable. An error
 		// puts a dash and a reason on screen; a silent zero is a lie.
-		found, err := s.workloads.ListWorkloads(ctx, id, hop, namespace, domain.Projection{})
+		found, err := s.readWorkloadsIn(ctx, id, hop, scope, domain.Projection{})
 		if err != nil {
-			return nil, fmt.Errorf("listing %ss in %q of %q: %w", hop, namespace, id, err)
+			return nil, fmt.Errorf("listing %ss in %q of %q: %w", hop, scope.Key(), id, err)
 		}
 		intermediates = found
 	}
 
 	return domain.WorkloadConsumption(workloads, pods, intermediates, measured), nil
+}
+
+// readPodsIn and readWorkloadsIn are the raw scoped reads: no registry
+// check, no usage, no sorting.
+func (s *WorkloadService) readPodsIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, projection domain.Projection) ([]domain.Pod, error) {
+	return readScoped(ctx, scope, domain.Pod.Namespace, func(ctx context.Context, namespace domain.NamespaceName) ([]domain.Pod, error) {
+		return s.workloads.ListPods(ctx, id, namespace, projection)
+	})
+}
+
+func (s *WorkloadService) readWorkloadsIn(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, scope domain.NamespaceScope, projection domain.Projection) ([]domain.Workload, error) {
+	return readScoped(ctx, scope, domain.Workload.Namespace, func(ctx context.Context, namespace domain.NamespaceName) ([]domain.Workload, error) {
+		return s.workloads.ListWorkloads(ctx, id, kind, namespace, projection)
+	})
 }
 
 // intermediateKind names the object that stands between a controller and its
@@ -230,7 +265,12 @@ func (s *WorkloadService) WorkloadUsage(ctx context.Context, id domain.ClusterID
 // withPodMetrics attaches usage to pods, degrading silently when the cluster
 // serves no metrics API. See ClusterService.withNodeMetrics for why silently.
 func (s *WorkloadService) withPodMetrics(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pods []domain.Pod) []domain.Pod {
-	enriched, _ := podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
+	return s.withPodMetricsIn(ctx, id, domain.ScopeOf(namespace), pods)
+}
+
+// withPodMetricsIn is withPodMetrics over a scope of namespaces.
+func (s *WorkloadService) withPodMetricsIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, pods []domain.Pod) []domain.Pod {
+	enriched, _ := podsWithUsageIn(ctx, s.metrics, s.logger, id, scope, pods)
 	return enriched
 }
 
@@ -249,12 +289,27 @@ func podsWithUsage(
 	namespace domain.NamespaceName,
 	pods []domain.Pod,
 ) ([]domain.Pod, bool) {
+	return podsWithUsageIn(ctx, metrics, logger, id, domain.ScopeOf(namespace), pods)
+}
+
+// podsWithUsageIn is podsWithUsage over a scope. The usage is read the way
+// the pods are (see readScoped) and MEASURED ONLY IF EVERY READ ANSWERED: a
+// scope where one namespace's metrics failed would otherwise report that
+// namespace's pods as idle.
+func podsWithUsageIn(
+	ctx context.Context,
+	metrics ports.MetricsPort,
+	logger *slog.Logger,
+	id domain.ClusterID,
+	scope domain.NamespaceScope,
+	pods []domain.Pod,
+) ([]domain.Pod, bool) {
 	// No early return on an empty slice, deliberately. The answer is not only
 	// the enriched pods but whether the cluster serves metrics AT ALL, and an
 	// empty namespace on a metered cluster must not report the same thing as
 	// a cluster with no metrics-server — that distinction is what stops the
 	// panel telling somebody to install one.
-	usage, err := metrics.PodMetrics(ctx, id, namespace)
+	usage, err := readPodUsage(ctx, metrics, id, scope)
 	if err != nil {
 		if !errors.Is(err, ports.ErrMetricsUnavailable) {
 			logger.WarnContext(ctx, "pod metrics unavailable",
@@ -275,6 +330,37 @@ func podsWithUsage(
 	return enriched, true
 }
 
+// readPodUsage reads pod usage over a scope the way readScoped reads pods:
+// cluster-wide when All or wide (the extra namespaces' entries are never
+// looked up), per namespace otherwise, and per namespace again when a
+// cluster-wide read is refused for a named scope.
+func readPodUsage(ctx context.Context, metrics ports.MetricsPort, id domain.ClusterID, scope domain.NamespaceScope) (map[string]domain.PodUsage, error) {
+	if scope.ListsClusterWide() {
+		usage, err := metrics.PodMetrics(ctx, id, domain.NamespaceAll)
+		if err == nil || scope.Everything() || !errors.Is(err, ports.ErrForbidden) {
+			return usage, err
+		}
+	}
+
+	if len(scope.Namespaces) == 1 {
+		return metrics.PodMetrics(ctx, id, scope.Namespaces[0])
+	}
+
+	parts, err := perNamespace(ctx, scope, func(ctx context.Context, namespace domain.NamespaceName) (map[string]domain.PodUsage, error) {
+		return metrics.PodMetrics(ctx, id, namespace)
+	})
+	if err != nil {
+		// The metrics sentinel must survive the namespace naming.
+		return nil, err
+	}
+
+	merged := make(map[string]domain.PodUsage)
+	for _, part := range parts {
+		maps.Copy(merged, part)
+	}
+	return merged, nil
+}
+
 // ListApplications groups a cluster's workloads by the application they
 // belong to.
 //
@@ -289,21 +375,26 @@ func podsWithUsage(
 // dozen reads. What an application IS, to somebody looking at this list, is
 // the things that run; the panel for one member reaches the rest.
 func (s *WorkloadService) ListApplications(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.ApplicationInventory, error) {
+	return s.ListApplicationsIn(ctx, id, domain.ScopeOf(namespace))
+}
+
+// ListApplicationsIn is ListApplications over a scope of namespaces.
+func (s *WorkloadService) ListApplicationsIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope) (domain.ApplicationInventory, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return domain.ApplicationInventory{}, fmt.Errorf("listing applications: %w", err)
 	}
 
 	objects := make([]domain.ApplicationObject, 0)
 
-	pods, err := s.workloads.ListPods(ctx, id, namespace, domain.Projection{})
+	pods, err := s.readPodsIn(ctx, id, scope, domain.Projection{})
 	if err != nil {
 		return domain.ApplicationInventory{}, fmt.Errorf(
-			"listing pods in %q of %q: %w", namespace, id, err)
+			"listing pods in %q of %q: %w", scope.Key(), id, err)
 	}
 	// With their measurements, so an application can be metered the way a
 	// namespace and a controller are. The read is coalesced with whatever
 	// else this tick asked for.
-	pods, measured := podsWithUsage(ctx, s.metrics, s.logger, id, namespace, pods)
+	pods, measured := podsWithUsageIn(ctx, s.metrics, s.logger, id, scope, pods)
 	for _, pod := range pods {
 		objects = append(objects, domain.ApplicationObject{
 			Kind:      "Pod",
@@ -313,7 +404,7 @@ func (s *WorkloadService) ListApplications(ctx context.Context, id domain.Cluste
 	}
 
 	for _, kind := range domain.WorkloadKinds() {
-		workloads, err := s.workloads.ListWorkloads(ctx, id, kind, namespace, domain.Projection{})
+		workloads, err := s.readWorkloadsIn(ctx, id, kind, scope, domain.Projection{})
 		if err != nil {
 			// One kind an account may not list must not empty the page: an
 			// application is still found through its other members.

@@ -4909,6 +4909,12 @@ export interface VulnerabilitySummary {
      * other's format.
      */
     "subject": string;
+
+    /**
+     * Namespace is the workload's namespace; match a row on it as well as
+     * on Subject, since the same Kind/name can exist in several.
+     */
+    "namespace": string;
     "critical": number;
     "high": number;
     "medium": number;

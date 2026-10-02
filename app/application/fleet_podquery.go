@@ -11,9 +11,9 @@ import (
 
 // keptPods is a cluster's last pod rows, held for the read that brings none.
 type keptPods struct {
-	namespace domain.NamespaceName
-	pods      []domain.Pod
-	at        time.Time
+	scope string
+	pods  []domain.Pod
+	at    time.Time
 }
 
 // podMemo holds each cluster's last good pod rows.
@@ -38,7 +38,7 @@ type podMemo struct {
 // brought rows replaces them; a slow or unreachable one keeps the last rows
 // for the same namespace, marked stale; anything else — refused, failed, not
 // served — shows none and forgets them.
-func (m *podMemo) share(read domain.ClusterRead[domain.Pod], namespace domain.NamespaceName, now time.Time) (domain.FleetPodShare, []domain.Pod) {
+func (m *podMemo) share(read domain.ClusterRead[domain.Pod], scope domain.NamespaceScope, now time.Time) (domain.FleetPodShare, []domain.Pod) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.kept == nil {
@@ -50,13 +50,13 @@ func (m *podMemo) share(read domain.ClusterRead[domain.Pod], namespace domain.Na
 	switch {
 	case read.Status == domain.ClusterReadOK, read.Status == domain.ClusterReadPartial,
 		read.Status == domain.ClusterReadSlow && len(read.Items) > 0:
-		m.kept[read.Cluster] = keptPods{namespace: namespace, pods: read.Items, at: now}
+		m.kept[read.Cluster] = keptPods{scope: scope.Key(), pods: read.Items, at: now}
 		share.Rows, share.RowsAt = len(read.Items), now
 		return share, read.Items
 
 	case read.Status == domain.ClusterReadSlow, read.Status == domain.ClusterReadUnreachable:
 		last, ok := m.kept[read.Cluster]
-		if !ok || last.namespace != namespace {
+		if !ok || last.scope != scope.Key() {
 			return share, nil
 		}
 		share.Rows, share.RowsAt, share.Stale = len(last.pods), last.at, len(last.pods) > 0
@@ -84,12 +84,17 @@ func (m *podMemo) forget(id domain.ClusterID) {
 // the strip's selection and narrows the rows, not the reads: a deselected
 // cluster is still read, because its chip still reports on it.
 func (s *FleetService) QueryPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName, query domain.PodQuery) (domain.FleetPodPage, error) {
+	return s.QueryPodsIn(ctx, ids, domain.ScopeOf(namespace), query)
+}
+
+// QueryPodsIn is QueryPods over a scope of namespaces.
+func (s *FleetService) QueryPodsIn(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope, query domain.PodQuery) (domain.FleetPodPage, error) {
 	query, err := domain.NewPodQuery(query)
 	if err != nil {
 		return domain.FleetPodPage{}, fmt.Errorf("querying pods across clusters: %w", err)
 	}
 
-	shares, pods, err := s.mergedPods(ctx, ids, namespace)
+	shares, pods, err := s.mergedPods(ctx, ids, scope)
 	if err != nil {
 		return domain.FleetPodPage{}, err
 	}
@@ -103,13 +108,18 @@ func (s *FleetService) QueryPods(ctx context.Context, ids []domain.ClusterID, na
 // MatchingPods is every pod of the merged list the query keeps, page
 // ignored — for the merged table's CSV export.
 func (s *FleetService) MatchingPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName, query domain.PodQuery) ([]domain.Pod, error) {
+	return s.MatchingPodsIn(ctx, ids, domain.ScopeOf(namespace), query)
+}
+
+// MatchingPodsIn is MatchingPods over a scope of namespaces.
+func (s *FleetService) MatchingPodsIn(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope, query domain.PodQuery) ([]domain.Pod, error) {
 	query.Offset, query.Limit = 0, domain.MaxPodPageSize
 	query, err := domain.NewPodQuery(query)
 	if err != nil {
 		return nil, fmt.Errorf("matching pods across clusters: %w", err)
 	}
 
-	_, pods, err := s.mergedPods(ctx, ids, namespace)
+	_, pods, err := s.mergedPods(ctx, ids, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -118,8 +128,8 @@ func (s *FleetService) MatchingPods(ctx context.Context, ids []domain.ClusterID,
 
 // mergedPods reads every cluster and returns each one's share and all of
 // their rows, in tab order.
-func (s *FleetService) mergedPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.FleetPodShare, []domain.Pod, error) {
-	reads, err := s.ListPods(ctx, ids, namespace)
+func (s *FleetService) mergedPods(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope) ([]domain.FleetPodShare, []domain.Pod, error) {
+	reads, err := s.ListPodsIn(ctx, ids, scope)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -128,7 +138,7 @@ func (s *FleetService) mergedPods(ctx context.Context, ids []domain.ClusterID, n
 	shares := make([]domain.FleetPodShare, 0, len(reads))
 	var pods []domain.Pod
 	for _, read := range reads {
-		share, rows := s.podMemo.share(read, namespace, now)
+		share, rows := s.podMemo.share(read, scope, now)
 		shares = append(shares, share)
 		pods = append(pods, rows...)
 	}

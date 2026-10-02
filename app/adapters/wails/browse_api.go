@@ -371,3 +371,55 @@ func (b *BrowseAPI) InspectTLSSecret(clusterID, namespace, name string) (Certifi
 
 	return toCertificateChain(chain, time.Now()), nil
 }
+
+// ListEventsIn is ListEvents over a set of namespaces; empty means every one.
+func (b *BrowseAPI) ListEventsIn(clusterID string, namespaces []string, annotationKeys []string, expressions []CustomExpression) ([]Event, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return nil, apiError(b.logger, "ListEventsIn", err)
+	}
+
+	events, err := b.events.ListEventsIn(ctx, id, scope, projectionFor(annotationKeys, expressions))
+	if err != nil {
+		return nil, apiError(b.logger, "ListEventsIn", err)
+	}
+	return toEvents(events, time.Now()), nil
+}
+
+// ListTableIn is ListTable over a set of namespaces; the tables are merged.
+func (b *BrowseAPI) ListTableIn(clusterID, kindID string, namespaces []string, annotationKeys []string, expressions []CustomExpression) (ResourceTable, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return ResourceTable{}, apiError(b.logger, "ListTableIn", err)
+	}
+
+	table, err := b.resources.ListTableIn(ctx, id, kindID, scope, projectionFor(annotationKeys, expressions))
+	if err != nil {
+		return ResourceTable{}, apiError(b.logger, "ListTableIn", err)
+	}
+	return toResourceTable(table), nil
+}
+
+// VulnerabilitySummariesIn is VulnerabilitySummaries over a set of
+// namespaces. Like the single form it is called on its own, never from a list.
+func (b *BrowseAPI) VulnerabilitySummariesIn(clusterID string, namespaces []string) (VulnerabilityListing, error) {
+	ctx, cancel := b.app.requestContext()
+	defer cancel()
+
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return VulnerabilityListing{}, apiError(b.logger, "VulnerabilitySummariesIn", err)
+	}
+
+	listing, err := b.resources.VulnerabilitySummariesIn(ctx, id, scope)
+	if err != nil {
+		return VulnerabilityListing{}, apiError(b.logger, "VulnerabilitySummariesIn", err)
+	}
+	return toVulnerabilityListing(listing), nil
+}
