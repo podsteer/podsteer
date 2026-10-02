@@ -284,7 +284,6 @@ func (s *HistoryService) cadence(id domain.ClusterID, now time.Time, interval ti
 	return domain.BackgroundSamplingInterval(interval)
 }
 
-
 // due reports whether a cluster's next sample is owed at now, and if so
 // marks it taken — the sampler's one gate, ahead of the per-cluster panic
 // wrapper so a skipped cluster costs nothing at all.

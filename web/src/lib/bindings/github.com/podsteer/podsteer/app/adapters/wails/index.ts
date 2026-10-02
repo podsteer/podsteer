@@ -165,6 +165,7 @@ export type {
     TopConsumers,
     UpdateStatus,
     UpgradeSummary,
+    UsagePoint,
     VendorCluster,
     VendorClusterList,
     VendorProvider,

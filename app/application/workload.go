@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -36,10 +37,34 @@ type WorkloadService struct {
 	registry  *Registry
 	textOrder domain.CollationKey
 	logger    *slog.Logger
+
+	// usage keeps every listed pod's recent usage, in memory only. See
+	// podUsageRing and PodUsageHistory.
+	usage podUsageRing
 }
 
-// Compile-time proof that the service satisfies its inbound port.
-var _ ports.WorkloadService = (*WorkloadService)(nil)
+// Compile-time proof that the service satisfies its inbound port, and that a
+// disconnect can reach the usage it keeps.
+var (
+	_ ports.WorkloadService = (*WorkloadService)(nil)
+	_ ClusterInvalidator    = (*WorkloadService)(nil)
+)
+
+// Invalidate drops a cluster's kept pod usage, for a disconnect or a
+// reconnect — a context that now points somewhere else must not inherit the
+// old cluster's series under the same pod names.
+func (s *WorkloadService) Invalidate(id domain.ClusterID) { s.usage.forget(id) }
+
+// PodUsageHistory returns one pod's recent usage, kept from the pod lists
+// this process has read — every pod in each namespace read, not only the
+// rows a page showed. Empty for a pod no read has measured; never an error
+// for that, because "no history yet" is an ordinary answer.
+func (s *WorkloadService) PodUsageHistory(_ context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) ([]domain.UsagePoint, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("reading pod usage: %w", err)
+	}
+	return s.usage.since(podUsageKey{cluster: id, namespace: namespace.String(), name: name}, time.Now()), nil
+}
 
 // NewWorkloadService validates deps and returns the service.
 func NewWorkloadService(deps WorkloadServiceDeps) (*WorkloadService, error) {
@@ -82,6 +107,7 @@ func (s *WorkloadService) ListPods(ctx context.Context, id domain.ClusterID, nam
 	}
 
 	pods = s.withPodMetrics(ctx, id, namespace, pods)
+	s.usage.record(pods, time.Now())
 
 	slices.SortStableFunc(pods, func(a, b domain.Pod) int {
 		if byNamespace := cmp.Compare(a.Namespace(), b.Namespace()); byNamespace != 0 {
@@ -450,6 +476,7 @@ func (s *WorkloadService) ListPodsForWorkload(ctx context.Context, id domain.Clu
 
 	// Enrich with metrics
 	pods = s.withPodMetrics(ctx, id, namespace, pods)
+	s.usage.record(pods, time.Now())
 
 	return pods, nil
 }

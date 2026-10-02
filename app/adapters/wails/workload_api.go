@@ -181,6 +181,43 @@ func podListArgs(clusterID, namespace string) (domain.ClusterID, domain.Namespac
 	return id, name, nil
 }
 
+// UsagePoint is one measurement of a pod's usage.
+type UsagePoint struct {
+	// At is when it was read, in milliseconds since the epoch.
+	At int64 `json:"at"`
+	// CPUCores and MemoryBytes are what was measured.
+	CPUCores    float64 `json:"cpuCores"`
+	MemoryBytes int64   `json:"memoryBytes"`
+}
+
+// PodUsageHistory returns one pod's recent usage, kept in Go's memory from
+// every pod list read — so the drawer has a chart for a pod that was never
+// on a page the webview held. Empty when nothing has measured it yet.
+func (w *WorkloadAPI) PodUsageHistory(clusterID, namespace, name string) ([]UsagePoint, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, ns, err := podListArgs(clusterID, namespace)
+	if err != nil {
+		return nil, apiError(w.logger, "PodUsageHistory", err)
+	}
+
+	points, err := w.workloads.PodUsageHistory(ctx, id, ns, name)
+	if err != nil {
+		return nil, apiError(w.logger, "PodUsageHistory", err)
+	}
+
+	out := make([]UsagePoint, 0, len(points))
+	for _, point := range points {
+		out = append(out, UsagePoint{
+			At:          point.At.UnixMilli(),
+			CPUCores:    float64(point.CPUMilli) / 1000,
+			MemoryBytes: point.MemoryBytes,
+		})
+	}
+	return out, nil
+}
+
 // WorkloadUsage sums what a controller's pods are consuming.
 //
 // Read while a panel is open rather than alongside the controller list: it

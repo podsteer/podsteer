@@ -12,6 +12,7 @@ const listTable = vi.fn()
 const refreshCredentials = vi.fn()
 const queryPods = vi.fn()
 const listPodKeys = vi.fn()
+const podUsageHistory = vi.fn().mockResolvedValue([])
 vi.mock('$lib/api/client', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('$lib/api/client')
   return {
@@ -21,6 +22,7 @@ vi.mock('$lib/api/client', async () => {
     refreshCredentials: (...args: unknown[]) => refreshCredentials(...args),
     queryPods: (...args: unknown[]) => queryPods(...args),
     listPodKeys: (...args: unknown[]) => listPodKeys(...args),
+    podUsageHistory: (...args: unknown[]) => podUsageHistory(...args),
   }
 })
 
@@ -337,6 +339,27 @@ describe('the pod table, paged in Go', () => {
 
     expect(open.pagedPods.map((pod) => pod.name)).toEqual(['web-2'])
     expect(open.selectedPod?.restarts).toBe(7)
+  })
+
+  it('opens a pod no page held with the usage Go kept for it', async () => {
+    queryPods.mockResolvedValueOnce(page(['web-1']))
+    await open.refresh()
+    podUsageHistory.mockResolvedValueOnce([
+      { at: 1000, cpuCores: 0.1, memoryBytes: 100 },
+      { at: 2000, cpuCores: 0.2, memoryBytes: 200 },
+    ])
+
+    await open.openDetail('web-9', 'prod')
+    await vi.waitFor(() => expect(open.usage).toHaveLength(2))
+    expect(open.podQuery.pinned).toEqual({ namespace: 'prod', name: 'web-9' })
+
+    expect(podUsageHistory).toHaveBeenCalledWith('dev', 'prod', 'web-9')
+    expect(open.usage.map((sample) => sample.cpuCores)).toEqual([0.1, 0.2])
+
+    // And the pinned copy becomes its row object on the next tick.
+    queryPods.mockResolvedValueOnce(page(['web-1'], { pinned: { name: 'web-9', namespace: 'prod' } as Pod }))
+    await open.refresh()
+    expect(open.selectedPod?.name).toBe('web-9')
   })
 
   it('does not count opening a drawer as a new page', async () => {

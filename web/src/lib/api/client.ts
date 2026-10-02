@@ -65,6 +65,7 @@ import {
   QueryPods as bindQueryPods,
   ListPodKeys as bindListPodKeys,
   ExportPodsCSV as bindExportPodsCSV,
+  PodUsageHistory as bindPodUsageHistory,
 } from '$bindings/workloadapi'
 import {
   ListEvents as bindListFleetEvents,
@@ -1052,6 +1053,18 @@ export async function queryPods(
 ): Promise<PodPage> {
   const page = await call(() => bindQueryPods(clusterId, namespace, annotationKeys, expressions, query))
   return { ...page, rows: page.rows ?? [], chipCounts: page.chipCounts ?? {} }
+}
+
+/** One measurement of a pod's usage, kept in Go's memory. */
+export type UsagePoint = wails.UsagePoint
+
+/**
+ * One pod's recent usage, as Go kept it from every pod list it read — the
+ * whole namespace's pods, not only the page the webview held. In memory
+ * there and never on disk; empty when nothing has measured the pod yet.
+ */
+export function podUsageHistory(clusterId: string, namespace: string, name: string): Promise<UsagePoint[]> {
+  return callList(() => bindPodUsageHistory(clusterId, namespace, name))
 }
 
 /** Every pod a query matches, across every page — for "select all matching". */

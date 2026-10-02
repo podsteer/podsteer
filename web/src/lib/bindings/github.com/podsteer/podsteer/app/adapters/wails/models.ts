@@ -4502,6 +4502,22 @@ export interface UpgradeSummary {
 }
 
 /**
+ * UsagePoint is one measurement of a pod's usage.
+ */
+export interface UsagePoint {
+    /**
+     * At is when it was read, in milliseconds since the epoch.
+     */
+    "at": number;
+
+    /**
+     * CPUCores and MemoryBytes are what was measured.
+     */
+    "cpuCores": number;
+    "memoryBytes": number;
+}
+
+/**
  * VendorCluster is one cluster a CLI reported.
  */
 export interface VendorCluster {

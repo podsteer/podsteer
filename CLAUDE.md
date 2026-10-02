@@ -391,11 +391,18 @@ usage moves every tick, and the watch store is not always serving.
   narrows rows, not reads. Workloads/events/any-kind are still merged in the
   webview.
 
+**The drawer is not limited to the page.** `PodQuery.pinned` names the open
+pod and `PodPage.pinned` returns it from the whole list, so its figures keep
+refreshing off-page; and `WorkloadService` keeps every listed pod's usage in
+an in-memory ring (`podUsageRing`, 200 points / one hour per pod, keyed by
+cluster, dropped on disconnect, **never written anywhere** — object names stay
+off disk, see SECURITY.md), which `PodUsageHistory` serves to seed the drawer's
+chart for a pod no page ever held.
+
 **What only sees the page now, and is a known loss:** the command palette's pod
-search; per-pod usage history (ADR 0004 records from list rows — the planned
-fix is a Go-side in-memory ring); pod findings filed on the session timeline;
-the open drawer's live refresh when its pod is not on the current page; the
-column picker's key suggestions. `ListPods` itself is unchanged for every
+search; pod findings filed on the session timeline; the column picker's key
+suggestions; the webview's own usageHistory for pods (superseded for the drawer
+by the Go ring). `ListPods` itself is unchanged for every
 other caller (node/workload pods, MCP).
 
 ## Custom columns quote metadata, and annotations travel by projection

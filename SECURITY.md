@@ -261,7 +261,9 @@ keeps in the webview's own storage rather than in that directory.
 **Saved views are the one thing in that webview storage that can hold a name
 from a cluster**, and only because you typed it: a view is a namespace and a
 search you chose to keep under a name of your own. Nothing records what you
-opened — the recents list is held in memory and gone when the tab closes — and
+opened — the recents list is held in memory and gone when the tab closes, as is
+the per-pod usage behind a pod's chart, which the Go process keeps in memory
+from the pod lists it reads and writes nowhere — and
 saved views are deliberately left out of the settings export below, so a file
 you keep in git or send to a colleague still carries no object names. Delete
 one from the same menu that saved it.

@@ -21,6 +21,7 @@ import {
   workloadConsumption,
   listNodes,
   listPodKeys,
+  podUsageHistory,
   exportPodsCSV,
   exportFleetPodsCSV,
   queryPods,
@@ -1354,7 +1355,7 @@ export class ClusterSession {
     // page — see pinnedPod. Not part of pageQueryKey: opening a drawer is
     // not a new page, and the next tick carries it.
     pinned:
-      this.selectedPod && this.selectedName
+      this.viewMode === 'pods' && this.selectedName
         ? { namespace: this.selectedNamespace, name: this.selectedName }
         : { namespace: '', name: '' },
     text: this.search,
@@ -3050,9 +3051,10 @@ export class ClusterSession {
       return
     }
 
-    if (this.selectedPod) {
+    if (this.selectedPod || this.viewMode === 'pods') {
       // The page first, then the pinned copy Go read from the whole list —
-      // see #pinnedPod.
+      // see #pinnedPod. Also when the drawer opened on a pod no page held
+      // (a followed link): the pinned copy is its first row object.
       const fresh =
         this.pods.find(
           (pod) => pod.name === this.selectedName && pod.namespace === this.selectedNamespace,
@@ -3107,6 +3109,33 @@ export class ClusterSession {
       cpuCores: parseQuantity(node.cpu) ?? 0,
       memoryBytes: parseQuantity(node.memory) ?? 0,
     })
+  }
+
+  /**
+   * Fills the open pod's chart from the history Go kept, keeping whatever the
+   * webview recorded after Go's newest point. Dropped if another object was
+   * opened while it was in flight.
+   */
+  async #seedPodUsage(namespace: string, name: string): Promise<void> {
+    let points: Awaited<ReturnType<typeof podUsageHistory>>
+    try {
+      points = await podUsageHistory(this.cluster.id, namespace, name)
+    } catch {
+      return // The webview's own history stands; nothing to say about it.
+    }
+    if (this.selectedName !== name || this.selectedNamespace !== namespace || points.length === 0) return
+
+    const kept: UsageSample[] = points.map((point) => ({
+      at: point.at,
+      cpuCores: point.cpuCores,
+      memoryBytes: point.memoryBytes,
+    }))
+    const newest = kept[kept.length - 1].at
+    const merged = [...kept, ...this.usage.filter((sample) => sample.at > newest)]
+    // Only when Go's is the longer record — a pod the webview watched on its
+    // page all along already has the same points.
+    if (merged.length <= this.usage.length) return
+    this.usage = merged.slice(-MAX_USAGE_SAMPLES)
   }
 
   #recordUsage(pod: Pod): void {
@@ -3190,6 +3219,10 @@ export class ClusterSession {
         : this.selectedNamespaceRow
           ? usageHistory.since(usageKey(this.cluster.id, 'namespace', '', name))
           : []
+    // A pod's history is ALSO kept in Go, from every pod list read — the
+    // whole namespace, where the webview now holds a page — so a pod that
+    // was never on a page still opens with its last half hour.
+    if (this.viewMode === 'pods') void this.#seedPodUsage(namespace, name)
     // Every open starts hidden. A reveal is a decision about one object, and
     // carrying it to the next one is how Freelens ends up showing a value
     // somebody unmasked in private on the pod they open in a meeting.

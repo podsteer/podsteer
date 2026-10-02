@@ -102,6 +102,10 @@ type WorkloadService interface {
 	// the CSV export.
 	MatchingPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection, query domain.PodQuery) ([]domain.Pod, error)
 
+	// PodUsageHistory is one pod's recent usage, kept in memory from the pod
+	// lists already read. Never persisted.
+	PodUsageHistory(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) ([]domain.UsagePoint, error)
+
 	// ListPodKeys names every pod a query keeps, for "select all matching".
 	ListPodKeys(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection, query domain.PodQuery) ([]domain.PodKey, error)
 

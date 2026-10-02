@@ -114,6 +114,15 @@ export function PodGraph(clusterID: string, $namespace: string, podName: string)
 }
 
 /**
+ * PodUsageHistory returns one pod's recent usage, kept in Go's memory from
+ * every pod list read — so the drawer has a chart for a pod that was never
+ * on a page the webview held. Empty when nothing has measured it yet.
+ */
+export function PodUsageHistory(clusterID: string, $namespace: string, name: string): $CancellablePromise<$models.UsagePoint[] | null> {
+    return $Call.ByID(3381487548, clusterID, $namespace, name);
+}
+
+/**
  * QueryPods returns one page of the pod table — what its search box, status
  * chips, sort and pager say — and the counts around it, rather than the whole
  * list. See domain.QueryPods, and CLAUDE.md, "The pod table is paged in Go".
