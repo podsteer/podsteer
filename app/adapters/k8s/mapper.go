@@ -700,6 +700,7 @@ func mapOwnerReferences(owners []metav1.OwnerReference) []domain.OwnerReference 
 			Kind:       owner.Kind,
 			Name:       owner.Name,
 			Controller: derefBool(owner.Controller),
+			APIVersion: owner.APIVersion,
 		})
 	}
 	return mapped

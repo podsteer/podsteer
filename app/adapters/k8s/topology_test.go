@@ -2,9 +2,11 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
@@ -16,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes/fake"
 	clientgotesting "k8s.io/client-go/testing"
@@ -354,4 +357,107 @@ func TestChangeNotifierRace(t *testing.T) {
 
 	var nilNotifier *changeNotifier
 	nilNotifier.changed("dev", "shop") // a no-op, never a panic
+}
+
+// discoveryCalls counts the discovery requests a fake has served.
+func discoveryCalls(client *fake.Clientset) (groups, resources int) {
+	for _, action := range client.Actions() {
+		if action.GetVerb() != "get" {
+			continue
+		}
+		switch action.GetResource().Resource {
+		case "group":
+			groups++
+		case "resource":
+			resources++
+		}
+	}
+	return groups, resources
+}
+
+func TestGatewayDiscoveryIsOneRequestAndCachedWhenAbsent(t *testing.T) {
+	client := fake.NewSimpleClientset(shopObjects()...)
+	adapter := topologyAdapter(t, client)
+
+	for range 3 {
+		in, err := adapter.TopologySources(context.Background(), "dev", topologyScope(t, "shop"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if in.GatewayAPIServed || len(in.Unreadable) != 0 {
+			t.Fatalf("served %v unreadable %v", in.GatewayAPIServed, in.Unreadable)
+		}
+	}
+	if groups, resources := discoveryCalls(client); groups != 1 || resources != 0 {
+		t.Errorf("discovery asked %d group and %d resource requests over three opens, want 1 and 0", groups, resources)
+	}
+}
+
+func TestGatewayDiscoveryIsCachedWhenServed(t *testing.T) {
+	client := fake.NewSimpleClientset(shopObjects()...)
+	client.Resources = []*metav1.APIResourceList{{
+		GroupVersion: gatewayGroup + "/v1",
+		APIResources: []metav1.APIResource{{Name: "gateways", Kind: "Gateway"}},
+	}}
+	adapter := topologyAdapter(t, client)
+	for range 2 {
+		in, _ := adapter.TopologySources(context.Background(), "dev", topologyScope(t, "shop"))
+		if !in.GatewayAPIServed {
+			t.Fatal("not served")
+		}
+	}
+	if groups, resources := discoveryCalls(client); groups != 1 || resources != 1 {
+		t.Errorf("discovery asked %d/%d, want 1/1", groups, resources)
+	}
+}
+
+// TestGatewayDiscoveryRunsBesideTheOtherReads holds discovery until the
+// Service list has been asked for: if discovery gated the other reads, the
+// Service list would never come and the read would time out.
+func TestGatewayDiscoveryRunsBesideTheOtherReads(t *testing.T) {
+	client := fake.NewSimpleClientset(shopObjects()...)
+	servicesAsked := make(chan struct{})
+	var once sync.Once
+	client.PrependReactor("list", "services", func(clientgotesting.Action) (bool, runtime.Object, error) {
+		once.Do(func() { close(servicesAsked) })
+		return false, nil, nil
+	})
+	adapter := topologyAdapter(t, client)
+	// Outside the fake's reactor chain, which holds one lock for every call
+	// and would serialise everything whatever the adapter did.
+	adapter.factory.clients["dev"].discovery = gatedDiscovery{DiscoveryInterface: client.Discovery(), open: servicesAsked}
+
+	in, err := adapter.TopologySources(context.Background(), "dev", topologyScope(t, "shop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(in.Unreadable, "gateway api discovery") {
+		t.Errorf("discovery serialised the reads: %v", in.Unreadable)
+	}
+}
+
+func TestTopologySourcesSortsUnreadable(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	client.PrependReactor("list", "*", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(schema.GroupResource{Resource: action.GetResource().Resource}, "", nil)
+	})
+	in, _ := topologyAdapter(t, client).TopologySources(context.Background(), "dev", topologyScope(t, "shop"))
+	if !slices.IsSorted(in.Unreadable) || len(in.Unreadable) == 0 {
+		t.Errorf("Unreadable = %v", in.Unreadable)
+	}
+}
+
+// gatedDiscovery answers ServerGroups only once open is closed.
+type gatedDiscovery struct {
+	discovery.DiscoveryInterface
+	open chan struct{}
+}
+
+func (g gatedDiscovery) ServerGroups() (*metav1.APIGroupList, error) {
+	select {
+	case <-g.open:
+		return g.DiscoveryInterface.ServerGroups()
+	case <-time.After(5 * time.Second):
+		return nil, errors.New("discovery ran before the other reads started")
+	}
 }

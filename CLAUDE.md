@@ -1336,14 +1336,17 @@ Every rule above still holds, and four more are specific to it:
   PodDisruptionBudget's nil selector selects nothing; its empty one, everything.
 - **Owners come from `ownerReferences`, never a GET.** A CRD owner (a Rollout
   over a ReplicaSet) is a neutral `object` box by kind and name; a mirror pod's
-  Node owner is cluster-scoped. Unread names are drawn and never counted.
+  Node owner is cluster-scoped. An owner whose kind name the topology lists
+  but whose API group differs (an Istio `Gateway`) gets a group-qualified id,
+  never the listed object's box. Unread names are drawn and never counted.
 - **ConfigMaps, Secrets and claims are NAMES from templates**, and `Bounded`
   says so. A StatefulSet's claim is drawn per pod as `<template>-<pod>`, which
   is the PVC's real name.
 - **Above `TopologyPodCap` (3000) pods fold IN GO** into `fold/<group>/pod`
   nodes carrying `PodSummary{Total, Ready, Unhealthy}`, the same id and
   semantics `graphFold.ts` uses; Service, budget and policy edges re-point to
-  the fold and dedupe; `Summarised` is set; `Counts["Pod"]` stays complete. The
+  the fold and dedupe; a StatefulSet's claims fold too, into one
+  `<template>-<set>-*` box per fold; `Summarised` is set; `Counts` stay complete. The
   one place "the backend emits every pod" bends, and the graph says it did.
 
 **Reads** (`Adapter.TopologySources`, about a dozen in parallel): FULL
@@ -1352,7 +1355,9 @@ watch store strips RS/Job templates to images, and a pod's names come from
 its own controller's template), pods from the cached `ListPods`, Services,
 Ingresses, HPAs (autoscaling/v2), PDBs (policy/v1), NetworkPolicies,
 ServiceAccount names, and Gateway/HTTPRoute/GRPCRoute/TCPRoute/TLSRoute via
-the dynamic client ONLY when discovery serves `gateway.networking.k8s.io`.
+the dynamic client ONLY when discovery serves `gateway.networking.k8s.io` —
+decided by one `ServerGroups` call cached on the client set, so a Live redraw
+never asks again.
 One cluster-wide list per kind when the scope is All or more than three
 namespaces, else one per namespace; a cluster-wide 403 for a named scope falls
 back to per-namespace lists. Every refusal is `Unreadable` ("services in

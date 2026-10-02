@@ -221,6 +221,11 @@ type clients struct {
 	// cluster, while an apply of an ordinary built-in kind never re-queries
 	// discovery at all.
 	restMapper meta.RESTMapper
+
+	// gateway caches which Gateway API resources discovery serves, for the
+	// topology (see topology.go). On the set, so it goes with the set when
+	// the cluster is invalidated or reconnected.
+	gateway gatewayDiscovery
 }
 
 // clientFactory builds and caches one client set per cluster.

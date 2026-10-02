@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
@@ -316,6 +318,9 @@ func (a *Adapter) TopologySources(ctx context.Context, id domain.ClusterID, scop
 	})
 
 	wg.Wait()
+	// The reads append as they finish; the map's caption should not reorder
+	// itself between two refreshes of the same cluster.
+	slices.Sort(in.Unreadable)
 	return in, nil
 }
 
@@ -417,22 +422,10 @@ func (a *Adapter) gatewaySources(ctx context.Context, set *clients, scope domain
 		return nil, nil, false
 	}
 
-	// plural -> the first version that serves it.
-	served := make(map[string]string)
-	for _, version := range gatewayVersions {
-		list, err := set.discovery.ServerResourcesForGroupVersion(gatewayGroup + "/" + version)
-		if err != nil {
-			if !apierrors.IsNotFound(err) {
-				degrade("gateway api discovery", err)
-				return nil, nil, false
-			}
-			continue
-		}
-		for _, resource := range list.APIResources {
-			if _, wanted := gatewayKinds[resource.Name]; wanted && served[resource.Name] == "" {
-				served[resource.Name] = version
-			}
-		}
+	served, err := set.gateway.served(set.discovery)
+	if err != nil {
+		degrade("gateway api discovery", err)
+		return nil, nil, false
 	}
 	if len(served) == 0 {
 		return nil, nil, false
@@ -461,6 +454,61 @@ func (a *Adapter) gatewaySources(ctx context.Context, set *clients, scope domain
 		}
 	}
 	return gateways, routes, true
+}
+
+// gatewayDiscovery remembers which Gateway API resources a client set's
+// server serves, plural -> version.
+//
+// ONE ServerGroups CALL ANSWERS THE COMMON CASE: a cluster without the group
+// is done in one request, and the answer is kept for the life of the set, so
+// a Live redraw does not ask again. Only a cluster that serves the group asks
+// once per served version for its resources. A failure is not kept.
+type gatewayDiscovery struct {
+	mu     sync.Mutex
+	known  bool
+	plural map[string]string
+}
+
+func (g *gatewayDiscovery) served(client discovery.DiscoveryInterface) (map[string]string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.known {
+		return g.plural, nil
+	}
+
+	groups, err := client.ServerGroups()
+	if err != nil {
+		return nil, err
+	}
+	plural := make(map[string]string)
+	for _, group := range groups.Groups {
+		if group.Name != gatewayGroup {
+			continue
+		}
+		offered := make(map[string]bool, len(group.Versions))
+		for _, version := range group.Versions {
+			offered[version.Version] = true
+		}
+		for _, version := range gatewayVersions {
+			if !offered[version] {
+				continue
+			}
+			list, err := client.ServerResourcesForGroupVersion(gatewayGroup + "/" + version)
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return nil, err
+			}
+			for _, resource := range list.APIResources {
+				if _, wanted := gatewayKinds[resource.Name]; wanted && plural[resource.Name] == "" {
+					plural[resource.Name] = version
+				}
+			}
+		}
+	}
+	g.plural, g.known = plural, true
+	return plural, nil
 }
 
 func gatewayRef(object *unstructured.Unstructured) domain.GatewayRef {

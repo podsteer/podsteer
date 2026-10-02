@@ -427,6 +427,51 @@ func (b *topologyBuilder) unresolved(kind string, namespace NamespaceName, name,
 	return id
 }
 
+// topologyKindGroups are the kinds the topology lists, by the API group it
+// lists them from. An owner of one of these kinds from ANOTHER group — an
+// Istio Gateway beside a Gateway API one — is a different object, and must
+// not share its box.
+var topologyKindGroups = map[string]string{
+	"Pod": "", "Service": "", "ServiceAccount": "", "ConfigMap": "", "Secret": "", "PersistentVolumeClaim": "",
+	"Deployment": "apps", "StatefulSet": "apps", "DaemonSet": "apps", "ReplicaSet": "apps",
+	"Job": "batch", "CronJob": "batch",
+	"Ingress": "networking.k8s.io", "NetworkPolicy": "networking.k8s.io",
+	"HorizontalPodAutoscaler": "autoscaling", "PodDisruptionBudget": "policy",
+	"Gateway": "gateway.networking.k8s.io", "HTTPRoute": "gateway.networking.k8s.io",
+	"GRPCRoute": "gateway.networking.k8s.io", "TCPRoute": "gateway.networking.k8s.io",
+	"TLSRoute": "gateway.networking.k8s.io",
+}
+
+// foreignOwner reports an owner whose kind name the topology lists but whose
+// group is not the one it lists it from. An owner with no APIVersion is
+// taken at its word.
+func foreignOwner(owner OwnerReference) bool {
+	group, listed := topologyKindGroups[owner.Kind]
+	return listed && owner.APIVersion != "" && owner.Group() != group
+}
+
+// ownerID is the id of an owner's box: qualified by group when it is foreign.
+func ownerID(owner OwnerReference, namespace NamespaceName) string {
+	if foreignOwner(owner) {
+		return topologyID(owner.Kind+"."+owner.Group(), namespace, owner.Name)
+	}
+	return topologyID(owner.Kind, namespace, owner.Name)
+}
+
+// unresolvedOwner draws an owner that was not read; a foreign one is a plain
+// object, whatever its kind name resembles.
+func (b *topologyBuilder) unresolvedOwner(owner OwnerReference, namespace NamespaceName) string {
+	if !foreignOwner(owner) {
+		return b.unresolved(owner.Kind, namespace, owner.Name, "owner")
+	}
+	id := ownerID(owner, namespace)
+	b.add(TopologyNode{
+		ID: id, Kind: GraphObject, APIKind: owner.Kind, Name: owner.Name,
+		Namespace: namespace.String(), State: StateNeutral, Detail: owner.Group(),
+	}, false)
+	return id
+}
+
 // NewTopologyGraph draws a scope.
 //
 // A PURE FUNCTION of what was read, sorted, so the same cluster draws the same
@@ -441,7 +486,7 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 	scope := in.Scope
 
 	graph := TopologyGraph{
-		Unreadable:  slices.Clone(in.Unreadable),
+		Unreadable:  slices.Sorted(slices.Values(in.Unreadable)),
 		Bounded:     TopologyBounded,
 		GeneratedAt: in.ReadAt,
 	}
@@ -462,11 +507,11 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 		if c.Owner.IsZero() {
 			continue
 		}
-		owner := topologyID(c.Owner.Kind, c.Namespace, c.Owner.Name)
+		owner := ownerID(c.Owner, c.Namespace)
 		if _, listed := controllers[owner]; !listed {
 			// Not among what was read — an operator's CRD, most often.
 			// Drawn by kind and name from the ownerReference; never fetched.
-			owner = b.unresolved(c.Owner.Kind, c.Namespace, c.Owner.Name, "owner")
+			owner = b.unresolvedOwner(c.Owner, c.Namespace)
 		}
 		ownerOf[id] = owner
 		b.edge(owner, id, EdgeOwns, "")
@@ -502,6 +547,7 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 	graph.Summarised = summarised
 
 	summaries := make(map[string]*TopologyPodSummary)
+	claimFolds := make(map[string]int)
 	worst := make(map[string]NodeState)
 	podsUnder := make(map[string]int)
 
@@ -512,9 +558,9 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 
 		parent := ""
 		if owner := pod.Controller(); !owner.IsZero() {
-			parent = topologyID(owner.Kind, ns, owner.Name)
+			parent = ownerID(owner, ns)
 			if _, listed := controllers[parent]; !listed {
-				parent = b.unresolved(owner.Kind, ns, owner.Name, "owner")
+				parent = b.unresolvedOwner(owner, ns)
 			}
 			// Counted up the whole chain, bounded because Kubernetes does not
 			// forbid an ownerReference cycle.
@@ -568,6 +614,17 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 			if c, listed := controllers[parent]; listed {
 				b.attach(sp.node, c.Namespace, c.Attached)
 				for _, template := range c.ClaimTemplates {
+					if summarised {
+						// ONE BOX FOR THE FOLD'S CLAIMS, as the fold is one
+						// box for its pods: three thousand claims would undo
+						// the summary. Counted one by one, so Counts stays
+						// complete.
+						id := b.claimFold(c.Namespace, template+"-"+c.Name+"-*")
+						b.edge(sp.node, id, EdgeAttaches, "claim template")
+						claimFolds[id]++
+						b.counts["PersistentVolumeClaim"]++
+						continue
+					}
 					b.attach(sp.node, c.Namespace, []AttachedRef{{
 						Kind: GraphClaim, Name: template + "-" + pod.Name(), Via: "claim template",
 					}})
@@ -588,6 +645,10 @@ func NewTopologyGraph(in TopologyInput) TopologyGraph {
 		if summary.Unhealthy > 0 {
 			node.Detail += fmt.Sprintf(", %d unhealthy", summary.Unhealthy)
 		}
+	}
+
+	for id, n := range claimFolds {
+		b.nodes[id].Detail = fmt.Sprintf("%d claims", n)
 	}
 
 	// A controller with no pods under it — scaled to zero, a CronJob between
@@ -882,6 +943,16 @@ func (x podIndex) candidates(namespace NamespaceName, matchLabels map[string]str
 		}
 	}
 	return best
+}
+
+// claimFold is the one box standing for a folded StatefulSet's claims.
+func (b *topologyBuilder) claimFold(namespace NamespaceName, name string) string {
+	id := topologyID("PersistentVolumeClaim", namespace, name)
+	b.add(TopologyNode{
+		ID: id, Kind: GraphClaim, APIKind: "PersistentVolumeClaim", Name: name,
+		Namespace: namespace.String(), State: StateNeutral,
+	}, false)
+	return id
 }
 
 // attach draws what a template names, one box per name, from the node that

@@ -406,7 +406,7 @@ func TestTopologyUnreadableServicesMarkNamesNotRead(t *testing.T) {
 	if got := nodes["service/shop/web"].Detail; got != "not read" {
 		t.Errorf("detail = %q, want not read", got)
 	}
-	if !slices.Equal(graph.Unreadable, in.Unreadable) {
+	if !slices.Equal(graph.Unreadable, slices.Sorted(slices.Values(in.Unreadable))) {
 		t.Errorf("Unreadable = %v", graph.Unreadable)
 	}
 }
@@ -570,5 +570,79 @@ func TestTopologyStatefulSetClaimsAreNamedPerPod(t *testing.T) {
 	}
 	if graph.Counts["PersistentVolumeClaim"] != 2 {
 		t.Errorf("Counts = %v", graph.Counts)
+	}
+}
+
+func TestTopologySummaryTierFoldsStatefulSetClaims(t *testing.T) {
+	in := bigInput(t, domain.TopologyPodCap)
+	in.Controllers = append(in.Controllers, domain.TopologyController{
+		Kind: "StatefulSet", Name: "db", Namespace: "ns-0", Desired: 20, Ready: 20, ClaimTemplates: []string{"data"},
+	})
+	for i := range 20 {
+		in.Pods = append(in.Pods, topoPod(t, "ns-0", fmt.Sprintf("db-%d", i), nil, ctl("StatefulSet", "db"), true))
+	}
+	graph := domain.NewTopologyGraph(in)
+	nodes := checkTopology(t, graph)
+	if !graph.Summarised {
+		t.Fatal("not summarised")
+	}
+
+	claims := 0
+	for _, node := range nodes {
+		if node.Kind == domain.GraphClaim {
+			claims++
+		}
+	}
+	fold := "fold/statefulset/ns-0/db/pod"
+	claim := "persistentvolumeclaim/ns-0/data-db-*"
+	if claims != 1 || nodes[claim].Detail != "20 claims" || nodes[claim].State != domain.StateNeutral {
+		t.Errorf("%d claim boxes; %+v", claims, nodes[claim])
+	}
+	if !hasTopoEdge(graph, fold, claim, domain.EdgeAttaches) {
+		t.Error("fold -> claim edge missing")
+	}
+	if graph.Counts["PersistentVolumeClaim"] != 20 {
+		t.Errorf("Counts[PVC] = %d, want 20", graph.Counts["PersistentVolumeClaim"])
+	}
+}
+
+func TestTopologyForeignOwnerDoesNotShareABox(t *testing.T) {
+	istio := domain.OwnerReference{Kind: "Gateway", Name: "public", Controller: true, APIVersion: "networking.istio.io/v1"}
+	in := domain.TopologyInput{
+		Scope: scopeOf(t, "shop"),
+		Controllers: []domain.TopologyController{
+			{Kind: "Deployment", Name: "public-istio", Namespace: "shop", Owner: istio, Desired: 1, Ready: 1},
+		},
+		Gateways: []domain.GatewayRef{{Name: "public", Namespace: "shop"}},
+		Pods: []domain.Pod{
+			topoPod(t, "shop", "own", nil, domain.OwnerReference{Kind: "Deployment", Name: "public-istio", Controller: true, APIVersion: "apps/v1"}, true),
+		},
+	}
+	graph := domain.NewTopologyGraph(in)
+	nodes := checkTopology(t, graph)
+
+	foreign := "gateway.networking.istio.io/shop/public"
+	if got := nodes[foreign]; got.Kind != domain.GraphObject || got.APIKind != "Gateway" {
+		t.Fatalf("istio owner = %+v", got)
+	}
+	if !hasTopoEdge(graph, foreign, "deployment/shop/public-istio", domain.EdgeOwns) {
+		t.Error("owner edge should leave the istio box")
+	}
+	if len(edgesFrom(graph, "gateway/shop/public")) != 0 {
+		t.Error("the Gateway API Gateway was drawn owning a Deployment")
+	}
+	if !hasTopoEdge(graph, "deployment/shop/public-istio", "pod/shop/own", domain.EdgeOwns) {
+		t.Error("an apps/v1 owner matches the listed Deployment")
+	}
+}
+
+func TestTopologyUnreadableIsSorted(t *testing.T) {
+	in := shopInput(t)
+	in.Unreadable = []string{"services", "pods", "ingresses"}
+	if got := domain.NewTopologyGraph(in).Unreadable; !slices.IsSorted(got) {
+		t.Errorf("Unreadable = %v", got)
+	}
+	if !slices.Equal(in.Unreadable, []string{"services", "pods", "ingresses"}) {
+		t.Error("the input was sorted in place")
 	}
 }

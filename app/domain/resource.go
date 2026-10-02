@@ -214,6 +214,18 @@ type OwnerReference struct {
 	Name string
 	// Controller reports whether this owner is the controlling one.
 	Controller bool
+	// APIVersion is the owner's group/version, as the reference states it.
+	// Only the topology reads it, to tell an Istio Gateway from a Gateway
+	// API one of the same name.
+	APIVersion string
+}
+
+// Group is the API group of the owner's APIVersion; "" for the core group.
+func (o OwnerReference) Group() string {
+	if slash := strings.Index(o.APIVersion, "/"); slash >= 0 {
+		return o.APIVersion[:slash]
+	}
+	return ""
 }
 
 // IsZero reports whether the reference is unset.

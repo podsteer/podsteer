@@ -53,6 +53,17 @@ type TopologyService struct {
 	registry *Registry
 	feed     *ChangeFeed
 	logger   *slog.Logger
+
+	// last is each cluster's most recently drawn scope and its nodes, so the
+	// traffic layer attaches its endpoints to the boxes actually on screen
+	// rather than to a second read that may differ by a pod.
+	mu   sync.Mutex
+	last map[domain.ClusterID]drawnNodes
+}
+
+type drawnNodes struct {
+	scope domain.TopologyScope
+	nodes []domain.TopologyNode
 }
 
 // Compile-time proof of the ports this satisfies.
@@ -78,6 +89,7 @@ func NewTopologyService(deps TopologyServiceDeps) (*TopologyService, error) {
 		registry: deps.Registry,
 		feed:     NewChangeFeed(deps.Window, deps.Interest, deps.Registry.IsOpen),
 		logger:   logger.With(slog.String("service", "topology")),
+		last:     make(map[domain.ClusterID]drawnNodes),
 	}, nil
 }
 
@@ -90,13 +102,54 @@ func (s *TopologyService) Topology(ctx context.Context, id domain.ClusterID, sco
 		return domain.TopologyGraph{}, fmt.Errorf("drawing a topology: %w", domain.ErrEmptyTopologyScope)
 	}
 
+	graph, err := s.draw(ctx, id, scope)
+	if err != nil {
+		return domain.TopologyGraph{}, err
+	}
+	s.mu.Lock()
+	s.last[id] = drawnNodes{scope: scope, nodes: graph.Nodes}
+	s.mu.Unlock()
+	s.feed.Watch(id, scope)
+	return graph, nil
+}
+
+func (s *TopologyService) draw(ctx context.Context, id domain.ClusterID, scope domain.TopologyScope) (domain.TopologyGraph, error) {
 	input, err := s.topology.TopologySources(ctx, id, scope)
 	if err != nil {
 		return domain.TopologyGraph{}, fmt.Errorf("reading the topology of %s: %w", id, err)
 	}
-	graph := domain.NewTopologyGraph(input)
-	s.feed.Watch(id, scope)
-	return graph, nil
+	return domain.NewTopologyGraph(input), nil
+}
+
+// TopologyNodes returns the nodes of a scope: those of the graph last drawn
+// for it when that is the same scope, otherwise a fresh read that registers
+// no interest. For the traffic layer, which attaches observed endpoints to
+// these boxes. The slice is shared; callers must not modify it.
+func (s *TopologyService) TopologyNodes(ctx context.Context, id domain.ClusterID, namespaces []domain.NamespaceName, all bool) ([]domain.TopologyNode, error) {
+	if _, err := s.registry.Get(id); err != nil {
+		return nil, fmt.Errorf("reading topology nodes: %w", err)
+	}
+	raw := make([]string, 0, len(namespaces))
+	for _, ns := range namespaces {
+		raw = append(raw, ns.String())
+	}
+	scope, err := domain.NewTopologyScope(raw, all)
+	if err != nil {
+		return nil, fmt.Errorf("reading topology nodes: %w", err)
+	}
+
+	s.mu.Lock()
+	last, found := s.last[id]
+	s.mu.Unlock()
+	if found && last.scope.All == scope.All && slices.Equal(last.scope.Namespaces, scope.Namespaces) {
+		return last.nodes, nil
+	}
+
+	graph, err := s.draw(ctx, id, scope)
+	if err != nil {
+		return nil, err
+	}
+	return graph.Nodes, nil
 }
 
 // Subscribe receives coalesced changes in drawn scopes until cancel.
@@ -105,7 +158,12 @@ func (s *TopologyService) Subscribe(fn func(domain.ClusterChange)) (cancel func(
 }
 
 // Release forgets a cluster's drawn scope.
-func (s *TopologyService) Release(id domain.ClusterID) { s.feed.Release(id) }
+func (s *TopologyService) Release(id domain.ClusterID) {
+	s.feed.Release(id)
+	s.mu.Lock()
+	delete(s.last, id)
+	s.mu.Unlock()
+}
 
 // Changed is the ports.ChangeSink the adapter calls. It never blocks.
 func (s *TopologyService) Changed(id domain.ClusterID, namespace domain.NamespaceName) {
@@ -137,12 +195,16 @@ type ChangeFeed struct {
 	nextSub  int
 	drawn    map[domain.ClusterID]drawnScope
 	pending  map[domain.ClusterID]*pendingChange
+	drawings uint64
 	inFlight sync.WaitGroup
 }
 
 type drawnScope struct {
 	scope domain.TopologyScope
 	at    time.Time
+	// drawing numbers each Watch, so a flush that found its cluster closed
+	// forgets only the drawing it read — not one made after a reopen.
+	drawing uint64
 }
 
 type pendingChange struct {
@@ -179,7 +241,8 @@ func (f *ChangeFeed) Watch(id domain.ClusterID, scope domain.TopologyScope) {
 	if f.closed {
 		return
 	}
-	f.drawn[id] = drawnScope{scope: scope, at: f.now()}
+	f.drawings++
+	f.drawn[id] = drawnScope{scope: scope, at: f.now(), drawing: f.drawings}
 }
 
 // Release forgets a cluster's drawn scope and anything pending for it.
@@ -191,6 +254,16 @@ func (f *ChangeFeed) Release(id domain.ClusterID) {
 		f.inFlight.Done()
 	}
 	delete(f.pending, id)
+}
+
+// forgetDrawing releases a cluster only if its scope is still the drawing
+// the caller read.
+func (f *ChangeFeed) forgetDrawing(id domain.ClusterID, drawing uint64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if current, found := f.drawn[id]; found && current.drawing == drawing {
+		delete(f.drawn, id)
+	}
 }
 
 // Subscribe adds a listener; cancel removes it and is safe to call twice.
@@ -276,7 +349,9 @@ func (f *ChangeFeed) flush(id domain.ClusterID, p *pendingChange) {
 		return
 	}
 	if f.isOpen != nil && !f.isOpen(id) {
-		f.Release(id)
+		// The lock is not held here, so the cluster may have been reopened
+		// and drawn again since it was read: forget only this drawing.
+		f.forgetDrawing(id, drawn.drawing)
 		return
 	}
 	for _, fn := range subs {

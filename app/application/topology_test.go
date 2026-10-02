@@ -267,3 +267,81 @@ func TestChangeFeedRace(t *testing.T) {
 	feed.Close()
 	feed.Changed("dev", "a") // after Close: nothing, and no panic
 }
+
+// TestAReopenDuringAFlushKeepsTheNewDrawing closes the cluster for the flush
+// and reopens and redraws it before the flush forgets it: the new drawing
+// must survive.
+func TestAReopenDuringAFlushKeepsTheNewDrawing(t *testing.T) {
+	scope := mustScope(t, "shop")
+	var (
+		mu     sync.Mutex
+		open   = true
+		redraw func()
+	)
+	feed := application.NewChangeFeed(testWindow, time.Hour, func(domain.ClusterID) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if redraw != nil {
+			// Closed when the flush asks, and reopened and drawn again
+			// before it gets to forget anything.
+			redraw()
+			redraw = nil
+			return false
+		}
+		return open
+	})
+	defer feed.Close()
+	heard := &changes{}
+	defer feed.Subscribe(heard.add)()
+
+	feed.Watch("dev", scope)
+	mu.Lock()
+	redraw = func() { feed.Watch("dev", scope) }
+	mu.Unlock()
+	feed.Changed("dev", "shop")
+	settle()
+	if n := len(heard.snapshot()); n != 0 {
+		t.Fatalf("a closed cluster announced (%d)", n)
+	}
+
+	feed.Changed("dev", "shop")
+	settle()
+	if n := len(heard.snapshot()); n != 1 {
+		t.Errorf("the redrawn scope was forgotten: %d announcements", n)
+	}
+}
+
+func TestTopologyNodesReuseTheDrawnGraph(t *testing.T) {
+	port := &fakeTopologyPort{input: domain.TopologyInput{
+		Services: []domain.ServiceRef{{Name: "web", Namespace: "shop", Selector: map[string]string{"app": "web"}}},
+	}}
+	service, _ := topologyService(t, port)
+	ctx := context.Background()
+
+	if _, err := service.TopologyNodes(ctx, "prod", nil, true); err == nil {
+		t.Error("a closed cluster answered")
+	}
+	if _, err := service.Topology(ctx, "dev", mustScope(t, "shop")); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := service.TopologyNodes(ctx, "dev", []domain.NamespaceName{"shop"}, false)
+	if err != nil || len(nodes) != 1 || nodes[0].ID != "service/shop/web" {
+		t.Fatalf("nodes = %v, %v", nodes, err)
+	}
+	if len(port.scopes) != 1 {
+		t.Errorf("the drawn scope was read again (%d reads)", len(port.scopes))
+	}
+
+	// Another scope is a fresh read.
+	if _, err := service.TopologyNodes(ctx, "dev", nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if len(port.scopes) != 2 {
+		t.Errorf("reads = %d, want 2", len(port.scopes))
+	}
+	service.Release("dev")
+	_, _ = service.TopologyNodes(ctx, "dev", []domain.NamespaceName{"shop"}, false)
+	if len(port.scopes) != 3 {
+		t.Errorf("a released graph was reused (%d reads)", len(port.scopes))
+	}
+}

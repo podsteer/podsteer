@@ -274,7 +274,7 @@ func replicasOrOne(replicas *int32) int32 {
 // nothing controls the object.
 func ownerOfObject(owners []metav1.OwnerReference) domain.OwnerReference {
 	if controller := controllerOf(owners); controller != nil {
-		return domain.OwnerReference{Kind: controller.Kind, Name: controller.Name, Controller: true}
+		return domain.OwnerReference{Kind: controller.Kind, Name: controller.Name, Controller: true, APIVersion: controller.APIVersion}
 	}
 	return domain.OwnerReference{}
 }
