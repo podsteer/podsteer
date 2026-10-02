@@ -1531,6 +1531,7 @@
                 {isReadOnly}
                 {productionGroup}
                 onchanged={() => onchanged?.()}
+                resizable={container.restartPolicy === 'Always'}
               />
             {/each}
           </div>

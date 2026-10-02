@@ -185,3 +185,75 @@ func TestContainerResizeSpecRefusesAContainerThatIsNotThere(t *testing.T) {
 		t.Fatalf("err = %v, want ErrResizeContainerNotFound", err)
 	}
 }
+
+func sidecarPod() *corev1.Pod {
+	always := corev1.ContainerRestartPolicyAlways
+	pod := sizedPod()
+	pod.Spec.InitContainers = []corev1.Container{
+		{
+			Name:          "proxy",
+			RestartPolicy: &always,
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},
+			},
+		},
+		{Name: "migrate"},
+	}
+	return pod
+}
+
+// A sidecar lives under spec.initContainers, so the read must find it there
+// and mark it, and the write must patch that list rather than containers.
+func TestContainerResizeSpecFindsASidecarAndNotAPlainInitContainer(t *testing.T) {
+	adapter := newTestAdapter("dev", fake.NewClientset(sidecarPod()))
+
+	spec, err := adapter.ContainerResizeSpec(context.Background(), "dev", "web", "api-0", "proxy")
+	if err != nil {
+		t.Fatalf("ContainerResizeSpec() error = %v", err)
+	}
+	if !spec.Sidecar || spec.CPURequest != "100m" {
+		t.Errorf("spec = %+v, want the sidecar's figures with Sidecar set", spec)
+	}
+
+	// A plain init container has finished or is about to; nothing to resize.
+	_, err = adapter.ContainerResizeSpec(context.Background(), "dev", "web", "api-0", "migrate")
+	if !errors.Is(err, domain.ErrResizeContainerNotFound) {
+		t.Fatalf("err = %v, want ErrResizeContainerNotFound", err)
+	}
+}
+
+func TestResizePodPatchesInitContainersForASidecar(t *testing.T) {
+	client := fake.NewClientset(sidecarPod())
+
+	var captured clientgotesting.PatchAction
+	client.PrependReactor("patch", "pods", func(action clientgotesting.Action) (bool, runtime.Object, error) {
+		captured = action.(clientgotesting.PatchAction)
+		return true, sidecarPod(), nil
+	})
+
+	adapter := newTestAdapter("dev", client)
+	err := adapter.ResizePod(context.Background(), "dev", "web", "api-0", domain.ResizePlan{
+		Container:  "proxy",
+		Sidecar:    true,
+		CPURequest: "200m",
+	})
+	if err != nil {
+		t.Fatalf("ResizePod() error = %v", err)
+	}
+	if captured.GetSubresource() != "resize" {
+		t.Fatalf("subresource = %q, want resize", captured.GetSubresource())
+	}
+
+	var patch map[string]any
+	if err := json.Unmarshal(captured.GetPatch(), &patch); err != nil {
+		t.Fatalf("the patch is not JSON: %v", err)
+	}
+	spec := patch["spec"].(map[string]any)
+	if _, wrong := spec["containers"]; wrong {
+		t.Errorf("a sidecar patch wrote spec.containers: %v", spec)
+	}
+	list := spec["initContainers"].([]any)
+	if len(list) != 1 || list[0].(map[string]any)["name"] != "proxy" {
+		t.Errorf("initContainers = %v, want exactly the proxy", list)
+	}
+}

@@ -158,3 +158,16 @@ func TestPlanResizeAcceptsAFigureOnAContainerThatDeclaresNone(t *testing.T) {
 		t.Errorf("CPURequest = %q, want the typed one", plan.CPURequest)
 	}
 }
+
+func TestPlanResizeCarriesTheSidecarFlagFromTheContainer(t *testing.T) {
+	plan, err := domain.PlanResize(
+		domain.ContainerResize{Name: "proxy", CPURequest: "100m", Sidecar: true},
+		domain.ResizeRequest{Container: "proxy", CPURequest: "200m"},
+	)
+	if err != nil {
+		t.Fatalf("domain.PlanResize() error = %v", err)
+	}
+	if !plan.Sidecar {
+		t.Error("the plan lost the sidecar flag, so the write would patch spec.containers")
+	}
+}

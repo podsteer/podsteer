@@ -77,6 +77,10 @@ type ContainerResize struct {
 	// resizePolicy for each resource: true when it says RestartContainer.
 	RestartsForCPU    bool
 	RestartsForMemory bool
+	// Sidecar reports that this is an init container with restartPolicy
+	// Always, which lives under spec.initContainers rather than
+	// spec.containers. Resizing one in place is GA in Kubernetes 1.37.
+	Sidecar bool
 }
 
 // ResizePlan is a checked resize: what will be sent, and what it will do.
@@ -93,6 +97,10 @@ type ResizePlan struct {
 	// plan actually changes. THE PLAN SAYS IT; the dialog shows it; nobody
 	// finds out afterwards.
 	Restarts bool
+	// Sidecar says which list the container is in, so the write patches
+	// spec.initContainers instead of spec.containers. Copied from the
+	// container as it stands, never from the request.
+	Sidecar bool
 	// RestartReason names which resource forces the restart, for the sentence
 	// the dialog shows. Empty when Restarts is false.
 	RestartReason string
@@ -110,6 +118,7 @@ func PlanResize(container ContainerResize, request ResizeRequest) (ResizePlan, e
 
 	plan := ResizePlan{
 		Container:     container.Name,
+		Sidecar:       container.Sidecar,
 		CPURequest:    request.CPURequest,
 		CPULimit:      request.CPULimit,
 		MemoryRequest: request.MemoryRequest,

@@ -69,9 +69,15 @@ func (a *Adapter) ResizePod(ctx context.Context, id domain.ClusterID, namespace 
 		return fmt.Errorf("%s: %w", op, domain.ErrResizeNoChange)
 	}
 
+	// A sidecar is an init container, so it is patched under initContainers.
+	// Same merge key (name), same subresource.
+	list := "containers"
+	if plan.Sidecar {
+		list = "initContainers"
+	}
 	patch := map[string]any{
 		"spec": map[string]any{
-			"containers": []map[string]any{
+			list: []map[string]any{
 				{"name": plan.Container, "resources": resources},
 			},
 		},
@@ -126,6 +132,23 @@ func (a *Adapter) ContainerResizeSpec(ctx context.Context, id domain.ClusterID, 
 			continue
 		}
 		return containerResize(container), nil
+	}
+
+	// SIDECARS ONLY, not every init container: a sidecar is an init container
+	// with restartPolicy Always and keeps running, so there is something to
+	// resize. In-place resize of init containers and sidecars is GA in
+	// Kubernetes 1.37; a plain init container has finished or is about to.
+	for index := range pod.Spec.InitContainers {
+		container := &pod.Spec.InitContainers[index]
+		if container.Name != containerName {
+			continue
+		}
+		if container.RestartPolicy == nil || *container.RestartPolicy != corev1.ContainerRestartPolicyAlways {
+			break
+		}
+		out := containerResize(container)
+		out.Sidecar = true
+		return out, nil
 	}
 
 	return domain.ContainerResize{}, fmt.Errorf("%s: %w", op, domain.ErrResizeContainerNotFound)
