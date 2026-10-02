@@ -101,13 +101,14 @@ func (s *WorkloadService) ListPods(ctx context.Context, id domain.ClusterID, nam
 		return nil, fmt.Errorf("listing pods: %w", err)
 	}
 
+	generation := s.usage.generationOf(id)
 	pods, err := s.workloads.ListPods(ctx, id, namespace, projection)
 	if err != nil {
 		return nil, fmt.Errorf("listing pods in %q of %q: %w", namespace, id, err)
 	}
 
 	pods = s.withPodMetrics(ctx, id, namespace, pods)
-	s.usage.record(pods, time.Now())
+	s.usage.record(id, generation, pods, time.Now())
 
 	slices.SortStableFunc(pods, func(a, b domain.Pod) int {
 		if byNamespace := cmp.Compare(a.Namespace(), b.Namespace()); byNamespace != 0 {
@@ -469,6 +470,7 @@ func (s *WorkloadService) ListPodsForWorkload(ctx context.Context, id domain.Clu
 		return nil, fmt.Errorf("listing pods for workload: %w", err)
 	}
 
+	generation := s.usage.generationOf(id)
 	pods, err := s.workloads.ListPodsForWorkload(ctx, id, namespace, kind, name)
 	if err != nil {
 		return nil, fmt.Errorf("listing pods for %s/%s in %q of %q: %w", kind, name, namespace, id, err)
@@ -476,7 +478,7 @@ func (s *WorkloadService) ListPodsForWorkload(ctx context.Context, id domain.Clu
 
 	// Enrich with metrics
 	pods = s.withPodMetrics(ctx, id, namespace, pods)
-	s.usage.record(pods, time.Now())
+	s.usage.record(id, generation, pods, time.Now())
 
 	return pods, nil
 }

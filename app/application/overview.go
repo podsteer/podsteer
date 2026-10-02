@@ -191,8 +191,10 @@ func (s *OverviewService) noteDemand(id domain.ClusterID) {
 }
 
 // LastDemanded is when somebody last asked for this cluster's assessment —
-// Overview or OverviewForTarget, which only a tab on screen calls — or the
-// zero time when nobody has since it was opened.
+// Overview or OverviewForTarget, which in the desktop process only a tab on
+// screen calls (the MCP subcommand calls Overview too, but runs in a process
+// of its own with its own service and no sampler) — or the zero time when
+// nobody has since it was opened.
 //
 // Not OverviewWithin, deliberately: that is the history sampler's door, and
 // a cluster the sampler reads is not thereby one anybody is looking at.

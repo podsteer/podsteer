@@ -399,7 +399,10 @@ merged All-clusters table pins nothing (`fleetPodQuery.pinned` is empty) and
 needs to: a row there opens in its cluster's own tab via `openObject`, whose
 pod list pins it; and `WorkloadService` keeps every listed pod's usage in
 an in-memory ring (`podUsageRing`, 200 points / one hour per pod, keyed by
-cluster, dropped on disconnect, **never written anywhere** — object names stay
+cluster — about 8 KB per pod at steady state, so ~80 MB on a 10k-pod cluster
+read whole; pods nothing measures for an hour are swept every five minutes;
+dropped on disconnect and reconnect, with a generation so a read in flight
+across one cannot file the old cluster's pods; **never written anywhere** — object names stay
 off disk, see SECURITY.md), which `PodUsageHistory` serves to seed the drawer's
 chart for a pod no page ever held.
 
@@ -2020,7 +2023,8 @@ exists so the UI can say "the last 40 minutes" instead of implying more.
   stamped by `Overview`/`OverviewForTarget`, which only a tab on screen calls,
   never by `OverviewWithin`, the sampler's own door — on every tick, and the
   rest every `domain.BackgroundSamplingInterval` (ten intervals, at least five
-  minutes). `SeriesResult.sampledEverySeconds`/`backgroundEverySeconds` carry
+  minutes), measured from the last SUCCESSFUL sample so a failing cluster is
+  retried next tick. `SeriesResult.sampledEverySeconds`/`backgroundEverySeconds` carry
   the cadence and the Trend panel states it, so a sparse stretch is never read
   as an outage. An assessment without `LastDemanded` (tests) samples every tick.
 

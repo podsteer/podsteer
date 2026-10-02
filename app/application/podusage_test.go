@@ -29,7 +29,7 @@ func TestPodUsageRingKeepsEveryListedPod(t *testing.T) {
 	key := podUsageKey{cluster: "prod", namespace: "shop", name: "web-1"}
 
 	for i := range domain.UsageRingCapacity + 50 {
-		ring.record([]domain.Pod{
+		recordAll(&ring, []domain.Pod{
 			usagePod(t, "prod", "web-1", int64(i), true),
 			usagePod(t, "prod", "idle", 0, false),
 		}, start.Add(time.Duration(i)*10*time.Second))
@@ -52,8 +52,8 @@ func TestPodUsageRingCollapsesOneTicksReads(t *testing.T) {
 
 	var ring podUsageRing
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	ring.record([]domain.Pod{usagePod(t, "prod", "web-1", 100, true)}, now)
-	ring.record([]domain.Pod{usagePod(t, "prod", "web-1", 120, true)}, now.Add(time.Second))
+	recordAll(&ring, []domain.Pod{usagePod(t, "prod", "web-1", 100, true)}, now)
+	recordAll(&ring, []domain.Pod{usagePod(t, "prod", "web-1", 120, true)}, now.Add(time.Second))
 
 	got := ring.since(podUsageKey{cluster: "prod", namespace: "shop", name: "web-1"}, now.Add(time.Second))
 	if len(got) != 1 || got[0].CPUMilli != 120 {
@@ -66,7 +66,7 @@ func TestPodUsageRingKeepsClustersApartAndForgetsOne(t *testing.T) {
 
 	var ring podUsageRing
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	ring.record([]domain.Pod{usagePod(t, "prod", "web-1", 100, true), usagePod(t, "staging", "web-1", 5, true)}, now)
+	recordAll(&ring, []domain.Pod{usagePod(t, "prod", "web-1", 100, true), usagePod(t, "staging", "web-1", 5, true)}, now)
 
 	prod := ring.since(podUsageKey{cluster: "prod", namespace: "shop", name: "web-1"}, now)
 	if len(prod) != 1 || prod[0].CPUMilli != 100 {
@@ -87,20 +87,47 @@ func TestPodUsageRingSweepsPodsNothingMeasures(t *testing.T) {
 
 	var ring podUsageRing
 	start := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	ring.record([]domain.Pod{usagePod(t, "prod", "gone", 1, true)}, start)
+	recordAll(&ring, []domain.Pod{usagePod(t, "prod", "gone", 1, true)}, start)
 
 	later := start.Add(domain.UsageRingMaxAge + time.Minute)
 	pods := make([]domain.Pod, 0, 1000)
 	for i := range 1000 {
 		pods = append(pods, usagePod(t, "prod", fmt.Sprintf("web-%d", i), 1, true))
 	}
-	for i := range sweepUsageEvery/1000 + 1 {
-		ring.record(pods, later.Add(time.Duration(i)*minUsageSpacing))
-	}
+	// The sweep is by time: the first read past sweepUsageEvery drops it.
+	recordAll(&ring, pods, later)
 	if got := ring.since(podUsageKey{cluster: "prod", namespace: "shop", name: "gone"}, later); len(got) != 0 {
 		t.Fatal("a pod gone for over an hour is still served")
 	}
 	if ring.size() != 1000 {
 		t.Fatalf("%d pods kept, want the 1000 still listed", ring.size())
+	}
+}
+
+// recordAll files pods of any cluster at their cluster's current generation.
+func recordAll(r *podUsageRing, pods []domain.Pod, now time.Time) {
+	byCluster := map[domain.ClusterID][]domain.Pod{}
+	for _, pod := range pods {
+		byCluster[pod.ClusterID()] = append(byCluster[pod.ClusterID()], pod)
+	}
+	for id, share := range byCluster {
+		r.record(id, r.generationOf(id), share, now)
+	}
+}
+
+// TestPodUsageRingRefusesAReadFromBeforeAForget pins the generation: a list
+// read that began before a disconnect cannot file the old cluster's pods
+// after it.
+func TestPodUsageRingRefusesAReadFromBeforeAForget(t *testing.T) {
+	t.Parallel()
+
+	var ring podUsageRing
+	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
+	began := ring.generationOf("prod")
+	ring.forget("prod")
+	ring.record("prod", began, []domain.Pod{usagePod(t, "prod", "web-1", 100, true)}, now)
+
+	if ring.size() != 0 {
+		t.Fatal("a read from before the forget was filed")
 	}
 }

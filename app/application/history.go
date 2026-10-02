@@ -244,7 +244,9 @@ func (s *HistoryService) sampleAll(ctx context.Context) {
 		// did not expect before; a nil dereference there used to end the
 		// process, and now costs one sample for one cluster.
 		safego.Run("history sample "+cluster.ID().String(), func() {
-			s.sampleCluster(ctx, cluster, interval)
+			if s.sampleCluster(ctx, cluster, interval) {
+				s.markSampled(cluster.ID(), now)
+			}
 		})
 	}
 }
@@ -284,38 +286,44 @@ func (s *HistoryService) cadence(id domain.ClusterID, now time.Time, interval ti
 	return domain.BackgroundSamplingInterval(interval)
 }
 
-// due reports whether a cluster's next sample is owed at now, and if so
-// marks it taken — the sampler's one gate, ahead of the per-cluster panic
-// wrapper so a skipped cluster costs nothing at all.
+// due reports whether a cluster's next sample is owed at now — the
+// sampler's one gate, ahead of the per-cluster panic wrapper so a skipped
+// cluster costs nothing at all.
 //
 // A cluster at the foreground cadence is owed a sample on EVERY tick — one
 // tick, one sample, whatever the clock says between them. Only the slower
 // background cadence is measured, with half an interval of slack because
-// ticks are not exact.
+// ticks are not exact, and measured from the last SUCCESSFUL sample (see
+// markSampled): a background cluster whose assessment failed is tried again
+// on the next tick rather than ten intervals later.
 func (s *HistoryService) due(id domain.ClusterID, now time.Time) bool {
 	interval := s.SamplingInterval()
 	every := s.cadence(id, now, interval)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if last, ok := s.sampled[id]; ok && every > interval && now.Sub(last) < every-interval/2 {
-		return false
-	}
+	last, ok := s.sampled[id]
+	return !ok || every <= interval || now.Sub(last) >= every-interval/2
+}
+
+// markSampled stamps a cluster's last successful sample.
+func (s *HistoryService) markSampled(id domain.ClusterID, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.sampled == nil {
 		s.sampled = make(map[domain.ClusterID]time.Time, 4)
 	}
-	s.sampled[id] = now
-	return true
+	s.sampled[id] = at
 }
 
-// sampleCluster records one cluster's sample.
-func (s *HistoryService) sampleCluster(ctx context.Context, cluster domain.Cluster, interval time.Duration) {
+// sampleCluster records one cluster's sample, and reports whether it did.
+func (s *HistoryService) sampleCluster(ctx context.Context, cluster domain.Cluster, interval time.Duration) bool {
 	overview, err := s.assess(ctx, cluster.ID(), interval)
 	if err != nil {
 		s.logger.Debug("skipping sample",
 			slog.String("cluster", cluster.ID().String()),
 			slog.String("error", err.Error()))
-		return
+		return false
 	}
 
 	sample := domain.NewSampleFromOverview(overview)
@@ -323,7 +331,9 @@ func (s *HistoryService) sampleCluster(ctx context.Context, cluster domain.Clust
 		s.logger.Warn("recording sample failed",
 			slog.String("cluster", cluster.ID().String()),
 			slog.String("error", err.Error()))
+		return false
 	}
+	return true
 }
 
 // assess reads one cluster's overview, bounded in time and willing to reuse

@@ -44,6 +44,8 @@ func TestSamplerSlowsDownForAClusterNobodyIsLookingAt(t *testing.T) {
 	if !service.due("front", start) || !service.due("back", start) {
 		t.Fatal("a cluster never sampled must be due")
 	}
+	service.markSampled("front", start)
+	service.markSampled("back", start)
 
 	// One interval later (with the tick a little early): the cluster in
 	// front is due again, the one behind is not.
@@ -65,6 +67,11 @@ func TestSamplerSlowsDownForAClusterNobodyIsLookingAt(t *testing.T) {
 	// Once its background cadence has passed, the one behind is due.
 	if !service.due("back", start.Add(background)) {
 		t.Error("the cluster behind was not sampled after its background cadence")
+	}
+
+	// A failed sample stamps nothing: still due on the next tick.
+	if !service.due("never-succeeded", next) || !service.due("never-succeeded", next.Add(interval)) {
+		t.Error("a cluster whose samples fail waited out a background cadence")
 	}
 }
 

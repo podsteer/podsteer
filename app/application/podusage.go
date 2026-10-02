@@ -30,9 +30,15 @@ type podUsageKey struct {
 // operator; the sampled cluster history on disk carries none by design. This
 // dies with the process, and a disconnect drops the cluster's share.
 type podUsageRing struct {
-	mu      sync.Mutex
-	series  map[podUsageKey][]domain.UsagePoint
-	records int
+	mu     sync.Mutex
+	series map[podUsageKey][]domain.UsagePoint
+	// generation counts each cluster's forgets. A list read in flight across
+	// a disconnect or reconnect would otherwise land after forget and file
+	// the OLD cluster's pods under the context name it now shares with a
+	// new one; record refuses a read that began in an earlier generation.
+	generation map[domain.ClusterID]uint64
+	// sweptAt is when pods nothing has measured were last dropped.
+	sweptAt time.Time
 }
 
 // minUsageSpacing collapses reads of one tick into one point: the pod table,
@@ -40,14 +46,27 @@ type podUsageRing struct {
 // several callers within moments of each other.
 const minUsageSpacing = 2 * time.Second
 
-// sweepUsageEvery is how many records pass between sweeps for pods nobody
-// has measured within UsageRingMaxAge.
-const sweepUsageEvery = 20_000
+// sweepUsageEvery is how often pods nobody has measured within
+// UsageRingMaxAge are dropped. By time rather than by count, so a churning
+// namespace's departed pods leave on schedule however quiet the cluster.
+const sweepUsageEvery = 5 * time.Minute
 
-// record files the measured pods of one read.
-func (r *podUsageRing) record(pods []domain.Pod, now time.Time) {
+// generationOf is the generation a read of id begins in — taken BEFORE the
+// read, handed to record after it.
+func (r *podUsageRing) generationOf(id domain.ClusterID) uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return r.generation[id]
+}
+
+// record files the measured pods of one read of cluster id, begun in
+// generation gen.
+func (r *podUsageRing) record(id domain.ClusterID, gen uint64, pods []domain.Pod, now time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.generation[id] != gen {
+		return // the cluster was forgotten while this read was in flight
+	}
 	if r.series == nil {
 		r.series = make(map[podUsageKey][]domain.UsagePoint, len(pods))
 	}
@@ -69,11 +88,10 @@ func (r *podUsageRing) record(pods []domain.Pod, now time.Time) {
 			series = append(series[:0], series[len(series)-domain.UsageRingCapacity+1:]...)
 		}
 		r.series[key] = append(series, point)
-		r.records++
 	}
 
-	if r.records >= sweepUsageEvery {
-		r.records = 0
+	if now.Sub(r.sweptAt) >= sweepUsageEvery {
+		r.sweptAt = now
 		for key, series := range r.series {
 			if len(series) == 0 || now.Sub(series[len(series)-1].At) > domain.UsageRingMaxAge {
 				delete(r.series, key)
@@ -102,6 +120,10 @@ func (r *podUsageRing) since(key podUsageKey, now time.Time) []domain.UsagePoint
 func (r *podUsageRing) forget(id domain.ClusterID) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.generation == nil {
+		r.generation = make(map[domain.ClusterID]uint64, 4)
+	}
+	r.generation[id]++
 	for key := range r.series {
 		if key.cluster == id {
 			delete(r.series, key)
