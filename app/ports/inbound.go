@@ -36,6 +36,11 @@ type ClusterService interface {
 	// Disconnect closes a connection and releases everything cached for it.
 	Disconnect(ctx context.Context, id domain.ClusterID) error
 
+	// RefreshCredentials drops the client an open cluster is using so the next
+	// request is built from the kubeconfig as it stands — the answer to a 401
+	// after the operator logged in again elsewhere. Does not end port-forwards.
+	RefreshCredentials(ctx context.Context, id domain.ClusterID) error
+
 	// Connections returns the currently connected clusters, in the order they
 	// were connected, so the tab bar does not reorder itself on refresh.
 	Connections(ctx context.Context) ([]domain.Cluster, error)

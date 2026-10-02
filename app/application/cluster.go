@@ -48,6 +48,9 @@ type ClusterServiceDeps struct {
 	//
 	// Optional. Must return promptly: do the work on a goroutine it owns.
 	OnConnected ClusterConnectedHook
+	// Credentials answers RefreshCredentials. Optional; without it the call
+	// is refused rather than pretending to have done something.
+	Credentials CredentialRefresher
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
 	Logger *slog.Logger
 	// Now supplies the current time. Optional; defaults to time.Now.
@@ -95,6 +98,7 @@ type ClusterConnectedHook interface {
 }
 
 type ClusterService struct {
+	credentials CredentialRefresher
 	onConnected ClusterConnectedHook
 	kubeconfig  ports.KubeconfigPort
 	cluster     ports.ClusterPort
@@ -146,6 +150,7 @@ func NewClusterService(deps ClusterServiceDeps) (*ClusterService, error) {
 		metrics:     deps.Metrics,
 		invalidator: deps.Invalidator,
 		onConnected: deps.OnConnected,
+		credentials: deps.Credentials,
 		events:      deps.Events,
 		registry:    deps.Registry,
 		catalog:     deps.Catalog,
@@ -269,6 +274,25 @@ func (s *ClusterService) Connect(ctx context.Context, id domain.ClusterID) (doma
 	}
 
 	return connected, nil
+}
+
+// RefreshCredentials drops the client built for an open cluster so the next
+// request builds from the kubeconfig as it is now.
+//
+// What Retry does after an `unauthenticated` failure: the cached client is the
+// reason the same call fails again after the operator has logged in anew in a
+// terminal. Unconditional, unlike the kubeconfig watcher's, because the
+// operator has just told us it is not working.
+func (s *ClusterService) RefreshCredentials(_ context.Context, id domain.ClusterID) error {
+	if !s.registry.IsOpen(id) {
+		return fmt.Errorf("refreshing credentials for %q: %w", id, domain.ErrClusterNotConnected)
+	}
+	if s.credentials == nil {
+		return fmt.Errorf("refreshing credentials for %q: not available", id)
+	}
+	s.credentials.RefreshCredentials(id)
+	s.logger.Info("credentials refreshed on request", slog.String("cluster", id.String()))
+	return nil
 }
 
 // Disconnect closes a connection and forgets everything cached for it.

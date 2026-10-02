@@ -49,16 +49,26 @@ import (
 //
 // # What it does not do
 //
-// It does not reload anything. It raises one event and stops there, because
-// the decision about what to do with a changed kubeconfig belongs to the
-// interface: re-reading the list is cheap, but a cluster the operator has open
-// must not be disturbed by a file being touched.
+// It does not reload the list. It raises one event, because the decision about
+// what to do with a changed kubeconfig belongs to the interface: re-reading the
+// list is cheap, but a cluster the operator has open must not be disturbed by
+// a file being touched.
+//
+// ONE EXCEPTION, AND IT IS NARROW. When the credentials of an open cluster
+// have changed — a token or certificate rewritten by `oc login`, Teleport or
+// `az aks get-credentials --overwrite` — the client its tab is using is
+// presenting the old ones and will answer 401 until the tab is closed. That
+// cluster's client is dropped and rebuilt on the next request (CredentialRefresher).
+// A touched file that changes nothing about how a cluster authenticates
+// disturbs nothing.
 type KubeconfigWatcher struct {
-	files    func() []string
-	events   ports.EventPublisher
-	interval time.Duration
-	now      func() time.Time
-	logger   *slog.Logger
+	credentials CredentialRefresher
+	open        func() []domain.ClusterID
+	files       func() []string
+	events      ports.EventPublisher
+	interval    time.Duration
+	now         func() time.Time
+	logger      *slog.Logger
 
 	// last is the fingerprint at the previous tick, and the empty string
 	// before the first one — which is why the first tick never publishes.
@@ -67,8 +77,26 @@ type KubeconfigWatcher struct {
 	done chan struct{}
 }
 
+// CredentialRefresher notices and answers credentials rewritten under an open
+// cluster. Defined here, at the consumer; the Kubernetes adapter provides it
+// (see the composition root).
+type CredentialRefresher interface {
+	// CredentialsChanged reports whether the kubeconfig now authenticates the
+	// cluster differently from the client it is using.
+	CredentialsChanged(id domain.ClusterID) bool
+	// RefreshCredentials drops everything built from the old credentials, so
+	// the next request builds from the kubeconfig as it is now. It does not
+	// end the cluster's port-forwards.
+	RefreshCredentials(id domain.ClusterID)
+}
+
 // KubeconfigWatcherDeps are the collaborators the watcher needs.
 type KubeconfigWatcherDeps struct {
+	// Credentials and Open, together, let a changed kubeconfig refresh the
+	// clients of open clusters whose credentials changed. Both optional; the
+	// watcher only raises its event without them.
+	Credentials CredentialRefresher
+	Open        func() []domain.ClusterID
 	// Files reports the kubeconfig files being read, in loading order.
 	// Required — this is the whole subject of the watch, and it is a function
 	// because the list itself changes when a source is added.
@@ -115,11 +143,13 @@ func NewKubeconfigWatcher(deps KubeconfigWatcherDeps) (*KubeconfigWatcher, error
 	}
 
 	return &KubeconfigWatcher{
-		files:    deps.Files,
-		events:   deps.Events,
-		interval: interval,
-		now:      now,
-		logger:   logger.With(slog.String("service", "kubeconfig-watch")),
+		credentials: deps.Credentials,
+		open:        deps.Open,
+		files:       deps.Files,
+		events:      deps.Events,
+		interval:    interval,
+		now:         now,
+		logger:      logger.With(slog.String("service", "kubeconfig-watch")),
 	}, nil
 }
 
@@ -178,6 +208,24 @@ func (w *KubeconfigWatcher) check(ctx context.Context) {
 	files := len(w.files())
 	w.logger.DebugContext(ctx, "kubeconfig changed on disk", slog.Int("files", files))
 	w.events.Publish(ctx, domain.KubeconfigChanged{Files: files, At: w.now()})
+
+	w.refreshCredentials(ctx)
+}
+
+// refreshCredentials drops the clients of open clusters whose credentials the
+// change rewrote. Everything else is left exactly as it was.
+func (w *KubeconfigWatcher) refreshCredentials(ctx context.Context) {
+	if w.credentials == nil || w.open == nil {
+		return
+	}
+	for _, id := range w.open() {
+		if !w.credentials.CredentialsChanged(id) {
+			continue
+		}
+		w.credentials.RefreshCredentials(id)
+		w.logger.InfoContext(ctx, "credentials changed in the kubeconfig; the client will be rebuilt",
+			slog.String("cluster", id.String()))
+	}
 }
 
 // fingerprint is what the files look like from the outside.

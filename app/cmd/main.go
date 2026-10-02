@@ -257,9 +257,23 @@ func run() error {
 	// operator did, not a thing PodSteer did, so nothing else in the process
 	// would ever notice it. See application.KubeconfigWatcher for why this
 	// stats rather than watches.
+	//
+	// Credentials rewritten under an open cluster are the one thing it acts
+	// on: see application.KubeconfigWatcher. `others` is filled in below, once
+	// the services it releases exist.
+	credentials := &credentialRefresher{adapter: kubernetes}
 	kubeconfigWatcher, err := application.NewKubeconfigWatcher(application.KubeconfigWatcherDeps{
-		Files:  kubernetes.KubeconfigFiles,
-		Events: desktop,
+		Files:       kubernetes.KubeconfigFiles,
+		Events:      desktop,
+		Credentials: credentials,
+		Open: func() []domain.ClusterID {
+			open := registry.All()
+			ids := make([]domain.ClusterID, 0, len(open))
+			for _, cluster := range open {
+				ids = append(ids, cluster.ID())
+			}
+			return ids
+		},
 		Logger: logger,
 	})
 	if err != nil {
@@ -378,6 +392,7 @@ func run() error {
 		Catalog:     catalog,
 		Logger:      logger,
 		OnConnected: forwardKeeper,
+		Credentials: credentials,
 		// What a disconnect releases, in one list, composed here for the
 		// reason Invalidate is not a port: it exists to serve caching and
 		// goroutine ownership, not the domain. The adapter releases its
@@ -393,6 +408,8 @@ func run() error {
 		// rendered as the new connection's rows in the merged table.
 		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService, fleetService},
 	})
+
+	credentials.others = application.Invalidators{overviewService, metricsQueryService, fleetService}
 
 	// Every open cluster's client, released. This is the same set of holders
 	// the disconnect path releases, for the same reason: a client outlives

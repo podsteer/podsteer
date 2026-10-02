@@ -181,6 +181,24 @@ func (c *ClusterAPI) Disconnect(clusterID string) error {
 	return nil
 }
 
+// RefreshCredentials makes an open cluster re-read its credentials from the
+// kubeconfig. Retry after an "unauthenticated" failure calls it first: the
+// cached client keeps presenting the old token or certificate, so a retry on
+// its own can only fail the same way.
+func (c *ClusterAPI) RefreshCredentials(clusterID string) error {
+	ctx, cancel := c.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return apiError(c.logger, "RefreshCredentials", err)
+	}
+	if err := c.clusters.RefreshCredentials(ctx, id); err != nil {
+		return apiError(c.logger, "RefreshCredentials", err)
+	}
+	return nil
+}
+
 // Ping reports whether a connected cluster is still answering.
 //
 // Returns nothing on success: the caller wants the error or its absence, and

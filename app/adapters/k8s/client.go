@@ -161,6 +161,11 @@ func (c Config) withDefaults() Config {
 // lazily one at a time would pay that cost several times over for a single
 // cluster.
 type clients struct {
+	// authFingerprint digests what authenticated this set when it was built,
+	// so a kubeconfig that now authenticates differently can be told from one
+	// that merely changed. Empty on a set not built by clientsFor. See
+	// credentials.go.
+	authFingerprint string
 	// typed serves the built-in kinds with compile-time-checked types.
 	typed kubernetes.Interface
 	// dynamic serves any kind, including custom resources, as unstructured
@@ -699,13 +704,14 @@ func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 	}
 
 	built := &clients{
-		typed:     typed,
-		dynamic:   dyn,
-		discovery: disco,
-		metrics:   metrics,
-		meta:      meta,
-		config:    dynamicConfig,
-		queryHTTP: queryHTTP,
+		authFingerprint: authFingerprint(cfg),
+		typed:           typed,
+		dynamic:         dyn,
+		discovery:       disco,
+		metrics:         metrics,
+		meta:            meta,
+		config:          dynamicConfig,
+		queryHTTP:       queryHTTP,
 	}
 
 	f.clients[id] = built

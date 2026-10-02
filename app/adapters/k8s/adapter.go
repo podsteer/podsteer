@@ -240,7 +240,13 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// disconnected cluster's forward simply stayed in the activity list,
 	// labelled with a cluster nothing was connected to.
 	a.stopPortForwardsFor(id)
-	// THE CLIENT GOES NEXT, AND THE ORDER IS LOAD-BEARING. A read racing
+	a.release(id)
+}
+
+// release drops everything held for id except its port-forwards. Invalidate
+// stops those first; RefreshClient leaves them.
+func (a *Adapter) release(id domain.ClusterID) {
+	// THE CLIENT GOES FIRST HERE, AND THE ORDER IS LOAD-BEARING, AND THE ORDER IS LOAD-BEARING. A read racing
 	// this call can re-`ensure` a watch set at any point, so the invalidation
 	// has to happen while `forget` is still ahead of it: the racing read gets
 	// a rebuilt client, and `forget` then destroys whatever set exists.
