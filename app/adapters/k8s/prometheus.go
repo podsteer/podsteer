@@ -63,11 +63,22 @@ var backendNameLabels = []string{
 // per product, which matters now that a candidate LIST means none of them can
 // short-circuit the rest. The second is the older convention still on
 // long-lived Prometheus installations, which has no set-based equivalent
-// because the KEY differs rather than the value.
+// because the KEY differs rather than the value. The third is linkerd-viz's
+// Prometheus, which carries neither: its Service is labelled only
+// `linkerd.io/extension=viz` and `component=prometheus` (seen live on
+// linkerd-viz 2026.9.3), and it is where Linkerd's traffic metrics live.
 var backendSelectors = []string{
 	"app.kubernetes.io/name in (" + strings.Join(backendNameLabels, ",") + ")",
 	"app=prometheus",
+	linkerdVizSelector,
 }
+
+// linkerdVizSelector finds linkerd-viz's own Prometheus.
+const linkerdVizSelector = "linkerd.io/extension=viz,component=prometheus"
+
+// linkerdVizPortNames is the port linkerd-viz's Prometheus Service names:
+// "admin", on 9090.
+var linkerdVizPortNames = []string{"admin"}
 
 // prometheusServiceNames are the names to accept for Prometheus, most
 // specific first.
@@ -140,10 +151,16 @@ var writeOnlyNameLabels = []string{"vmagent", "vminsert", "vmstorage"}
 // Between the two VictoriaMetrics shapes, the single-node one goes first
 // because it serves the query API at the root — no prefix, no tenant, nothing
 // PodSteer had to assume.
+//
+// LINKERD-VIZ LAST. Its Prometheus scrapes the Linkerd proxies and nothing
+// else, so it holds no kubelet series and every chart drawn from it would be
+// empty; it is offered so an operator can choose it for Linkerd's traffic,
+// never picked over a general-purpose backend by default.
 const (
 	rankPrometheus = iota
 	rankVictoriaSingle
 	rankVictoriaSelect
+	rankLinkerdViz
 )
 
 // candidate is one discovered Service and where it sorts.
@@ -314,6 +331,25 @@ func classifyBackend(service corev1.Service) (candidate, bool) {
 
 	name := service.Labels["app.kubernetes.io/name"]
 	component := service.Labels["app.kubernetes.io/component"]
+
+	// linkerd-viz's Prometheus, identified by its own labels rather than by
+	// a name, because the extension is what makes it what it is.
+	if service.Labels["linkerd.io/extension"] == "viz" && service.Labels["component"] == "prometheus" {
+		port, ok := servicePort(service, linkerdVizPortNames, prometheusPortNumbers)
+		if !ok {
+			return candidate{}, false
+		}
+		return candidate{
+			backend: domain.MetricsBackend{
+				Kind:       domain.MetricsBackendPrometheus,
+				Namespace:  domain.NamespaceName(service.Namespace),
+				Service:    service.Name,
+				Port:       port,
+				LinkerdViz: true,
+			},
+			product: rankLinkerdViz,
+		}, true
+	}
 
 	// THE WRITE PATH, REFUSED FIRST. See writeOnlyNameLabels.
 	if slices.Contains(writeOnlyNameLabels, name) {

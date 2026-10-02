@@ -129,7 +129,13 @@ func (s *TrafficService) gate(ctx context.Context, id domain.ClusterID) (traffic
 		return trafficGate{refused: true, status: failed.Status, message: failed.Message, provenance: failed.Provenance}, nil
 	}
 
-	if verification != domain.VerificationVerified {
+	// LINKERD-VIZ'S PROMETHEUS CANNOT BE VERIFIED AND NEEDS NOT BE. The node
+	// check reads cAdvisor series, which it never scrapes, so it always
+	// answers "unverifiable" — and it is in-cluster by construction: it is
+	// installed by the extension into this cluster and discovers only this
+	// cluster's proxies. A fleet or mismatch answer is still refused.
+	vizAccepted := backend.LinkerdViz && verification == domain.VerificationUnverifiable
+	if verification != domain.VerificationVerified && !vizAccepted {
 		// A FLEET BACKEND IS REFUSED WHATEVER THE FLEET SETTING SAYS. The
 		// chart narrows a fleet backend to this cluster's node names; traffic
 		// is grouped by workload, not node, so there is no matcher that makes
@@ -184,9 +190,15 @@ func (s *TrafficService) Sources(ctx context.Context, id domain.ClusterID) (doma
 
 	answer := domain.TrafficSources{Backend: gate.backend.Describe(), Status: domain.BackendAnswered}
 	anyFound := false
+	viz := s.linkerdVizElsewhere(ctx, id, gate.backend)
 	for _, source := range domain.TrafficSourceNames() {
 		count := found[source]
 		status := domain.TrafficSourceStatus{Source: source, Available: count > 0}
+		if count <= 0 && source == domain.TrafficLinkerd && viz != "" {
+			status.Detail = viz
+			answer.Sources = append(answer.Sources, status)
+			continue
+		}
 		if count > 0 {
 			anyFound = true
 			status.Detail = fmt.Sprintf("%s series found in %s.", strconv.FormatFloat(count, 'f', -1, 64), gate.backend.Describe())
@@ -202,6 +214,29 @@ func (s *TrafficService) Sources(ctx context.Context, id domain.ClusterID) (doma
 			gate.backend.Describe())
 	}
 	return answer, nil
+}
+
+// linkerdVizElsewhere names linkerd-viz's Prometheus when discovery found one
+// that is not the chosen backend, or returns "".
+//
+// SAID, NOT SWITCHED TO. Linkerd's metrics live in linkerd-viz's own
+// Prometheus, and the chosen backend usually does not scrape the proxies; but
+// answering from a backend the operator did not choose is the one thing ADR 7
+// rules out, so the empty state names where the metrics are and how to choose
+// it. Discovery is cached, so this costs no request.
+func (s *TrafficService) linkerdVizElsewhere(ctx context.Context, id domain.ClusterID, chosen domain.MetricsBackend) string {
+	backends, err := s.metrics.discovery.ListMetricsBackends(ctx, id)
+	if err != nil {
+		return ""
+	}
+	for _, backend := range backends {
+		if backend.LinkerdViz && backendKey(backend) != backendKey(chosen) {
+			return fmt.Sprintf(
+				"Linkerd's metrics are in linkerd-viz's own Prometheus (%s in %s), which PodSteer found but is not the backend chosen for this cluster. Choose it under Settings → Clusters to read Linkerd traffic.",
+				backend.Service, backend.Namespace)
+		}
+	}
+	return ""
 }
 
 // unprobed lists every source as unavailable with what it would need.
@@ -272,6 +307,9 @@ func (s *TrafficService) Traffic(
 		// expression would answer nothing.
 		layer.Status = domain.BackendAnsweredEmpty
 		layer.Message = fmt.Sprintf("%s holds no %s metrics. %s", gate.backend.Describe(), source, domain.TrafficRequirement(source))
+		if viz := s.linkerdVizElsewhere(ctx, id, gate.backend); source == domain.TrafficLinkerd && viz != "" {
+			layer.Message = viz
+		}
 		return layer, nil
 	}
 

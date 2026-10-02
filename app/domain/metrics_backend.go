@@ -68,6 +68,10 @@ type MetricsBackend struct {
 	// not check, and a wrong guess answers 200 with no series, which reads as
 	// an idle cluster. Zero is the default every single-tenant install uses.
 	Prefix string
+	// LinkerdViz marks linkerd-viz's own Prometheus. It scrapes the Linkerd
+	// proxies and nothing else — no kubelet, no cAdvisor — so it can answer
+	// the topology's Linkerd traffic and cannot answer a chart.
+	LinkerdViz bool
 }
 
 // Found reports whether anything was discovered.

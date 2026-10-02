@@ -221,10 +221,10 @@ func TestTrafficAnswersMappedEdgesWithTheirExpressions(t *testing.T) {
 	if edge.Source.NodeID != "deploy/web" || edge.Dest.NodeID != "deploy/api" || edge.RequestsPerSec != 7 {
 		t.Errorf("edge %+v", edge)
 	}
-	if len(layer.Expressions) != 7 || layer.Provenance.Source == "" || layer.Provenance.Verification != domain.VerificationVerified {
+	if len(layer.Expressions) != 8 || layer.Provenance.Source == "" || layer.Provenance.Verification != domain.VerificationVerified {
 		t.Errorf("expressions %d, provenance %+v", len(layer.Expressions), layer.Provenance)
 	}
-	if got := f.traffic.queryCalls.Load(); got != 7 {
+	if got := f.traffic.queryCalls.Load(); got != 8 {
 		t.Errorf("%d queries, want one per expression", got)
 	}
 }
@@ -360,5 +360,91 @@ func TestTrafficEndpointsCarryTheTopologysNodeIDs(t *testing.T) {
 	}
 	if len(layer.Unmapped) != 0 {
 		t.Errorf("unmapped %+v", layer.Unmapped)
+	}
+}
+
+// The live shape of an expression Prometheus refused: a status carrying the
+// backend's words, never an error or an empty layer.
+func TestTrafficCarriesARejectedExpressionVerbatim(t *testing.T) {
+	f := newTrafficFixture(t, domain.MetricsQueryManual, []string{"node-a", "node-b"})
+	f.traffic.err = fmt.Errorf("querying: %w: vector cannot contain metrics with the same labelset", ports.ErrMetricsQueryRejected)
+
+	layer, err := f.service.Traffic(context.Background(), "dev", nil, true, domain.TrafficIstio, domain.TrafficWindow5m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layer.Status != domain.BackendRejected || !strings.Contains(layer.Message, "same labelset") {
+		t.Errorf("%s: %s", layer.Status, layer.Message)
+	}
+}
+
+func vizBackend() domain.MetricsBackend {
+	return domain.MetricsBackend{
+		Kind: domain.MetricsBackendPrometheus, Namespace: "linkerd-viz",
+		Service: "prometheus", Port: "admin", LinkerdViz: true,
+	}
+}
+
+// linkerd-viz's Prometheus holds no cAdvisor series, so the node check can
+// only answer "unverifiable" — and it is in-cluster by construction. Chosen,
+// it answers Linkerd traffic rather than being refused.
+func TestTrafficReadsLinkerdFromAChosenLinkerdVizPrometheus(t *testing.T) {
+	f := newTrafficFixture(t, domain.MetricsQueryManual, nil)
+	f.discovery.backends = []domain.MetricsBackend{vizBackend()}
+	f.traffic.answers["count(request_total"] = []domain.PromSeries{one(43, nil)}
+	f.traffic.answers[`request_total{direction="outbound",dst_namespace!=""`] = []domain.PromSeries{one(3.9, map[string]string{
+		"namespace": "warehouse", "deployment": "picker",
+		"dst_namespace": "warehouse", "dst_deployment": "inventory-api", "dst_service": "inventory-api",
+	})}
+
+	layer, err := f.service.Traffic(context.Background(), "dev", nil, true, domain.TrafficLinkerd, domain.TrafficWindow5m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layer.Status != domain.BackendAnswered || len(layer.Edges) != 1 {
+		t.Fatalf("%s %q: %+v", layer.Status, layer.Message, layer.Edges)
+	}
+	if layer.Provenance.Verification != domain.VerificationUnverifiable {
+		t.Errorf("provenance %+v should say the backend was not node-verified", layer.Provenance)
+	}
+
+	// The same backend is still refused for the charts' sake elsewhere; here
+	// it is only a general Prometheus that must not be accepted unverified.
+	f2 := newTrafficFixture(t, domain.MetricsQueryManual, nil)
+	unverified, err := f2.service.Traffic(context.Background(), "dev", nil, true, domain.TrafficIstio, domain.TrafficWindow5m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unverified.Status != domain.BackendUnverified {
+		t.Errorf("an unverifiable general backend: %s", unverified.Status)
+	}
+}
+
+// When Linkerd's metrics are absent from the chosen backend but linkerd-viz's
+// Prometheus was discovered, the empty state says where they are — it does
+// not quietly answer from a backend nobody chose.
+func TestTrafficNamesLinkerdVizWhenItIsNotChosen(t *testing.T) {
+	f := newTrafficFixture(t, domain.MetricsQueryManual, []string{"node-a", "node-b"})
+	f.discovery.backends = []domain.MetricsBackend{testBackend(), vizBackend()}
+
+	sources, err := f.service.Sources(context.Background(), "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range sources.Sources {
+		if source.Source == domain.TrafficLinkerd && (source.Available || !strings.Contains(source.Detail, "linkerd-viz")) {
+			t.Errorf("linkerd: %+v", source)
+		}
+	}
+
+	layer, err := f.service.Traffic(context.Background(), "dev", nil, true, domain.TrafficLinkerd, domain.TrafficWindow5m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if layer.Status != domain.BackendAnsweredEmpty || !strings.Contains(layer.Message, "Settings → Clusters") {
+		t.Errorf("%s: %s", layer.Status, layer.Message)
+	}
+	if got := f.traffic.queryCalls.Load(); got != 0 {
+		t.Errorf("%d queries sent to a backend without Linkerd's metrics", got)
 	}
 }

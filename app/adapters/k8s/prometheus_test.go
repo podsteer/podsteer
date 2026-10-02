@@ -407,9 +407,10 @@ func TestDescribeNamesTheProductThatWasFound(t *testing.T) {
 func TestTheSelectorAsksForEveryProductInOneRequest(t *testing.T) {
 	// A candidate LIST means no selector can short-circuit the rest, so a
 	// selector per product would be five list calls per cluster where there
-	// used to be one. The set-based form keeps it at two.
-	if len(backendSelectors) != 2 {
-		t.Fatalf("backendSelectors = %v, want two", backendSelectors)
+	// used to be one. The set-based form keeps it at two, plus linkerd-viz,
+	// whose Service carries none of the standard labels.
+	if len(backendSelectors) != 3 {
+		t.Fatalf("backendSelectors = %v, want three", backendSelectors)
 	}
 	for _, name := range backendNameLabels {
 		if !strings.Contains(backendSelectors[0], name) {
@@ -424,5 +425,36 @@ func TestTheSelectorAsksForEveryProductInOneRequest(t *testing.T) {
 				t.Errorf("selector %q asks for the write component %q", selector, name)
 			}
 		}
+	}
+}
+
+// linkerd-viz's Prometheus, as linkerd-viz 2026.9.3 installs it: no app
+// label at all, a port named "admin" on 9090. It is where Linkerd's traffic
+// metrics are, so it must be discovered — and ranked after a general
+// Prometheus, because it holds no kubelet series for the charts.
+func TestLinkerdVizPrometheusIsDiscoveredAndRankedLast(t *testing.T) {
+	viz := service("linkerd-viz", "prometheus", corev1.ServicePort{Name: "admin", Port: 9090})
+	viz.Labels = map[string]string{"linkerd.io/extension": "viz", "component": "prometheus", "namespace": "linkerd-viz"}
+
+	alone := discovered([]corev1.Service{viz})
+	if len(alone) != 1 || !alone[0].LinkerdViz || alone[0].ProxyTarget() != "prometheus:admin" {
+		t.Fatalf("linkerd-viz alone: %+v", alone)
+	}
+
+	both := discovered([]corev1.Service{viz, service("monitoring", "prometheus-operated", webPort())})
+	if len(both) != 2 || both[0].Service != "prometheus-operated" || !both[1].LinkerdViz {
+		t.Fatalf("ranking: %+v", both)
+	}
+
+	if !strings.Contains(strings.Join(backendSelectors, " "), "linkerd.io/extension=viz") {
+		t.Fatal("no selector asks for linkerd-viz's Prometheus")
+	}
+}
+
+func TestAnotherExtensionsPrometheusIsNotLinkerdViz(t *testing.T) {
+	other := service("other", "metrics", corev1.ServicePort{Name: "admin", Port: 9090})
+	other.Labels = map[string]string{"linkerd.io/extension": "jaeger", "component": "prometheus"}
+	if found := discovered([]corev1.Service{other}); len(found) != 0 {
+		t.Fatalf("matched %+v", found)
 	}
 }
