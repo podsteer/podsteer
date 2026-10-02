@@ -1877,17 +1877,27 @@ export class ClusterSession {
    * the badge only says that one names a box.
    */
   openFinding = async (findingId: string): Promise<void> => {
+    // The cards exist only while the overview's details are shown, and they
+    // are hidden by default: following a badge to a collapsed list showed the
+    // verdict and no finding. Opened first, so the card is there to find.
+    if (!preferences.findingsExpanded) preferences.toggleFindings()
     await this.selectKind(OVERVIEW_KIND_ID)
     if (typeof document === 'undefined') return
-    // The overview renders on the next frame; bring the card into view then.
-    requestAnimationFrame(() => {
-      const card = document.querySelector(`[data-finding-id="${CSS.escape(findingId)}"]`)
-      card?.scrollIntoView({
-        block: 'center',
-        behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-      })
-      if (card instanceof HTMLElement) card.focus({ preventScroll: true })
-    })
+    // The overview renders over the next frames (the assessment may still be
+    // arriving); look for the card for a short while, then give up quietly.
+    const selector = `[data-finding-id="${CSS.escape(findingId)}"]`
+    for (let frame = 0; frame < 30; frame++) {
+      const card = document.querySelector(selector)
+      if (card) {
+        card.scrollIntoView?.({
+          block: 'center',
+          behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        })
+        if (card instanceof HTMLElement) card.focus({ preventScroll: true })
+        return
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
+    }
   }
 
   /**

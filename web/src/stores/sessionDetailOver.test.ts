@@ -128,3 +128,29 @@ describe('a drawer over the topology', () => {
     expect(session.selectedGone).toBe(true)
   })
 })
+
+describe('following a findings badge', () => {
+  it('opens the overview with its details shown, and brings the card into view', async () => {
+    const { preferences } = await import('./preferences.svelte')
+    preferences.findingsExpanded = false
+    const session = new ClusterSession(cluster)
+    session.selectedKindId = TOPOLOGY_KIND_ID
+
+    const card = document.createElement('article')
+    card.dataset.findingId = 'crash'
+    card.tabIndex = -1
+    const scrolled = vi.fn()
+    card.scrollIntoView = scrolled
+    document.body.append(card)
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+
+    await session.openFinding('crash')
+
+    expect(preferences.findingsExpanded).toBe(true)
+    expect(session.viewMode).toBe('overview')
+    expect(scrolled).toHaveBeenCalled()
+    expect(document.activeElement).toBe(card)
+    card.remove()
+    vi.unstubAllGlobals()
+  })
+})
