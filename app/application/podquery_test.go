@@ -124,7 +124,7 @@ func newQueryFleet(t *testing.T, source *fakeFleetSource, open ...string) *appli
 		Resources: source,
 		Catalog:   domain.NewCatalog(),
 		Registry:  registry,
-		TextOrder: collation.Weight,
+		TextOrder: collation.Key,
 	})
 	if err != nil {
 		t.Fatalf("NewFleetService() error = %v", err)

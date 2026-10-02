@@ -362,10 +362,13 @@ usage moves every tick, and the watch store is not always serving.
   it) and `app/domain/podquery_test.go`. Change a rule in both and regenerate
   the fixture from TypeScript (`UPDATE_POD_FIXTURE=1`), never the reverse.
 - **Collation is `Intl.Collator({numeric, sensitivity: 'base'})`, rebuilt.**
-  The domain may import only the standard library, so `textorder.go` does the
-  digit-run splitting and comparing and `app/adapters/collation` supplies each
-  character's Unicode root weight from `golang.org/x/text`. Not x/text's own
-  `Numeric` option: it mis-orders lone-zero digit runs, i.e. IP addresses.
+  The domain may import only the standard library, so `textorder.go` splits
+  text into decimal-digit runs (any script: "٣" is 3) and the runs between,
+  and `app/adapters/collation` supplies each between-run's variable-length
+  primary key from `golang.org/x/text` — whole runs, so ligatures and Hangul
+  expand as the collation says. Not x/text's own `Numeric` option: it
+  mis-orders lone-zero digit runs, i.e. IP addresses. 26,000 random pairs
+  against Intl.Collator, none differing.
   Memory sorts by the DISPLAYED figure (`domain.DisplayedBytes`, cross-checked
   against `formatBytes`), so two rows reading `256.0MiB` stay a stable tie.
 - **One known divergence: the regex dialect.** RE2 has no lookaround or

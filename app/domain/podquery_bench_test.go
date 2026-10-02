@@ -69,7 +69,7 @@ func TestQueryPods10kWithinBudget(t *testing.T) {
 	best := time.Hour
 	for range 5 {
 		start := time.Now()
-		page := domain.QueryPods(pods, heavyQuery, now, collation.Weight)
+		page := domain.QueryPods(pods, heavyQuery, now, collation.Key)
 		best = min(best, time.Since(start))
 		if page.Matched != 10_000 {
 			t.Fatalf("matched %d, want 10000", page.Matched)
@@ -86,6 +86,6 @@ func BenchmarkQueryPods10k(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		_ = domain.QueryPods(pods, heavyQuery, now, collation.Weight)
+		_ = domain.QueryPods(pods, heavyQuery, now, collation.Key)
 	}
 }

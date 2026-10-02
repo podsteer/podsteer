@@ -27,7 +27,8 @@
         "tier": "frontend"
       },
       "annotations": {
-        "owner": "alice"
+        "owner": "alice",
+        "note": "ﬁle-2"
       },
       "custom": {
         "jsonpath:.spec.priorityClassName": "high"
@@ -58,7 +59,8 @@
         "team": "payments"
       },
       "annotations": {
-        "owner": "bob"
+        "owner": "bob",
+        "note": "file-10"
       },
       "custom": {}
     },
@@ -87,7 +89,9 @@
       "labels": {
         "app": "web"
       },
-      "annotations": {},
+      "annotations": {
+        "note": "fila"
+      },
       "custom": {}
     },
     {
@@ -114,7 +118,9 @@
         "app": "api",
         "version": "v2"
       },
-      "annotations": {},
+      "annotations": {
+        "note": "한국"
+      },
       "custom": {}
     },
     {
@@ -141,7 +147,9 @@
         "app": "api",
         "version": "v1"
       },
-      "annotations": {},
+      "annotations": {
+        "note": "한글"
+      },
       "custom": {}
     },
     {
@@ -165,7 +173,9 @@
       "podIp": "",
       "ageSeconds": 30,
       "labels": {},
-      "annotations": {},
+      "annotations": {
+        "note": "ᄒ한"
+      },
       "custom": {}
     },
     {
@@ -191,7 +201,9 @@
       "labels": {
         "app": "batch"
       },
-      "annotations": {},
+      "annotations": {
+        "note": "٣ items"
+      },
       "custom": {}
     },
     {
@@ -218,7 +230,9 @@
         "app": "agent",
         "app.kubernetes.io/name": "agent"
       },
-      "annotations": {},
+      "annotations": {
+        "note": "3 items"
+      },
       "custom": {}
     },
     {
@@ -244,7 +258,9 @@
       "labels": {
         "app": "going"
       },
-      "annotations": {},
+      "annotations": {
+        "note": "Straße"
+      },
       "custom": {}
     },
     {
@@ -271,7 +287,9 @@
         "app": "batch",
         "job-name": "done-job"
       },
-      "annotations": {},
+      "annotations": {
+        "note": "strasse"
+      },
       "custom": {}
     },
     {
@@ -297,7 +315,9 @@
       "labels": {
         "app": "batch"
       },
-      "annotations": {},
+      "annotations": {
+        "note": "æther"
+      },
       "custom": {}
     },
     {
@@ -325,7 +345,7 @@
         "path": "/var/log"
       },
       "annotations": {
-        "note": "has \"quotes\", commas"
+        "note": "aether"
       },
       "custom": {}
     },
@@ -352,7 +372,9 @@
       "labels": {
         "app": "cafe"
       },
-      "annotations": {},
+      "annotations": {
+        "note": "Ａpi"
+      },
       "custom": {}
     },
     {
@@ -378,7 +400,9 @@
       "labels": {
         "app": "Cafe"
       },
-      "annotations": {},
+      "annotations": {
+        "note": "api"
+      },
       "custom": {}
     }
   ],
@@ -2324,6 +2348,84 @@
         "ops/éclair",
         "ops/eclair-2",
         "ops/Eclair-10"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "sort by expansions, contractions, Hangul and other scripts' digits",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "annotation:note",
+        "direction": "asc"
+      },
+      "columns": [
+        {
+          "source": "annotation",
+          "key": "note"
+        }
+      ],
+      "expected": [
+        "billing/puller",
+        "ops/oom-now",
+        "ops/failed-job",
+        "ops/éclair",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "shop/web-1",
+        "shop/web-2",
+        "shop/web-10",
+        "ops/going",
+        "ops/done-job",
+        "billing/pending-x",
+        "billing/Api-1",
+        "billing/api-01"
+      ],
+      "chipCounts": {
+        "failing": 3,
+        "pending": 2,
+        "restarting": 1,
+        "oomkilled": 2,
+        "imagepullbackoff": 1,
+        "terminating": 1
+      }
+    },
+    {
+      "name": "the same, descending",
+      "search": "",
+      "chips": [],
+      "sort": {
+        "columnId": "annotation:note",
+        "direction": "desc"
+      },
+      "columns": [
+        {
+          "source": "annotation",
+          "key": "note"
+        }
+      ],
+      "expected": [
+        "billing/api-01",
+        "billing/Api-1",
+        "billing/pending-x",
+        "ops/going",
+        "ops/done-job",
+        "shop/web-10",
+        "shop/web-2",
+        "shop/web-1",
+        "ops/eclair-2",
+        "ops/Eclair-10",
+        "ops/failed-job",
+        "ops/éclair",
+        "billing/puller",
+        "ops/oom-now"
       ],
       "chipCounts": {
         "failing": 3,

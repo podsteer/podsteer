@@ -49,7 +49,7 @@ type FleetServiceDeps struct {
 	// TextOrder places characters in the order the merged pod table sorts
 	// text in — see WorkloadServiceDeps.TextOrder. Optional for the same
 	// reason.
-	TextOrder domain.RuneWeight
+	TextOrder domain.CollationKey
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -100,7 +100,7 @@ type FleetService struct {
 	catalog   *domain.Catalog
 	registry  *Registry
 	budget    time.Duration
-	textOrder domain.RuneWeight
+	textOrder domain.CollationKey
 	logger    *slog.Logger
 
 	// podMemo keeps each cluster's last pod rows for the merged table's

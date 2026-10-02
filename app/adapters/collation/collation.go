@@ -1,18 +1,22 @@
-// Package collation supplies the Unicode root collation's character weights
-// to the domain's table order (domain.RuneWeight).
+// Package collation supplies the Unicode root collation's primary keys to
+// the domain's table order (domain.CollationKey).
 //
-// The domain splits text into digit runs and characters and compares them —
-// see app/domain/textorder.go — but where a character sits in the Unicode
-// order is a table the standard library does not carry, and the domain may
-// import nothing else. golang.org/x/text does carry it, so this adapter is
-// the one place it is read.
+// The domain splits text into digit runs and the runs between them and
+// compares them — see app/domain/textorder.go — but collating those runs
+// needs the Unicode collation tables, which the standard library does not
+// carry and the domain may import nothing else to get. golang.org/x/text
+// does carry them, so this adapter is the one place they are read.
 //
 // WHY NOT x/text's OWN NUMERIC COMPARISON. collate.Numeric mis-orders digit
 // runs that are a lone zero — "10.0.0.12" sorted after "10.0.1.1", which is
-// exactly the IP column — so only the per-character weights are taken from
-// it and the numeric runs are compared by the domain. Checked against the
-// webview's Intl.Collator on several thousand random pairs (none differed)
-// and by the shared pod fixture in web/src/lib/filter.fixtures.json.
+// exactly the IP column — so the digits are compared by the domain and only
+// the runs between them are collated here. Held to the webview's
+// Intl.Collator by the shared pod fixture in web/src/lib/filter.fixtures.json.
+//
+// WHOLE RUNS, VARIABLE LENGTH. A run is collated as a run, not character by
+// character, so expansions and contractions are the collation's own — a
+// ligature compares as its letters, a Hangul syllable as its jamo — and the
+// key is as long as the weights it holds, never cut to a fixed width.
 package collation
 
 import (
@@ -24,64 +28,70 @@ import (
 	"golang.org/x/text/language"
 )
 
-// The webview's collator: numeric, sensitivity "base" — case, accents and
+// newCollator is the webview's collator: base strength — case, accents and
 // width are not differences.
-var (
-	mu       sync.Mutex
-	collator = collate.New(language.Und, collate.IgnoreCase, collate.IgnoreDiacritics, collate.IgnoreWidth)
+func newCollator() *collate.Collator {
+	return collate.New(language.Und, collate.IgnoreCase, collate.IgnoreDiacritics, collate.IgnoreWidth)
+}
+
+type worker struct {
+	collator *collate.Collator
 	buffer   collate.Buffer
-	// learned holds the weights computed so far beyond ASCII, which is
-	// precomputed below. Characters are few and repeat endlessly, so this
-	// stays small.
-	learned = map[rune]uint64{}
-	ascii   [utf8.RuneSelf]uint64
-)
+}
+
+// workers holds collators for concurrent use: a Collator and its Buffer are
+// not safe to share, and two page queries can sort at once.
+var workers = sync.Pool{New: func() any { return &worker{collator: newCollator()} }}
+
+// ascii holds each ASCII character's primary key. The root collation has no
+// contractions among ASCII characters, so an ASCII run's key is these joined
+// — no collator, no lock, no allocation beyond the result.
+var ascii [utf8.RuneSelf][]byte
 
 func init() {
-	for r := range rune(utf8.RuneSelf) {
-		ascii[r] = compute(r)
+	w := &worker{collator: newCollator()}
+	for c := range utf8.RuneSelf {
+		ascii[c] = w.primary(string(rune(c)))
 	}
 }
 
-// Weight is r's primary weight: equal for characters differing only in case,
-// accent or width, zero for a character the collation ignores. Safe for
-// concurrent use.
-func Weight(r rune) uint64 {
-	if r >= 0 && r < utf8.RuneSelf {
-		return ascii[r]
+// Key is the primary collation key of text, a run holding no decimal digit.
+// Safe for concurrent use.
+func Key(text string) []byte {
+	if isASCII(text) {
+		size := 0
+		for i := range len(text) {
+			size += len(ascii[text[i]])
+		}
+		key := make([]byte, 0, size)
+		for i := range len(text) {
+			key = append(key, ascii[text[i]]...)
+		}
+		return key
 	}
 
-	mu.Lock()
-	defer mu.Unlock()
-	if w, ok := learned[r]; ok {
-		return w
-	}
-	w := compute(r)
-	learned[r] = w
-	return w
+	w := workers.Get().(*worker)
+	defer workers.Put(w)
+	return w.primary(text)
 }
 
-// compute reads r's primary weights out of its collation key and packs the
-// first eight bytes, big-endian and left-aligned, so comparing the integers
-// compares the keys. Callers hold mu, or run before anything else can.
-func compute(r rune) uint64 {
-	var encoded [utf8.UTFMax]byte
-	n := utf8.EncodeRune(encoded[:], r)
-	key := collator.Key(&buffer, encoded[:n])
-	defer buffer.Reset()
-
-	// The primary level ends at the first 0x0000 separator; with case and
-	// accents ignored, nothing after it is a difference at base strength.
+// primary collates text and keeps the primary level: everything before the
+// first 0x0000 separator. With case, accents and width ignored, nothing after
+// it is a difference at base strength.
+func (w *worker) primary(text string) []byte {
+	defer w.buffer.Reset()
+	key := w.collator.KeyFromString(&w.buffer, text)
 	if end := bytes.Index(key, []byte{0, 0}); end >= 0 {
 		key = key[:end]
 	}
+	return bytes.Clone(key)
+}
 
-	var w uint64
-	for i := range 8 {
-		w <<= 8
-		if i < len(key) {
-			w |= uint64(key[i])
+func isASCII(text string) bool {
+	for i := range len(text) {
+		if text[i] >= utf8.RuneSelf {
+			return false
 		}
 	}
-	return w
+	return true
 }

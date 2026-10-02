@@ -353,7 +353,7 @@ type podQueryResult struct {
 // runPodQuery filters, counts and sorts rows. Pure, and the one place the
 // rules live: QueryPods, MatchingPods and the merged All-clusters list all
 // come through here.
-func runPodQuery(rows []PodQueryRow, q PodQuery, weight RuneWeight) podQueryResult {
+func runPodQuery(rows []PodQueryRow, q PodQuery, collation CollationKey) podQueryResult {
 	text := ParseTextQuery(q.Text)
 	result := podQueryResult{chipCounts: make(map[PodStatusChip]int, len(PodStatusChips())), queryErr: text.Err()}
 	for _, chip := range PodStatusChips() {
@@ -390,7 +390,7 @@ func runPodQuery(rows []PodQueryRow, q PodQuery, weight RuneWeight) podQueryResu
 		}
 	}
 
-	sortPodRows(rows, result.order, q, weight)
+	sortPodRows(rows, result.order, q, collation)
 	return result
 }
 
@@ -496,16 +496,16 @@ func sortAccessor(columnID string) func(row *PodQueryRow) sortValue {
 // numbers as numbers, text by collation key. Every column is one or the
 // other; a column that mixed the two would compare a number as its text, as
 // String(value) does in the webview.
-func sortPodRows(rows []PodQueryRow, order []int, q PodQuery, weight RuneWeight) {
+func sortPodRows(rows []PodQueryRow, order []int, q PodQuery, collation CollationKey) {
 	accessor := sortAccessor(q.SortColumn)
 	if accessor == nil || len(order) < 2 {
 		return
 	}
-	if weight == nil {
+	if collation == nil {
 		// Every caller wires the real order (app/adapters/collation); this
-		// only keeps a missing one from being a nil call. Code point order
-		// is still a total order — wrong for case and accents, never a panic.
-		weight = func(r rune) uint64 { return uint64(r) + 1 }
+		// only keeps a missing one from being a nil call. Byte order is
+		// still a total order — wrong for case and accents, never a panic.
+		collation = func(text string) []byte { return []byte(text) }
 	}
 
 	sign := 1
@@ -534,7 +534,7 @@ func sortPodRows(rows []PodQueryRow, order []int, q PodQuery, weight RuneWeight)
 		case value.numeric:
 			numbers = append(numbers, numberEntry{index: index, number: value.number})
 		default:
-			texts = append(texts, textEntry{index: index, key: newTextKey(value.text, weight)})
+			texts = append(texts, textEntry{index: index, key: newTextKey(value.text, collation)})
 		}
 	}
 
@@ -546,7 +546,7 @@ func sortPodRows(rows []PodQueryRow, order []int, q PodQuery, weight RuneWeight)
 			position[index] = i
 		}
 		for _, entry := range numbers {
-			texts = append(texts, textEntry{index: entry.index, key: newTextKey(strconv.FormatFloat(entry.number, 'f', -1, 64), weight)})
+			texts = append(texts, textEntry{index: entry.index, key: newTextKey(strconv.FormatFloat(entry.number, 'f', -1, 64), collation)})
 		}
 		numbers = nil
 		slices.SortFunc(texts, func(a, b textEntry) int { return cmp.Compare(position[a.index], position[b.index]) })
@@ -559,7 +559,7 @@ func sortPodRows(rows []PodQueryRow, order []int, q PodQuery, weight RuneWeight)
 			sorted = append(sorted, entry.index)
 		}
 	} else {
-		digit := weight('0')
+		digit := string(collation("0"))
 		slices.SortStableFunc(texts, func(a, b textEntry) int { return sign * compareTextKeys(a.key, b.key, digit) })
 		for _, entry := range texts {
 			sorted = append(sorted, entry.index)
@@ -583,13 +583,13 @@ func pageBounds(matched, offset, limit int) (start, end int) {
 }
 
 // QueryPods answers a page query over a list, in the list's own order when
-// nothing is sorted. weight orders text; see RuneWeight.
-func QueryPods(pods []Pod, q PodQuery, now time.Time, weight RuneWeight) PodPage {
+// nothing is sorted. collation orders text; see CollationKey.
+func QueryPods(pods []Pod, q PodQuery, now time.Time, collation CollationKey) PodPage {
 	rows := make([]PodQueryRow, len(pods))
 	for i := range pods {
 		rows[i] = NewPodQueryRow(pods[i], now)
 	}
-	result := runPodQuery(rows, q, weight)
+	result := runPodQuery(rows, q, collation)
 
 	page := PodPage{
 		Matched:    len(result.order),
@@ -617,12 +617,12 @@ func QueryPods(pods []Pod, q PodQuery, now time.Time, weight RuneWeight) PodPage
 // MatchingPods is every pod the query keeps, in display order, ignoring the
 // page — for the reads that are about the whole match on purpose: the keys
 // behind "select all matching" and the CSV export.
-func MatchingPods(pods []Pod, q PodQuery, now time.Time, weight RuneWeight) []Pod {
+func MatchingPods(pods []Pod, q PodQuery, now time.Time, collation CollationKey) []Pod {
 	rows := make([]PodQueryRow, len(pods))
 	for i := range pods {
 		rows[i] = NewPodQueryRow(pods[i], now)
 	}
-	result := runPodQuery(rows, q, weight)
+	result := runPodQuery(rows, q, collation)
 
 	matched := make([]Pod, 0, len(result.order))
 	for _, index := range result.order {

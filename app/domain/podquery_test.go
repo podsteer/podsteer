@@ -144,7 +144,7 @@ func TestPodQueryMatchesTheFrontendFixture(t *testing.T) {
 				q.Columns = append(q.Columns, domain.CustomColumn{Source: domain.CustomColumnSource(column.Source), Key: column.Key})
 			}
 
-			order, counts := domain.RunPodQueryForTest(slices.Clone(rows), q, collation.Weight)
+			order, counts := domain.RunPodQueryForTest(slices.Clone(rows), q, collation.Key)
 
 			got := make([]string, 0, len(order))
 			for _, index := range order {
@@ -215,7 +215,7 @@ func TestQueryPodsPagesAndCounts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			page := domain.QueryPods(pods, tt.query, now, collation.Weight)
+			page := domain.QueryPods(pods, tt.query, now, collation.Key)
 			if page.Offset != tt.wantOffset || len(page.Rows) != tt.wantRows {
 				t.Fatalf("offset %d rows %d, want %d and %d", page.Offset, len(page.Rows), tt.wantOffset, tt.wantRows)
 			}
@@ -230,7 +230,7 @@ func TestQueryPodsPagesAndCounts(t *testing.T) {
 
 	t.Run("an empty match is one empty page", func(t *testing.T) {
 		t.Parallel()
-		page := domain.QueryPods(pods, domain.PodQuery{Text: "nothing-is-called-this", Limit: 50, Offset: 150}, now, collation.Weight)
+		page := domain.QueryPods(pods, domain.PodQuery{Text: "nothing-is-called-this", Limit: 50, Offset: 150}, now, collation.Key)
 		if page.Matched != 0 || len(page.Rows) != 0 || page.Offset != 0 {
 			t.Fatalf("got %+v, want an empty first page", page)
 		}
@@ -238,7 +238,7 @@ func TestQueryPodsPagesAndCounts(t *testing.T) {
 
 	t.Run("an invalid pattern says so and matches nothing", func(t *testing.T) {
 		t.Parallel()
-		page := domain.QueryPods(pods, domain.PodQuery{Text: "re:(", Limit: 50}, now, collation.Weight)
+		page := domain.QueryPods(pods, domain.PodQuery{Text: "re:(", Limit: 50}, now, collation.Key)
 		if page.Matched != 0 || page.QueryError == "" {
 			t.Fatalf("got matched %d error %q, want none and an explanation", page.Matched, page.QueryError)
 		}
@@ -250,7 +250,7 @@ func TestMatchingPodsIgnoresThePage(t *testing.T) {
 
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
 	pods := synthPods(t, 120)
-	matched := domain.MatchingPods(pods, domain.PodQuery{Text: "pod-1", Limit: 1, SortColumn: "name", Descending: true}, now, collation.Weight)
+	matched := domain.MatchingPods(pods, domain.PodQuery{Text: "pod-1", Limit: 1, SortColumn: "name", Descending: true}, now, collation.Key)
 
 	// pod-1, pod-10..pod-19 do not exist (names are zero-padded); pod-100
 	// to pod-119 do.
@@ -269,7 +269,7 @@ func TestDisplayedMemoryTiesKeepListOrder(t *testing.T) {
 	first := mustPod(t, "a-larger", domain.NewMetrics(1, 256<<20+40_000))
 	second := mustPod(t, "b-smaller", domain.NewMetrics(1, 256<<20))
 
-	page := domain.QueryPods([]domain.Pod{first, second}, domain.PodQuery{Limit: 10, SortColumn: "memory"}, now, collation.Weight)
+	page := domain.QueryPods([]domain.Pod{first, second}, domain.PodQuery{Limit: 10, SortColumn: "memory"}, now, collation.Key)
 	if page.Rows[0].Name() != "a-larger" {
 		t.Fatalf("got %q first: the sort read bytes the table does not show", page.Rows[0].Name())
 	}

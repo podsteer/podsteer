@@ -334,7 +334,7 @@ func run() error {
 		Workloads: kubernetes,
 		Metrics:   kubernetes,
 		Registry:  registry,
-		TextOrder: collation.Weight,
+		TextOrder: collation.Key,
 		Logger:    logger,
 	})
 	if err != nil {
@@ -361,7 +361,7 @@ func run() error {
 		Resources: browseService,
 		Catalog:   catalog,
 		Registry:  registry,
-		TextOrder: collation.Weight,
+		TextOrder: collation.Key,
 		Logger:    logger,
 	})
 	if err != nil {
