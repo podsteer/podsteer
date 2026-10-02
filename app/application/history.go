@@ -76,6 +76,10 @@ type HistoryService struct {
 	done   chan struct{}
 	once   sync.Once
 
+	// sampled is when each cluster was last sampled, for the due gate.
+	// Guarded by mu.
+	sampled map[domain.ClusterID]time.Time
+
 	// newTicker builds the sampler's tick source. Unexported and set only by
 	// tests: the cadence floor is ten seconds, so a test that waited for real
 	// ticks would have to sleep for half a minute to observe two of them.
@@ -226,9 +230,13 @@ func (s *HistoryService) sampleAll(ctx context.Context) {
 
 	interval := s.SamplingInterval()
 
+	now := time.Now()
 	for _, cluster := range s.registry.All() {
 		if err := ctx.Err(); err != nil {
 			return
+		}
+		if !s.due(cluster.ID(), now) {
+			continue
 		}
 
 		// ONE CLUSTER'S PANIC IS THAT CLUSTER'S GAP. The assessment is a
@@ -239,6 +247,66 @@ func (s *HistoryService) sampleAll(ctx context.Context) {
 			s.sampleCluster(ctx, cluster, interval)
 		})
 	}
+}
+
+// demander is the OverviewService's LastDemanded, asserted rather than put on
+// the port: a test's fake assessment answers "always on screen" by not having
+// it, which is the cadence every sample had before this gate existed.
+type demander interface {
+	LastDemanded(domain.ClusterID) time.Time
+}
+
+// SampledEvery is how often a cluster is being sampled right now: every
+// interval while somebody is looking at it — its assessment was asked for
+// within the last two intervals — and every max(ten intervals, five
+// minutes) while nobody is.
+//
+// WHY THE SAMPLER SLOWS DOWN BEHIND THE OPERATOR'S BACK. A sample is a whole
+// assessment — ten or so cluster-wide reads — and with a dozen tabs open the
+// sampler read every one of them on every tick, though only the one in
+// front had anybody looking at its Trend panel. In front, the sample reuses
+// the assessment the tab's own poll just made; behind, it was a cluster
+// read nobody asked for. The chart says which cadence it was drawn at (see
+// SeriesResult.sampledEverySeconds), so a background gap is never mistaken
+// for an outage.
+func (s *HistoryService) SampledEvery(id domain.ClusterID) time.Duration {
+	return s.cadence(id, time.Now(), s.SamplingInterval())
+}
+
+func (s *HistoryService) cadence(id domain.ClusterID, now time.Time, interval time.Duration) time.Duration {
+	tracker, ok := s.overview.(demander)
+	if !ok {
+		return interval
+	}
+	if last := tracker.LastDemanded(id); !last.IsZero() && now.Sub(last) <= 2*interval {
+		return interval
+	}
+	return domain.BackgroundSamplingInterval(interval)
+}
+
+
+// due reports whether a cluster's next sample is owed at now, and if so
+// marks it taken — the sampler's one gate, ahead of the per-cluster panic
+// wrapper so a skipped cluster costs nothing at all.
+//
+// A cluster at the foreground cadence is owed a sample on EVERY tick — one
+// tick, one sample, whatever the clock says between them. Only the slower
+// background cadence is measured, with half an interval of slack because
+// ticks are not exact.
+func (s *HistoryService) due(id domain.ClusterID, now time.Time) bool {
+	interval := s.SamplingInterval()
+	every := s.cadence(id, now, interval)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if last, ok := s.sampled[id]; ok && every > interval && now.Sub(last) < every-interval/2 {
+		return false
+	}
+	if s.sampled == nil {
+		s.sampled = make(map[domain.ClusterID]time.Time, 4)
+	}
+	s.sampled[id] = now
+	return true
 }
 
 // sampleCluster records one cluster's sample.

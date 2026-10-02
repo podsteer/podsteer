@@ -109,6 +109,13 @@ type OverviewService struct {
 	mu       sync.Mutex
 	cache    map[domain.ClusterID]overviewEntry
 	inflight map[domain.ClusterID]*overviewCall
+
+	// demanded is when somebody last ASKED for each cluster's assessment —
+	// a tab's own poll or the comparison selector, never the sampler, which
+	// calls OverviewWithin. It is what lets the sampler tell the cluster an
+	// operator is looking at from the twelve open behind it. See
+	// LastDemanded.
+	demanded map[domain.ClusterID]time.Time
 }
 
 var _ ports.OverviewService = (*OverviewService)(nil)
@@ -169,7 +176,30 @@ var controllerKinds = []domain.WorkloadKind{
 // alternative is an error page in front of an operator who is looking at this
 // screen precisely because something is wrong.
 func (s *OverviewService) Overview(ctx context.Context, id domain.ClusterID) (domain.Overview, error) {
+	s.noteDemand(id)
 	return s.OverviewWithin(ctx, id, overviewFreshness)
+}
+
+// noteDemand stamps a cluster as asked about now.
+func (s *OverviewService) noteDemand(id domain.ClusterID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.demanded == nil {
+		s.demanded = make(map[domain.ClusterID]time.Time, 4)
+	}
+	s.demanded[id] = time.Now()
+}
+
+// LastDemanded is when somebody last asked for this cluster's assessment —
+// Overview or OverviewForTarget, which only a tab on screen calls — or the
+// zero time when nobody has since it was opened.
+//
+// Not OverviewWithin, deliberately: that is the history sampler's door, and
+// a cluster the sampler reads is not thereby one anybody is looking at.
+func (s *OverviewService) LastDemanded(id domain.ClusterID) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.demanded[id]
 }
 
 // OverviewForTarget assesses a connected cluster against a specific upgrade
@@ -191,6 +221,7 @@ func (s *OverviewService) OverviewForTarget(
 	if _, err := s.registry.Get(id); err != nil {
 		return domain.Overview{}, err
 	}
+	s.noteDemand(id)
 	return s.assessWithRetry(ctx, id, targetMinor)
 }
 
@@ -282,6 +313,7 @@ func (s *OverviewService) forget(id domain.ClusterID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.cache, id)
+	delete(s.demanded, id)
 }
 
 // assessAttempts is how many times an unreachable cluster is re-read before

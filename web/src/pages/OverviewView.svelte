@@ -898,7 +898,9 @@
           <TrendChart samples={history.samples} {metric} backend={backendTrend.result} />
           <p class="text-body-small text-on-surface-variant/60">
             Covering the last {formatAge(history.spanSeconds)} that PodSteer has been open on this
-            cluster — not the cluster's whole history.
+            cluster — not the cluster's whole history. Sampled every
+            {formatAge(history.intervalSeconds)} while this tab is in front{#if history.backgroundEverySeconds > history.intervalSeconds},
+              and every {formatAge(history.backgroundEverySeconds)} while it is in the background{/if}.
           </p>
         {/if}
 

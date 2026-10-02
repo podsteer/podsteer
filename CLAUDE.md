@@ -1987,6 +1987,18 @@ That makes the coverage the window the app was open, which is weaker than a
 monitoring stack and **must be presented as such** — `SeriesResult.spanSeconds`
 exists so the UI can say "the last 40 minutes" instead of implying more.
 
+- **Only the cluster somebody is looking at is sampled every interval.** A
+  sample is a whole assessment; with a dozen tabs open the sampler used to read
+  every cluster every tick. `HistoryService.due` (one `continue` ahead of the
+  per-cluster `safego` wrapper) samples a cluster whose assessment was
+  DEMANDED within the last two intervals — `OverviewService.LastDemanded`,
+  stamped by `Overview`/`OverviewForTarget`, which only a tab on screen calls,
+  never by `OverviewWithin`, the sampler's own door — on every tick, and the
+  rest every `domain.BackgroundSamplingInterval` (ten intervals, at least five
+  minutes). `SeriesResult.sampledEverySeconds`/`backgroundEverySeconds` carry
+  the cadence and the Trend panel states it, so a sparse stretch is never read
+  as an outage. An assessment without `LastDemanded` (tests) samples every tick.
+
 - **The sampler has one owner and one way to stop** (`Close`), and it waits for
   the write in flight before returning. It is started from the
   `events.Common.ApplicationStarted` hook — v3's shape of what v2 called

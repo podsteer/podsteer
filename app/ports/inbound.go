@@ -269,6 +269,10 @@ type HistoryService interface {
 	// SetSamplingInterval changes the cadence, taking effect at once rather
 	// than after the current interval elapses.
 	SetSamplingInterval(interval time.Duration) error
+
+	// SampledEvery is how often one cluster is actually being sampled now:
+	// the interval while somebody is looking at it, slower while nobody is.
+	SampledEvery(id domain.ClusterID) time.Duration
 }
 
 // RBACService is the use-case surface for the RBAC explorer.

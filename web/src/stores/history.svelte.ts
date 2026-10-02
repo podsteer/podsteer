@@ -73,6 +73,13 @@ export class ClusterHistory {
   recording = $state(true)
   /** How often a sample is taken, so the UI can say when a line will appear. */
   intervalSeconds = $state(30)
+  /**
+   * How often this cluster is sampled while its tab is behind another — the
+   * sampler slows down for a cluster nobody is looking at (see
+   * HistoryService.SampledEvery), and the panel says so beside the line
+   * rather than leave a sparse stretch to read as an outage.
+   */
+  backgroundEverySeconds = $state(300)
   windowMinutes = $state<number>(60)
   status = $state<'idle' | 'loading' | 'ready' | 'error'>('idle')
   error = $state<string | null>(null)
@@ -98,6 +105,7 @@ export class ClusterHistory {
       this.spanSeconds = result.spanSeconds
       this.recording = result.recording
       this.intervalSeconds = result.intervalSeconds
+      this.backgroundEverySeconds = result.backgroundEverySeconds || result.intervalSeconds
       this.status = 'ready'
       this.error = null
     } catch (cause) {

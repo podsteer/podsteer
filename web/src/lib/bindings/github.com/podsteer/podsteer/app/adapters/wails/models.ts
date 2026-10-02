@@ -4121,6 +4121,20 @@ export interface SeriesResult {
     "intervalSeconds": number;
 
     /**
+     * SampledEverySeconds is how often THIS cluster is being sampled right
+     * now: IntervalSeconds while its tab is the one in front, much less
+     * often while it is behind — so the panel can say why the line is
+     * sparse rather than leave a gap to read as an outage.
+     */
+    "sampledEverySeconds": number;
+
+    /**
+     * BackgroundEverySeconds is the cadence a cluster drops to while nobody
+     * is looking at it, for the panel to state alongside the line.
+     */
+    "backgroundEverySeconds": number;
+
+    /**
      * Recording reports whether sampling is on at all.
      */
     "recording": boolean;

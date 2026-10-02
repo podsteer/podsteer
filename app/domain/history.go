@@ -243,3 +243,11 @@ func average(run Series) Sample {
 	}
 	return result
 }
+
+// BackgroundSamplingInterval is how often a cluster nobody is looking at is
+// sampled, for a configured interval: every ten intervals, and never more
+// often than every five minutes. A sample is a whole assessment of the
+// cluster, and the one an operator is reading is the one worth the reads.
+func BackgroundSamplingInterval(interval time.Duration) time.Duration {
+	return max(10*interval, 5*time.Minute)
+}
