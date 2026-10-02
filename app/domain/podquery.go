@@ -274,18 +274,18 @@ func (r *PodQueryRow) memory() *float64 {
 	if r.Memory != nil || !r.usage.Measured {
 		return r.Memory
 	}
-	return displayedBytes(r.usage.MemoryBytes)
+	return DisplayedBytes(r.usage.MemoryBytes)
 }
 
 // binaryUnitMultipliers are the units memory is displayed in, B to PiB.
 var binaryUnitMultipliers = [...]float64{1, 1 << 10, 1 << 20, 1 << 30, 1 << 40, 1 << 50}
 
-// displayedBytes is a byte count as the table displays it — one decimal
+// DisplayedBytes is a byte count as the table displays it — one decimal
 // place in the largest binary unit it reaches — read back as a number, or
 // nil for the dash a non-positive count is shown as. It is the frontend's
 // parseQuantity of the wails adapter's formatBytes; the wails package holds
 // a test that the two agree.
-func displayedBytes(bytes int64) *float64 {
+func DisplayedBytes(bytes int64) *float64 {
 	if bytes <= 0 {
 		return nil
 	}

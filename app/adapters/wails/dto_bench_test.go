@@ -114,10 +114,15 @@ const (
 func TestPodPayloadBudget(t *testing.T) {
 	t.Parallel()
 
+	// The page as it crosses the bridge: domain.QueryPods over a list ten
+	// times the page, rows and counts and all.
 	now := time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-	rows := toPods(synthDomainPods(t, podsPerPage), now)
+	page := domain.QueryPods(synthDomainPods(t, 10*podsPerPage), domain.PodQuery{Limit: podsPerPage}, now, nil)
+	if len(page.Rows) != podsPerPage {
+		t.Fatalf("page has %d rows, want %d", len(page.Rows), podsPerPage)
+	}
 
-	encoded, err := json.Marshal(rows)
+	encoded, err := json.Marshal(toPodPage(page, now))
 	if err != nil {
 		t.Fatalf("json.Marshal() error = %v", err)
 	}
@@ -130,10 +135,11 @@ func TestPodPayloadBudget(t *testing.T) {
 	}
 }
 
-// TestPodListPayloadSize records what the WHOLE list costs, which is what
-// every tick of the pod table crossed before it was paged in Go. Logged
-// rather than asserted: it is the number the page budget above is measured
-// against, not a budget of its own. Run with -v to read it.
+// TestPodListPayloadSize records what the WHOLE list costs — what every tick
+// of the pod table crossed before it was paged in Go, and what ListPods
+// still returns to its other callers — beside what one page costs now.
+// Logged rather than asserted: the budget is TestPodPayloadBudget's. Run
+// with -v to read it.
 func TestPodListPayloadSize(t *testing.T) {
 	t.Parallel()
 
@@ -144,6 +150,12 @@ func TestPodListPayloadSize(t *testing.T) {
 			t.Fatalf("json.Marshal() error = %v", err)
 		}
 		t.Logf("whole list, %d pods: %d bytes (%.1f MB)", n, len(encoded), float64(len(encoded))/(1<<20))
+
+		page, err := json.Marshal(toPodPage(domain.QueryPods(synthDomainPods(t, n), domain.PodQuery{Limit: podsPerPage}, now, nil), now))
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		t.Logf("one %d-row page of %d pods: %d bytes (%.1f KB)", podsPerPage, n, len(page), float64(len(page))/(1<<10))
 	}
 }
 

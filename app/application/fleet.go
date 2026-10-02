@@ -46,6 +46,10 @@ type FleetServiceDeps struct {
 	// slow and the rest are answered without it. Optional; defaults to
 	// fleetReadBudget. Tests shorten it.
 	ReadBudget time.Duration
+	// TextOrder places characters in the order the merged pod table sorts
+	// text in — see WorkloadServiceDeps.TextOrder. Optional for the same
+	// reason.
+	TextOrder domain.RuneWeight
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -96,7 +100,12 @@ type FleetService struct {
 	catalog   *domain.Catalog
 	registry  *Registry
 	budget    time.Duration
+	textOrder domain.RuneWeight
 	logger    *slog.Logger
+
+	// podMemo keeps each cluster's last pod rows for the merged table's
+	// slow and unreachable clusters. See QueryPods.
+	podMemo podMemo
 
 	// late holds what a read that outlived its budget eventually came back
 	// with, keyed by cluster, read and namespace, until the next read of the
@@ -140,6 +149,8 @@ var (
 // "slow", both of which are about the tab, not about which cluster the rows
 // were read from.
 func (s *FleetService) Invalidate(id domain.ClusterID) {
+	s.podMemo.forget(id)
+
 	prefix := string(id) + "|"
 	s.late.Range(func(key, _ any) bool {
 		if name, ok := key.(string); ok && strings.HasPrefix(name, prefix) {
@@ -203,6 +214,7 @@ func NewFleetService(deps FleetServiceDeps) (*FleetService, error) {
 		catalog:   deps.Catalog,
 		registry:  deps.Registry,
 		budget:    budget,
+		textOrder: deps.TextOrder,
 		logger:    logger.With(slog.String("service", "fleet")),
 	}, nil
 }

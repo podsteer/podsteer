@@ -522,6 +522,15 @@ export interface BulkResultDTO {
 }
 
 /**
+ * CSVColumn is one column of a CSV export: the table's column id, which
+ * decides the cell, and the heading it is shown under.
+ */
+export interface CSVColumn {
+    "id": string;
+    "label": string;
+}
+
+/**
  * CapacitySummary is the cluster's capacity across every dimension.
  */
 export interface CapacitySummary {
@@ -1195,6 +1204,21 @@ export interface Credit {
 }
 
 /**
+ * CustomColumnSpec is one custom column, as $lib/customColumns persists it.
+ */
+export interface CustomColumnSpec {
+    /**
+     * Source is "label", "annotation" or "jsonpath".
+     */
+    "source": string;
+
+    /**
+     * Key is the label or annotation key, or the JSONPath expression.
+     */
+    "key": string;
+}
+
+/**
  * CustomExpression is one operator-written JSONPath column, as the interface
  * sends it: the column's own id, and the path to read.
  * 
@@ -1609,6 +1633,50 @@ export interface Finding {
      */
     "truncated": boolean;
     "oldestSeconds": number;
+}
+
+/**
+ * FleetPodPage is one page of the merged All-clusters pod list, and every
+ * open cluster's verdict for the status strip. See domain.FleetPodPage.
+ */
+export interface FleetPodPage {
+    /**
+     * Page is the page itself and its counts, as one cluster's list has.
+     */
+    "page": PodPage;
+
+    /**
+     * Clusters are every cluster read, in tab order, whether or not the
+     * strip's selection shows its rows.
+     */
+    "clusters": FleetPodShare[] | null;
+}
+
+/**
+ * FleetPodShare is one cluster's chip in the strip: its verdict and the rows
+ * it contributes.
+ */
+export interface FleetPodShare {
+    "cluster": string;
+    "status": string;
+    "reason": string;
+    "missing": string[] | null;
+
+    /**
+     * Rows counts the rows this cluster contributes before any filter.
+     */
+    "rows": number;
+
+    /**
+     * RowsAt is when they were read, in milliseconds since the epoch; zero
+     * when there are none.
+     */
+    "rowsAt": number;
+
+    /**
+     * Stale says they were kept from an earlier answer.
+     */
+    "stale": boolean;
 }
 
 /**
@@ -3091,6 +3159,105 @@ export interface PodGraph {
      * refused, this means none was attempted.
      */
     "bounded": string;
+}
+
+/**
+ * PodKey names one pod for "select all matching", with the controller a
+ * bulk plan reads off a row.
+ */
+export interface PodKey {
+    "namespace": string;
+    "name": string;
+    "uid": string;
+    "controlledBy": string;
+    "cluster": string;
+}
+
+/**
+ * PodPage is one page of the pod table and the counts around it.
+ */
+export interface PodPage {
+    /**
+     * Rows are the page, in display order.
+     */
+    "rows": Pod[] | null;
+
+    /**
+     * Offset is where the page starts, after clamping past-the-end offsets
+     * to the last page.
+     */
+    "offset": number;
+
+    /**
+     * Matched counts what the search and chips kept: the pager's total.
+     */
+    "matched": number;
+
+    /**
+     * Total counts the list before any filter.
+     */
+    "total": number;
+
+    /**
+     * Unhealthy counts the unhealthy pods before any filter.
+     */
+    "unhealthy": number;
+
+    /**
+     * ChipCounts holds, per chip id, how many of the SEARCHED rows it would
+     * select.
+     */
+    "chipCounts": { [_ in string]?: number } | null;
+
+    /**
+     * QueryError explains a search that did not parse, and so matched
+     * nothing — a regex the webview accepts and Go's dialect does not.
+     */
+    "queryError": string;
+}
+
+/**
+ * PodQuery is one page query of the pod table — what the frontend's search
+ * box, status chips, sort and pager currently say. See domain.PodQuery.
+ */
+export interface PodQuery {
+    /**
+     * Text is the search box, in the filter language of web/src/lib/query.ts.
+     */
+    "text": string;
+
+    /**
+     * Chips are the pressed status chips' ids.
+     */
+    "chips": string[] | null;
+
+    /**
+     * SortColumn is the sorted column's id, "" for the list's own order.
+     */
+    "sortColumn": string;
+
+    /**
+     * Descending reverses the sort.
+     */
+    "descending": boolean;
+
+    /**
+     * Columns are the operator's own columns on the list — searchable text,
+     * and a sort can name one.
+     */
+    "columns": CustomColumnSpec[] | null;
+
+    /**
+     * Clusters narrows the merged All-clusters list; empty means every
+     * cluster. Ignored on one cluster's list.
+     */
+    "clusters": string[] | null;
+
+    /**
+     * Offset and Limit select the page.
+     */
+    "offset": number;
+    "limit": number;
 }
 
 /**

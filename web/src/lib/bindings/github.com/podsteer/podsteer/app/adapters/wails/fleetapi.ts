@@ -19,6 +19,15 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * ExportPodsCSV writes every pod of the merged list the query matches, as
+ * CSV, to wherever the operator chooses — see WorkloadAPI.ExportPodsCSV for
+ * why this is written in Go. Returns "" when the dialog was cancelled.
+ */
+export function ExportPodsCSV(clusterIDs: string[] | null, $namespace: string, query: $models.PodQuery, columns: $models.CSVColumn[] | null, suggestedName: string): $CancellablePromise<string> {
+    return $Call.ByID(1500834873, clusterIDs, $namespace, query, columns, suggestedName);
+}
+
+/**
  * ListEvents lists events in the given namespace of each named cluster.
  */
 export function ListEvents(clusterIDs: string[] | null, $namespace: string): $CancellablePromise<$models.ClusterEvents[] | null> {
@@ -55,4 +64,16 @@ export function ListTable(clusterIDs: string[] | null, group: string, resource: 
  */
 export function ListWorkloads(clusterIDs: string[] | null, $namespace: string): $CancellablePromise<$models.ClusterWorkloads[] | null> {
     return $Call.ByID(1060283261, clusterIDs, $namespace);
+}
+
+/**
+ * QueryPods returns one page of the merged pod list — the search, chips,
+ * cluster selection, sort and page the frontend's table says — and every
+ * cluster's verdict for the status strip. See FleetService.QueryPods.
+ * 
+ * No projection: custom columns are per kind and the merged list is not a
+ * kind, exactly as ListPods reads it.
+ */
+export function QueryPods(clusterIDs: string[] | null, $namespace: string, query: $models.PodQuery): $CancellablePromise<$models.FleetPodPage> {
+    return $Call.ByID(126058095, clusterIDs, $namespace, query);
 }

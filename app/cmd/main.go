@@ -31,6 +31,7 @@ import (
 
 	"github.com/podsteer/podsteer/app/adapters/archive"
 	"github.com/podsteer/podsteer/app/adapters/assets"
+	"github.com/podsteer/podsteer/app/adapters/collation"
 	historystore "github.com/podsteer/podsteer/app/adapters/history"
 	"github.com/podsteer/podsteer/app/adapters/k8s"
 	"github.com/podsteer/podsteer/app/adapters/localshell"
@@ -333,6 +334,7 @@ func run() error {
 		Workloads: kubernetes,
 		Metrics:   kubernetes,
 		Registry:  registry,
+		TextOrder: collation.Weight,
 		Logger:    logger,
 	})
 	if err != nil {
@@ -359,6 +361,7 @@ func run() error {
 		Resources: browseService,
 		Catalog:   catalog,
 		Registry:  registry,
+		TextOrder: collation.Weight,
 		Logger:    logger,
 	})
 	if err != nil {

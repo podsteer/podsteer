@@ -270,7 +270,15 @@ func saveDialogFor(suggestedName string) (title string, filters []application.Fi
 // showSaveDialog is chooseSavePath's real implementation: the native save
 // dialog, seeded with the suggested filename and filtered by its extension.
 func (s *SystemAPI) showSaveDialog(suggestedName string) (string, error) {
-	wailsApp, ok := s.app.wailsApp()
+	return showSaveDialog(s.app, suggestedName)
+}
+
+// showSaveDialog is the native save dialog, for every API that writes a file
+// the operator places: SaveTextFile, and the pod table's CSV export, which is
+// rendered and written in Go because the rows it covers never reach the
+// webview.
+func showSaveDialog(app *App, suggestedName string) (string, error) {
+	wailsApp, ok := app.wailsApp()
 	if !ok {
 		return "", fmt.Errorf("the window is not running")
 	}

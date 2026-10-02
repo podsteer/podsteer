@@ -20,6 +20,11 @@ type WorkloadServiceDeps struct {
 	Metrics ports.MetricsPort
 	// Registry tracks open connections. Required.
 	Registry *Registry
+	// TextOrder places characters in the order the pod table sorts text in
+	// — see domain.RuneWeight; app/adapters/collation supplies it. Optional
+	// only so a test that never sorts need not wire it: without it QueryPods
+	// falls back to code point order, which gets case and accents wrong.
+	TextOrder domain.RuneWeight
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -29,6 +34,7 @@ type WorkloadService struct {
 	workloads ports.WorkloadPort
 	metrics   ports.MetricsPort
 	registry  *Registry
+	textOrder domain.RuneWeight
 	logger    *slog.Logger
 }
 
@@ -55,6 +61,7 @@ func NewWorkloadService(deps WorkloadServiceDeps) (*WorkloadService, error) {
 		workloads: deps.Workloads,
 		metrics:   deps.Metrics,
 		registry:  deps.Registry,
+		textOrder: deps.TextOrder,
 		logger:    logger.With(slog.String("service", "workload")),
 	}, nil
 }

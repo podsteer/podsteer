@@ -20,6 +20,10 @@ type FleetAPI struct {
 	fleet  ports.FleetService
 	app    *App
 	logger *slog.Logger
+
+	// chooseSavePath is the save dialog behind ExportPodsCSV — a seam for
+	// the reason SystemAPI.chooseSavePath is one.
+	chooseSavePath func(suggestedName string) (string, error)
 }
 
 // NewFleetAPI returns the bound fleet API.
@@ -36,9 +40,10 @@ func NewFleetAPI(fleet ports.FleetService, app *App, logger *slog.Logger) (*Flee
 	}
 
 	return &FleetAPI{
-		fleet:  fleet,
-		app:    app,
-		logger: logger.With(slog.String("api", "fleet")),
+		fleet:          fleet,
+		app:            app,
+		logger:         logger.With(slog.String("api", "fleet")),
+		chooseSavePath: func(suggestedName string) (string, error) { return showSaveDialog(app, suggestedName) },
 	}, nil
 }
 
@@ -62,6 +67,52 @@ func (f *FleetAPI) ListPods(clusterIDs []string, namespace string) ([]ClusterPod
 	}
 
 	return toClusterPods(reads, time.Now()), nil
+}
+
+// QueryPods returns one page of the merged pod list — the search, chips,
+// cluster selection, sort and page the frontend's table says — and every
+// cluster's verdict for the status strip. See FleetService.QueryPods.
+//
+// No projection: custom columns are per kind and the merged list is not a
+// kind, exactly as ListPods reads it.
+func (f *FleetAPI) QueryPods(clusterIDs []string, namespace string, query PodQuery) (FleetPodPage, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, ns, err := fleetArgs(clusterIDs, namespace)
+	if err != nil {
+		return FleetPodPage{}, apiError(f.logger, "QueryPods", err)
+	}
+
+	page, err := f.fleet.QueryPods(ctx, ids, ns, query.toDomain())
+	if err != nil {
+		return FleetPodPage{}, apiError(f.logger, "QueryPods", err)
+	}
+
+	return toFleetPodPage(page, time.Now()), nil
+}
+
+// ExportPodsCSV writes every pod of the merged list the query matches, as
+// CSV, to wherever the operator chooses — see WorkloadAPI.ExportPodsCSV for
+// why this is written in Go. Returns "" when the dialog was cancelled.
+func (f *FleetAPI) ExportPodsCSV(clusterIDs []string, namespace string, query PodQuery, columns []CSVColumn, suggestedName string) (string, error) {
+	ids, ns, err := fleetArgs(clusterIDs, namespace)
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSV", err)
+	}
+
+	ctx, cancel := f.app.requestContext()
+	pods, err := f.fleet.MatchingPods(ctx, ids, ns, query.toDomain())
+	cancel()
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSV", err)
+	}
+
+	path, err := writeCSVExport(f.chooseSavePath, suggestedName, renderPodCSV(columns, toPods(pods, time.Now())))
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSV", err)
+	}
+	return path, nil
 }
 
 // ListWorkloads lists every fleet workload kind in the given namespace of

@@ -93,6 +93,18 @@ type WorkloadService interface {
 	// the annotations projection asks for — see domain.Projection.
 	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error)
 
+	// QueryPods answers one page of the pod list — search, status chips,
+	// sort, offset and limit — with the counts the table around it needs.
+	// See domain.QueryPods.
+	QueryPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection, query domain.PodQuery) (domain.PodPage, error)
+
+	// MatchingPods is every pod a query keeps, in order, page ignored — for
+	// the CSV export.
+	MatchingPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection, query domain.PodQuery) ([]domain.Pod, error)
+
+	// ListPodKeys names every pod a query keeps, for "select all matching".
+	ListPodKeys(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection, query domain.PodQuery) ([]domain.PodKey, error)
+
 	// ListWorkloads returns controllers of the given kind, each carrying the
 	// annotations projection asks for.
 	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error)
@@ -184,6 +196,14 @@ type EventService interface {
 type FleetService interface {
 	// ListPods lists pods in the given namespace of each cluster.
 	ListPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Pod], error)
+
+	// QueryPods answers one page of the merged pod list, with every
+	// cluster's own verdict. See domain.FleetPodPage.
+	QueryPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName, query domain.PodQuery) (domain.FleetPodPage, error)
+
+	// MatchingPods is every pod of the merged list a query keeps, page
+	// ignored — for the CSV export.
+	MatchingPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName, query domain.PodQuery) ([]domain.Pod, error)
 
 	// ListWorkloads lists every controller kind in domain.FleetWorkloadKinds
 	// in the given namespace of each cluster. A cluster that refuses some

@@ -23,6 +23,21 @@ export function ApplicationGraph(clusterID: string, $namespace: string, instance
 }
 
 /**
+ * ExportPodsCSV writes every pod the query matches — every page, in the
+ * table's order — as CSV to wherever the operator chooses, and returns the
+ * path, or "" when they cancelled the dialog.
+ * 
+ * RENDERED AND WRITTEN HERE because the rows are: the webview holds one page
+ * now, and shipping the whole list across the bridge to turn it into a file
+ * would be the payload paging exists to avoid. The cells are the table's
+ * own text (see podCSVCell) and the file is web/src/lib/csv.ts's format,
+ * formula guard included. columns are the visible columns, in order.
+ */
+export function ExportPodsCSV(clusterID: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null, query: $models.PodQuery, columns: $models.CSVColumn[] | null, suggestedName: string): $CancellablePromise<string> {
+    return $Call.ByID(2660454060, clusterID, $namespace, annotationKeys, expressions, query, columns, suggestedName);
+}
+
+/**
  * ListApplicationPods returns the pods of one application, by the same rule
  * its map draws them with.
  */
@@ -40,6 +55,14 @@ export function ListApplicationPods(clusterID: string, $namespace: string, insta
  */
 export function ListApplications(clusterID: string, $namespace: string): $CancellablePromise<$models.ApplicationInventory> {
     return $Call.ByID(3578460441, clusterID, $namespace);
+}
+
+/**
+ * ListPodKeys names every pod the query matches, across every page — what
+ * "select all matching" ticks. The page in the query is ignored.
+ */
+export function ListPodKeys(clusterID: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null, query: $models.PodQuery): $CancellablePromise<$models.PodKey[] | null> {
+    return $Call.ByID(730312501, clusterID, $namespace, annotationKeys, expressions, query);
 }
 
 /**
@@ -88,6 +111,19 @@ export function ListWorkloads(clusterID: string, kind: string, $namespace: strin
  */
 export function PodGraph(clusterID: string, $namespace: string, podName: string): $CancellablePromise<$models.PodGraph> {
     return $Call.ByID(777816347, clusterID, $namespace, podName);
+}
+
+/**
+ * QueryPods returns one page of the pod table — what its search box, status
+ * chips, sort and pager say — and the counts around it, rather than the whole
+ * list. See domain.QueryPods, and CLAUDE.md, "The pod table is paged in Go".
+ * 
+ * annotationKeys and expressions are the list's projection, exactly as
+ * ListPods takes them; query.Columns are the same custom columns as specs,
+ * for what they add to the searchable text.
+ */
+export function QueryPods(clusterID: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null, query: $models.PodQuery): $CancellablePromise<$models.PodPage> {
+    return $Call.ByID(3494078594, clusterID, $namespace, annotationKeys, expressions, query);
 }
 
 /**
