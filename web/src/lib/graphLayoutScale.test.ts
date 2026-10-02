@@ -2,7 +2,7 @@
  * layoutCompound at the size the topology is built for: 5,000 boxes and 8,000
  * lines, grouped by namespace. CORRECTNESS ONLY — every box placed, every
  * frame drawn. How long it takes is a property of the machine, so the
- * three-second budget lives in graphLayout.bench.ts (`npm run bench:layout`),
+ * three-second budget lives in graphLayout.bench.test.ts (`npm run bench:layout`),
  * which `npm test` does not run: a wall-clock assertion flakes on a loaded or
  * slower runner without anything being wrong.
  */

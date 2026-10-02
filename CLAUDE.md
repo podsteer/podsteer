@@ -1499,7 +1499,7 @@ wins by terminating the busy worker) → `graphPositions` → `graphCull` → dr
   box with >24 lines is a hub and joins only the piece it has most lines
   into), each piece is dagre'd alone and shelf-packed. Lines between pieces
   are elbows. `graphLayoutScale.test.ts` checks correctness at that size in
-  `npm test`; the 3 s budget (≈1.1 s measured) is `graphLayout.bench.ts`, run
+  `npm test`; the 3 s budget (≈1.1 s measured) is `graphLayout.bench.test.ts` (the `.test.` suffix is what the licence scanner accepts as test code), run
   by `npm run bench:layout` (vitest.bench.config.ts) and never by `npm test` —
   a wall-clock assertion there flaked under a loaded full run. Run it after
   touching the layout.

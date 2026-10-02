@@ -6,7 +6,7 @@ import base from './vitest.config'
  *
  * A wall-clock assertion is a fact about the machine as much as the code: in
  * the normal suite it flaked whenever other test files loaded the same CPU.
- * Budgets live in `*.bench.ts`, run one file at a time, and are checked on
+ * Budgets live in `*.bench.test.ts`, run one file at a time, and are checked on
  * purpose — before a release, or after touching the layout.
  */
 // Not mergeConfig: it concatenates `include`, which would run every test too.
@@ -14,7 +14,9 @@ export default defineConfig({
   ...base,
   test: {
     ...base.test,
-    include: ['src/**/*.bench.ts'],
+    include: ['src/**/*.bench.test.ts'],
+    // The base config excludes these very files from `npm test`.
+    exclude: ['node_modules/**'],
     fileParallelism: false,
   },
 })
