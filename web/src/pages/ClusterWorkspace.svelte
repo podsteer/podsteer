@@ -333,7 +333,7 @@ import TimelineView from './TimelineView.svelte'
       if (!escapeUnclaimed() || session.selection.count === 0) return
       const target = event.target as HTMLElement | null
       if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
-      session.selection.clear()
+      session.clearSelection()
       return
     }
 

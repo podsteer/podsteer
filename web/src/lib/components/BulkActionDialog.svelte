@@ -223,7 +223,7 @@
       results = outcome
       // Cleared only when nothing failed: a failed row stays ticked so the
       // operator can read why and try exactly that row again.
-      if (outcome.every((result) => result.done || result.skipped)) session.selection.clear()
+      if (outcome.every((result) => result.done || result.skipped)) session.clearSelection()
       await session.refresh()
     } catch (error) {
       runError = toApiError(error).message

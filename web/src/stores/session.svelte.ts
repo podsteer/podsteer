@@ -693,11 +693,24 @@ export class ClusterSession {
   podPage = $state.raw<PodPageCounts>(EMPTY_POD_PAGE)
 
   /**
-   * The bulk-planning facts of every pod a page or "select all matching" has
-   * shown — keyed like the selection — so a tick made on page 1 can still be
-   * planned while page 3 is on screen. See bulkItems.
+   * The bulk-planning facts of the TICKED pods — keyed like the selection —
+   * so a tick made on page 1 can still be planned while page 3 is on screen.
+   * See bulkItems.
+   *
+   * ONLY TICKED KEYS, AND ONLY UNTIL UNTICKED. Filed from the page as it is
+   * replaced and from "select all matching", pruned to the selection every
+   * time it is touched, and cleared wherever the selection is: a fact kept
+   * past its tick is a controller that may since have changed, served to a
+   * plan nobody asked to make about that pod.
    */
   #podFacts = new Map<string, PodFacts>()
+
+  /**
+   * What "select all matching" last ticked, and for which query — so the
+   * banner can say "all N matching are selected" only while that is true of
+   * the query on screen. See allMatchingSelected.
+   */
+  #allMatching = $state.raw<{ query: string; keys: readonly string[] } | null>(null)
 
   /**
    * The pod open in the drawer, as the last page query read it from the
@@ -1690,8 +1703,10 @@ export class ClusterSession {
         // pod ticked on another page — or by "select all matching" — is
         // planned from what was true of it when it was last shown. A pod
         // deleted since is caught by the plan's own read, not here.
+        // The page's own row first — it is this tick's — then the facts.
         return [...keys].flatMap((key) => {
-          const facts = this.#podFacts.get(key)
+          const facts =
+            this.pods.find((pod) => rowKey(pod.namespace, pod.name) === key) ?? this.#podFacts.get(key)
           return facts ? [podItem(kind, facts)] : []
         })
       case 'workloads':
@@ -1774,7 +1789,7 @@ export class ClusterSession {
     this.selectedKindId = kindId
     this.page = 1
     this.closeDetail()
-    this.selection.clear()
+    this.clearSelection()
     await this.refresh()
   }
 
@@ -1845,7 +1860,7 @@ export class ClusterSession {
       }
       this.page = 1
       this.closeDetail()
-      this.selection.clear()
+      this.clearSelection()
       await this.refresh()
     }
 
@@ -1895,7 +1910,7 @@ export class ClusterSession {
     // navigated away from, and leaving it there over a list of something else
     // is a panel describing an object nothing on screen refers to.
     this.closeDetail()
-    if (changed) this.selection.clear()
+    if (changed) this.clearSelection()
 
     if (changed) await this.refresh()
   }
@@ -1915,7 +1930,7 @@ export class ClusterSession {
     this.namespace = namespace
     preferences.setClusterNamespace(this.cluster.id, namespace)
     this.page = 1
-    this.selection.clear()
+    this.clearSelection()
     await this.refresh()
   }
 
@@ -1962,7 +1977,7 @@ export class ClusterSession {
     this.setSearch(view.search)
     this.page = 1
     this.closeDetail()
-    if (changed) this.selection.clear()
+    if (changed) this.clearSelection()
 
     if (changed) await this.refresh()
   }
@@ -2265,16 +2280,52 @@ export class ClusterSession {
     }
   }
 
-  /** Files the bulk-planning facts of pods the table has shown. */
+  /**
+   * Files the bulk-planning facts of those of these pods that are ticked,
+   * and forgets every fact whose pod no longer is — see #podFacts.
+   */
   #notePodFacts(pods: readonly { namespace: string; name: string; controlledBy: string }[]): void {
+    const ticked = this.selection.keys
     for (const pod of pods) {
-      this.#podFacts.set(rowKey(pod.namespace, pod.name), {
-        namespace: pod.namespace,
-        name: pod.name,
-        controlledBy: pod.controlledBy,
-      })
+      const key = rowKey(pod.namespace, pod.name)
+      if (!ticked.has(key)) continue
+      this.#podFacts.set(key, { namespace: pod.namespace, name: pod.name, controlledBy: pod.controlledBy })
+    }
+    for (const key of this.#podFacts.keys()) {
+      if (!ticked.has(key)) this.#podFacts.delete(key)
     }
   }
+
+  /** Drops every tick, and what the ticks were planned from. Every control
+      that clears the selection should come through here rather than
+      selection.clear(), or the facts outlive the ticks until the next tick
+      prunes them. */
+  clearSelection = (): void => {
+    this.selection.clear()
+    this.#podFacts.clear()
+    this.#allMatching = null
+  }
+
+  /**
+   * The pod query as "which pods match", page aside — what a "select all
+   * matching" is valid for.
+   */
+  readonly #matchingQuery = $derived(
+    JSON.stringify({ ...this.podQuery, offset: undefined, limit: undefined, pinned: undefined }),
+  )
+
+  /**
+   * Whether every pod the query on screen matches is ticked — by "select all
+   * matching" for THIS query, and none of them unticked since. Not a count
+   * comparison: N ticks on page 1 and N matches elsewhere are not the same
+   * N pods.
+   */
+  readonly allMatchingSelected = $derived.by(() => {
+    const all = this.#allMatching
+    if (!all || all.query !== this.#matchingQuery || all.keys.length === 0) return false
+    const ticked = this.selection.keys
+    return all.keys.every((key) => ticked.has(key))
+  })
 
   /**
    * Ticks every pod the search and chips match, on every page — "select all
@@ -2286,16 +2337,25 @@ export class ClusterSession {
    */
   selectAllMatchingPods = async (): Promise<void> => {
     if (this.viewMode !== 'pods') return
+    // GUARDED LIKE A PAGE QUERY: keys that arrive after the search, a chip,
+    // the namespace or the view changed are the answer to a question nobody
+    // is asking any more, and ticking them would select pods the table does
+    // not show.
+    const asked = this.#matchingQuery
+    const namespace = this.namespace
     try {
       const keys = await listPodKeys(
         this.cluster.id,
-        this.namespace,
+        namespace,
         this.annotationKeys,
         this.columnExpressions,
         this.podQuery,
       )
+      if (this.viewMode !== 'pods' || this.#matchingQuery !== asked || this.namespace !== namespace) return
+      const ticked = keys.map((key) => rowKey(key.namespace, key.name))
+      this.selection.selectAll(ticked)
       this.#notePodFacts(keys)
-      this.selection.selectAll(keys.map((key) => rowKey(key.namespace, key.name)))
+      this.#allMatching = { query: asked, keys: ticked }
     } catch (cause) {
       this.#fail(cause)
     }
@@ -2716,6 +2776,10 @@ export class ClusterSession {
 
   /** Stores a fetch result in the field its view reads. */
   #assign(rows: unknown): void {
+    // The page about to be replaced may hold the only copy of a ticked pod's
+    // facts — ticked a moment ago, never yet planned. File them first.
+    this.#notePodFacts(this.pods)
+
     // Clearing the others matters: a stale pod list left behind would flash
     // back into view for a frame when the operator returns to Pods.
     this.pods = []

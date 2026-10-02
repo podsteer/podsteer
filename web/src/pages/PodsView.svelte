@@ -80,13 +80,13 @@
    * the whole page is ticked and there is more than the page to tick.
    */
   const offerAllMatching = $derived(
-    session.selection.allVisibleSelected && session.podPage.matched > session.pagedPods.length,
+    !session.allMatchingSelected &&
+      session.selection.allVisibleSelected &&
+      session.podPage.matched > session.pagedPods.length,
   )
 
-  /** Whether every match is already ticked — "select all matching" done. */
-  const allMatchingSelected = $derived(
-    session.selection.count >= session.podPage.matched && session.podPage.matched > session.pagedPods.length,
-  )
+  /** Whether every match is already ticked — see session.allMatchingSelected. */
+  const allMatchingSelected = $derived(session.allMatchingSelected)
 
   const COLUMNS: Column[] = [
     { id: 'select', label: 'Select', width: 40, pinned: true, select: true },
@@ -302,7 +302,7 @@
             <button
               type="button"
               class="text-primary hover:underline"
-              onclick={() => session.selection.clear()}
+              onclick={() => session.clearSelection()}
             >
               Clear selection
             </button>

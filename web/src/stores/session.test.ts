@@ -276,9 +276,50 @@ describe('the pod table, paged in Go', () => {
 
     expect(listPodKeys).toHaveBeenCalledWith('dev', open.namespace, [], [], open.podQuery)
     expect(open.selection.count).toBe(3)
-    // Planned from what the keys said, not from rows the webview never held.
+    // Off-page pods are planned from what the keys said; the one on the page
+    // from its row, which is this tick's.
     const planned = open.bulkItems.map((item) => `${item.namespace}/${item.name}:${item.controllerName}`)
-    expect(planned.sort()).toEqual(['prod/web-1:web-rs', 'prod/web-2:web-rs', 'staging/web-9:'])
+    expect(planned.sort()).toEqual(['prod/web-1:web-1-rs', 'prod/web-2:web-rs', 'staging/web-9:'])
+    expect(open.allMatchingSelected).toBe(true)
+
+    // One untick, and "all matching" is no longer true.
+    open.selection.toggle('prod/web-2')
+    expect(open.allMatchingSelected).toBe(false)
+  })
+
+  it('drops keys that answer a query no longer on screen', async () => {
+    let settle: (keys: unknown) => void = () => {}
+    listPodKeys.mockReturnValue(new Promise((resolve) => (settle = resolve)))
+
+    const pending = open.selectAllMatchingPods()
+    open.togglePodStatusFilter('failing')
+    settle([{ namespace: 'prod', name: 'web-1', uid: '1', controlledBy: '', cluster: 'dev' }])
+    await pending
+
+    expect(open.selection.count).toBe(0)
+    expect(open.allMatchingSelected).toBe(false)
+  })
+
+  it('forgets an unticked pod’s facts, and every fact when the selection is cleared', async () => {
+    queryPods.mockResolvedValue(page(['web-1']))
+    await open.refresh()
+    listPodKeys.mockResolvedValue([
+      { namespace: 'staging', name: 'web-9', uid: '9', controlledBy: 'ReplicaSet/old', cluster: 'dev' },
+    ])
+    await open.selectAllMatchingPods()
+    expect(open.bulkItems.map((item) => item.controllerName)).toEqual(['old'])
+
+    // Unticked, then the tick prunes; ticked again by hand, the stale
+    // controller is not served — there is nothing to plan it from.
+    open.selection.toggle('staging/web-9')
+    await open.refresh()
+    open.selection.toggle('staging/web-9')
+    expect(open.bulkItems).toEqual([])
+
+    await open.selectAllMatchingPods()
+    open.clearSelection()
+    expect(open.selection.count).toBe(0)
+    expect(open.bulkItems).toEqual([])
   })
 
   it('keeps the open drawer’s pod live when it is not on the page', async () => {
