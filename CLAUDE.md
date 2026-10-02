@@ -1543,10 +1543,12 @@ wins by terminating the busy worker) → `graphPositions` → `graphCull` → dr
   `session.topologyHiddenApps`); kind counts stay complete and the footer and
   Help say how many objects are hidden.
 - **Lines move like the dependency map's** (`.flow`, dashes source → target);
-  traffic lines move faster the busier they are. Never under
-  prefers-reduced-motion (checked in JS, and a CSS guard), never above 200
-  drawn lines (dependency plus traffic) — animating every dash costs more
-  frames than it is worth.
+  traffic lines move faster the busier they are, and the hot path stays a
+  solid line with a lighter dash travelling inside it. Never under
+  prefers-reduced-motion (checked in JS, and a CSS guard), and never when the
+  LAID-OUT drawing has more than 200 lines — every dependency line in the
+  layout plus every traffic line, not just those on screen, so panning or
+  zooming never switches the motion on and off.
 - **Search is the shared `ToolbarSearch`**: `kind:` and `ns:` are typed
   text, Enter / Shift+Enter step through matches, and nothing suggests.
 

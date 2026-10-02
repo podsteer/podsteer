@@ -63,6 +63,8 @@
   import type { DecorationTone, EdgeDecoration, TopologyDecorator } from '$lib/topology/decorations'
   import PaneToolbar from '$lib/components/PaneToolbar.svelte'
   import ToolbarButton from '$lib/components/ToolbarButton.svelte'
+  import ToolbarToggle from '$lib/components/ToolbarToggle.svelte'
+  import { dismissable } from '$lib/popover'
   import Select from '$lib/components/Select.svelte'
   import ToolbarSearch from '$lib/components/ToolbarSearch.svelte'
   import HelpButton from '$lib/components/HelpButton.svelte'
@@ -257,7 +259,9 @@
   )
   const appCount = $derived(groupChoice === 'app' ? (groupedAll?.groups.length ?? 0) : 0)
   const appsLabel = $derived(
-    hiddenApps.size === 0 ? 'All applications' : `${appCount - (grouped?.hidden.length ?? 0)} of ${appCount} applications`,
+    (grouped?.hidden.length ?? 0) === 0
+      ? 'All applications'
+      : `${appCount - (grouped?.hidden.length ?? 0)} of ${appCount} applications`,
   )
 
   function toggleApp(id: string): void {
@@ -759,7 +763,24 @@
     trafficOn = !trafficOn
     // Its controls open with it: the source and window are the next question.
     trafficOptionsOpen = trafficOn
+    // Off says nothing: the panel that would report it is gone with it.
+    if (!trafficOn) trafficSaid = { problem: false, sections: [] }
   }
+
+  // The popovers: focus in on open, Escape and a press outside close, focus
+  // back to the trigger.
+  let trafficTrigger = $state<HTMLElement | null>(null)
+  let trafficPopover = $state<HTMLElement | null>(null)
+  $effect(() => {
+    if (!trafficOptionsOpen || !trafficPopover) return
+    return dismissable(trafficPopover, trafficTrigger, () => (trafficOptionsOpen = false))
+  })
+  let appsTrigger = $state<HTMLElement | null>(null)
+  let appsPopover = $state<HTMLElement | null>(null)
+  $effect(() => {
+    if (!appsOpen || !appsPopover) return
+    return dismissable(appsPopover, appsTrigger, () => (appsOpen = false))
+  })
   const trafficShown = $derived(traffic ?? panelLayer)
 
   /**
@@ -826,14 +847,16 @@
       )
     }
     if (body.length > 0) out.push({ heading: 'This drawing', body })
-    const traffic = [...trafficSaid.sections]
-    if (trafficOverlay && (trafficOverlay.skipped.filtered > 0 || trafficOverlay.skipped.offMap > 0)) {
+    const traffic = trafficOn ? [...trafficSaid.sections] : []
+    if (trafficOn && trafficOverlay && (trafficOverlay.skipped.filtered > 0 || trafficOverlay.skipped.offMap > 0)) {
       const notes: string[] = []
       if (trafficOverlay.skipped.filtered > 0) {
         notes.push(`${trafficOverlay.skipped.filtered} traffic line${trafficOverlay.skipped.filtered === 1 ? ' is' : 's are'} hidden by the filters.`)
       }
       if (trafficOverlay.skipped.offMap > 0) {
-        notes.push(`${trafficOverlay.skipped.offMap} not drawn: their ends are of a kind switched off.`)
+        notes.push(
+          `${trafficOverlay.skipped.offMap} not drawn: their ends are of a kind switched off or an application hidden.`,
+        )
       }
       if (traffic.length > 0) traffic[0] = { ...traffic[0], body: [...traffic[0].body, ...notes] }
       else traffic.push({ heading: 'Observed traffic now', body: notes })
@@ -1043,6 +1066,7 @@
            counts stay complete and Help says what is hidden. -->
       <div class="relative">
         <button
+          bind:this={appsTrigger}
           type="button"
           onclick={() => {
             appsOpen = !appsOpen
@@ -1059,22 +1083,17 @@
         </button>
         {#if appsOpen}
           <div
+            bind:this={appsPopover}
             role="dialog"
             aria-label="Applications drawn"
             tabindex="-1"
-            onkeydown={(event) => {
-              if (event.key === 'Escape') {
-                event.stopPropagation()
-                appsOpen = false
-              }
-            }}
             class="absolute left-0 top-9 z-30 flex max-h-96 w-72 flex-col gap-2 rounded-md border
                    border-outline-variant bg-surface-container p-3 shadow-lg"
           >
             <label class="flex items-center gap-2 text-body-medium text-on-surface">
               <input
                 type="checkbox"
-                checked={hiddenApps.size === 0}
+                checked={(grouped?.hidden.length ?? 0) === 0}
                 onchange={(event) => showAllApps(event.currentTarget.checked)}
               />
               All applications
@@ -1159,36 +1178,40 @@
         {#if trafficControls}
           {@render trafficControls()}
         {:else}
-          <ToolbarButton
+          <ToolbarToggle
             icon={Activity}
             label="Observed traffic"
-            title={trafficOn ? 'Hide observed traffic' : 'Show observed traffic, from the cluster’s own monitoring backend'}
+            title={trafficOn ? 'Observed traffic is shown' : 'Show observed traffic, from the cluster’s own monitoring backend'}
             pressed={trafficOn}
             onclick={toggleTraffic}
           />
           {#if trafficOn}
-            <ToolbarButton
-              icon={SlidersHorizontal}
-              label="Traffic options"
+            <!-- Opens a popover, so it says so: expanded, not pressed. -->
+            <button
+              bind:this={trafficTrigger}
+              type="button"
+              aria-label="Traffic options"
+              aria-haspopup="dialog"
+              aria-expanded={trafficOptionsOpen}
               title="Source, window and filters"
-              pressed={trafficOptionsOpen}
               onclick={() => (trafficOptionsOpen = !trafficOptionsOpen)}
-            />
+              class="state-layer grid size-7 shrink-0 place-items-center rounded-full transition-colors duration-100
+                     {trafficOptionsOpen
+                ? 'bg-surface-container-high text-on-surface'
+                : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+            >
+              <SlidersHorizontal class="size-4" strokeWidth={1.8} />
+            </button>
           {/if}
           <!-- Mounted while the layer is on, shown only while the popover is
                open: closing the popover must not forget the layer. -->
           {#if trafficOn}
             <div
+              bind:this={trafficPopover}
               role="dialog"
               aria-label="Observed traffic options"
               tabindex="-1"
               hidden={!trafficOptionsOpen}
-              onkeydown={(event) => {
-                if (event.key === 'Escape') {
-                  event.stopPropagation()
-                  trafficOptionsOpen = false
-                }
-              }}
               class="absolute right-0 top-9 z-30 w-[26rem] max-w-[90vw] rounded-md border border-outline-variant
                      bg-surface-container p-3 shadow-lg"
               data-traffic-popover
@@ -1480,19 +1503,48 @@
                    coloured by error rate so they are never read as the
                    relationships underneath them. -->
               {#each trafficOverlay.edges as line (line.id)}
-                <path
-                  data-traffic-edge
-                  d={line.path}
-                  fill="none"
-                  stroke-linecap="round"
-                  stroke-dasharray={animate ? undefined : line.hot ? undefined : '1 5'}
-                  stroke-width={line.width}
-                  class={animate ? 'traffic-flow' : ''}
-                  style="stroke: {line.colour}; {animate ? `animation-duration: ${trafficSeconds(line.width)}s` : ''}"
-                  opacity={line.hot ? 1 : 0.8}
-                >
-                  <title>{line.tooltip}</title>
-                </path>
+                {#if line.hot}
+                  <!-- THE HOT PATH STAYS SOLID: a full-strength line, and
+                       when lines move, a lighter dash travelling inside it —
+                       so it reads as busiest whether or not anything moves. -->
+                  <path
+                    data-traffic-edge
+                    data-hot
+                    d={line.path}
+                    fill="none"
+                    stroke-linecap="round"
+                    stroke-width={line.width + 1}
+                    style="stroke: {line.colour}"
+                  >
+                    <title>{line.tooltip}</title>
+                  </path>
+                  {#if animate}
+                    <path
+                      d={line.path}
+                      fill="none"
+                      stroke-linecap="round"
+                      stroke-width={Math.max(1, (line.width + 1) * 0.4)}
+                      class="traffic-flow stroke-surface"
+                      opacity="0.7"
+                      style="animation-duration: {trafficSeconds(line.width)}s"
+                      aria-hidden="true"
+                    />
+                  {/if}
+                {:else}
+                  <path
+                    data-traffic-edge
+                    d={line.path}
+                    fill="none"
+                    stroke-linecap="round"
+                    stroke-dasharray={animate ? undefined : '1 5'}
+                    stroke-width={line.width}
+                    class={animate ? 'traffic-flow' : ''}
+                    style="stroke: {line.colour}; {animate ? `animation-duration: ${trafficSeconds(line.width)}s` : ''}"
+                    opacity="0.8"
+                  >
+                    <title>{line.tooltip}</title>
+                  </path>
+                {/if}
               {/each}
               {#each trafficOverlay.nodes as other (other.id)}
                 <!-- Ends of traffic that are not boxes of the topology: a host

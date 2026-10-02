@@ -337,3 +337,55 @@ describe('TopologyView, as the toolbar now has it', () => {
   })
 })
 
+describe('TopologyView popovers and Help, reviewed', () => {
+  it('forgets the traffic explanation once the layer is turned off', async () => {
+    render(TopologyView, { session: session() })
+    await drawn()
+    const toggle = screen.getByRole('button', { name: 'Observed traffic' })
+    await fireEvent.click(toggle)
+    // No traffic backend in a unit test: the layer reports a problem.
+    await vi.waitFor(() =>
+      expect((help.provided.topology ?? []).map((s) => s.heading)).toContain('Observed traffic now'),
+    )
+    await fireEvent.click(toggle)
+    await vi.waitFor(() =>
+      expect((help.provided.topology ?? []).map((s) => s.heading)).not.toContain('Observed traffic now'),
+    )
+  })
+
+  it('counts hidden applications from the drawing, not from remembered ids', async () => {
+    const s = session({ topologyHiddenApps: new Set(['group/app:elsewhere/gone']) })
+    render(TopologyView, { session: s })
+    await drawn()
+    const trigger = document.querySelector('[data-select-trigger]') as HTMLElement
+    await fireEvent.click(trigger)
+    await fireEvent.click(screen.getByRole('option', { name: /Group by application/ }))
+    const apps = screen.getByRole('button', { name: /All applications/ })
+    await fireEvent.click(apps)
+    const all = screen.getByRole('dialog', { name: 'Applications drawn' }).querySelector('input') as HTMLInputElement
+    expect(all.checked).toBe(true)
+  })
+
+  it('opens the traffic options as a dialog: focus in, Escape out, focus back', async () => {
+    render(TopologyView, { session: session() })
+    await drawn()
+    await fireEvent.click(screen.getByRole('button', { name: 'Observed traffic' }))
+    const options = screen.getByRole('button', { name: 'Traffic options' })
+    expect(options.getAttribute('aria-haspopup')).toBe('dialog')
+    expect(options.getAttribute('aria-expanded')).toBe('true')
+    const popover = document.querySelector('[data-traffic-popover]') as HTMLElement
+    await vi.waitFor(() => expect(popover.contains(document.activeElement)).toBe(true))
+
+    await fireEvent.keyDown(popover, { key: 'Escape' })
+    expect(popover.hidden).toBe(true)
+    expect(options.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(options)
+
+    // A press outside closes it too.
+    await fireEvent.click(options)
+    expect(popover.hidden).toBe(false)
+    await fireEvent.pointerDown(document.body)
+    expect(popover.hidden).toBe(true)
+  })
+})
+
