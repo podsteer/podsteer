@@ -3148,6 +3148,13 @@ export class ClusterSession {
   #refreshSelection(): void {
     if (!this.selectedName) return
 
+    // A drawer over the topology has no list behind it to be refreshed from;
+    // it reads its own row instead.
+    if (this.detailKindId && this.viewMode === 'topology') {
+      void this.#refreshDetailOver()
+      return
+    }
+
     // An open application, refreshed from the list behind it and appended to
     // its chart. Without this the panel showed whatever had been recorded
     // when it opened and never moved again — the series is written by the
@@ -3343,7 +3350,7 @@ export class ClusterSession {
     // A pod's history is ALSO kept in Go, from every pod list read — the
     // whole namespace, where the webview now holds a page — so a pod that
     // was never on a page still opens with its last half hour.
-    if (this.viewMode === 'pods') void this.#seedPodUsage(namespace, name)
+    if (this.viewMode === 'pods' || this.drawerKindId === RICH_KIND_IDS.pods) void this.#seedPodUsage(namespace, name)
     // Every open starts hidden. A reveal is a decision about one object, and
     // carrying it to the next one is how Freelens ends up showing a value
     // somebody unmasked in private on the pod they open in a meeting.
@@ -3359,7 +3366,77 @@ export class ClusterSession {
    */
   openDetailOver = async (kindId: string, name: string, namespace: string): Promise<void> => {
     this.detailKindId = kindId === this.selectedKindId ? '' : kindId
-    await this.openDetail(name, namespace)
+    // THE ROW, NOT ONLY THE MANIFEST. A pod's containers, a workload's
+    // replica figures — and with them Logs, Terminal, Scale and Restart — are
+    // read from the row object, which no list behind the topology holds. So
+    // the one row is read here, the way the pods page reads its pinned pod.
+    const row = await this.#readDetailRow(kindId, name, namespace)
+    await this.openDetail(name, namespace, row?.pod ?? undefined, row?.workload ?? undefined)
+    if (row === null) this.selectedGone = true
+  }
+
+  /**
+   * The single row a drawer over the topology reads its live sections from:
+   * the pod through the pod query's pinned slot (one pod, whatever the page),
+   * a workload from its kind's list. `null` when the object is not there any
+   * more; `undefined` when the read failed or the kind has no row — neither of
+   * which says the object is gone.
+   */
+  async #readDetailRow(
+    kindId: string,
+    name: string,
+    namespace: string,
+  ): Promise<{ pod?: Pod; workload?: Workload } | null | undefined> {
+    try {
+      if (kindId === RICH_KIND_IDS.pods) {
+        const page = await queryPods(this.cluster.id, namespace, [], [], {
+          pinned: { namespace, name },
+          text: '',
+          chips: [],
+          sortColumn: '',
+          descending: false,
+          columns: [],
+          clusters: [],
+          offset: 0,
+          limit: 1,
+        })
+        const pod =
+          page.pinned ?? (page.rows ?? []).find((row) => row.name === name && row.namespace === namespace) ?? null
+        return pod ? { pod } : null
+      }
+      const kind = WORKLOAD_KIND_BY_ID[kindId]
+      if (kind) {
+        const rows = await listWorkloads(this.cluster.id, kind, namespace)
+        const workload = rows.find((row) => row.name === name && row.namespace === namespace) ?? null
+        return workload ? { workload } : null
+      }
+    } catch {
+      // A failed read is not a deleted object: the drawer keeps what it has.
+    }
+    return undefined
+  }
+
+  /** Keeps a drawer over the topology current: its row, re-read on the tick. */
+  async #refreshDetailOver(): Promise<void> {
+    const kindId = this.detailKindId
+    const name = this.selectedName
+    const namespace = this.selectedNamespace
+    if (!name) return
+    const row = await this.#readDetailRow(kindId, name, namespace)
+    // Moved on while it was read: the answer is for another object.
+    if (this.detailKindId !== kindId || this.selectedName !== name || this.selectedNamespace !== namespace) return
+    if (row === undefined) return
+    if (row === null) {
+      // Kept on screen as last seen, as the pods page does.
+      this.selectedGone = true
+      return
+    }
+    this.selectedGone = false
+    if (row.pod) {
+      this.selectedPod = row.pod
+      this.#recordUsage(row.pod)
+    }
+    if (row.workload) this.selectedWorkload = row.workload
   }
 
   /**

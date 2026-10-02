@@ -574,8 +574,16 @@
     session.drawerKindId === 'apps/v1/replicasets'
   )
 
+  // The list's row first; else the row the session read for this object
+  // itself — a pod pinned beside the page, or one opened over the topology,
+  // where no list of its kind is behind the drawer.
   const selectedPod = $derived(
-    isPod ? session.pods.find(p => p.name === session.selectedName && p.namespace === session.selectedNamespace) : null
+    isPod
+      ? (session.pods.find(p => p.name === session.selectedName && p.namespace === session.selectedNamespace) ??
+        (session.selectedPod?.name === session.selectedName && session.selectedPod?.namespace === session.selectedNamespace
+          ? session.selectedPod
+          : null))
+      : null
   )
 
   const containerNames = $derived(
@@ -586,7 +594,12 @@
   // too, and ResourceOverview already excludes those two kinds from what it
   // does with this prop, so widening it here is safe.
   const selectedWorkload = $derived(
-    isWorkloadKind ? session.workloads.find(w => w.name === session.selectedName && w.namespace === session.selectedNamespace) : null
+    isWorkloadKind
+      ? (session.workloads.find(w => w.name === session.selectedName && w.namespace === session.selectedNamespace) ??
+        (session.selectedWorkload?.name === session.selectedName && session.selectedWorkload?.namespace === session.selectedNamespace
+          ? session.selectedWorkload
+          : null))
+      : null
   )
 
   /**
