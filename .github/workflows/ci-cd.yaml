@@ -278,6 +278,15 @@ jobs:
           - name: linux-amd64
             runner: ubuntu-latest
             artifact: podsteer-linux-amd64
+            arch: amd64
+          # Native arm64 runner (free for public repositories). If this
+          # repository's runner plan does not offer it, delete this entry:
+          # nothing else depends on it, and the release job globs whatever
+          # artefacts exist.
+          - name: linux-arm64
+            runner: ubuntu-24.04-arm
+            artifact: podsteer-linux-arm64
+            arch: arm64
     steps:
       - name: Checkout Code
         uses: actions/checkout@v7
@@ -660,6 +669,68 @@ jobs:
           timestamp-rfc3161: http://timestamp.acs.microsoft.com
           timestamp-digest: SHA256
 
+      # --- Windows installer --------------------------------------------------
+      #
+      # Built AFTER the executable is signed so the installer embeds the signed
+      # binary, then signed itself: SmartScreen assesses the file the user
+      # downloads, not what is inside it. The installer is written to
+      # build/dist, NOT build/bin, so the zip below stays exactly what it was.
+      - name: Build The Windows Installer
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # NSIS is preinstalled on some runner images and not others.
+          if ! command -v makensis >/dev/null 2>&1; then
+            choco install nsis -y --no-progress
+            export PATH="$PATH:/c/Program Files (x86)/NSIS"
+          fi
+          tag="${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}"
+          # VIProductVersion needs a numeric x.y.z; pre-release suffixes and
+          # "dev" collapse to their numeric base (or 0.0.0).
+          ver="${tag#v}"; ver="${ver%%-*}"
+          [[ "$ver" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || ver=0.0.0
+          mkdir -p build/dist
+          makensis -V2 "-DVERSION=$ver" \
+            "-DOUTFILE=$GITHUB_WORKSPACE/build/dist/podsteer-windows-amd64-setup.exe" \
+            build/windows/installer.nsi
+
+      - name: Sign The Windows Installer
+        if: runner.os == 'Windows' && env.AZURE_CLIENT_ID != ''
+        uses: azure/trusted-signing-action@v2
+        with:
+          endpoint: ${{ secrets.PDS__AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.PDS__AZURE_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ secrets.PDS__AZURE_SIGNING_PROFILE }}
+          files-folder: build/dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      # Not silent: a Windows release without signing secrets is a release
+      # SmartScreen will warn about, and that should be visible on the run.
+      - name: Warn That The Windows Assets Are Unsigned
+        if: runner.os == 'Windows' && env.AZURE_CLIENT_ID == ''
+        run: echo "::warning title=Windows assets are UNSIGNED::PDS__AZURE_CLIENT_ID is not configured, so podsteer.exe and the installer were not signed. SmartScreen will warn users on first launch."
+
+      # --- Linux packages -----------------------------------------------------
+      - name: Install Linux Packaging Tools
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          case "${{ matrix.arch }}" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; esac
+          curl -fsSL -o appimagetool \
+            "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-${a}.AppImage"
+          chmod +x appimagetool
+          sudo mv appimagetool /usr/local/bin/appimagetool
+
+      - name: Build The AppImage, .deb And .rpm
+        if: runner.os == 'Linux'
+        run: build/package-linux.sh "${{ matrix.arch }}" "${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}"
+
       # Compress before upload so the macOS .app keeps its bundle structure and
       # its executable bit; actions/upload-artifact would otherwise flatten it
       # into an unopenable directory tree.
@@ -681,6 +752,24 @@ jobs:
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.artifact }}.zip
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload The Linux Packages
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}-packages
+          path: build/dist/*
+          retention-days: 14
+          if-no-files-found: error
+
+      - name: Upload The Windows Installer
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}-installer
+          path: build/dist/podsteer-windows-amd64-setup.exe
           retention-days: 14
           if-no-files-found: error
 
@@ -722,10 +811,15 @@ jobs:
         run: |
           version="${{ github.ref_name }}"
           mv artifacts/podsteer.cdx.json "artifacts/podsteer_${version}_sbom.cdx.json"
-          for f in artifacts/podsteer-*.zip; do
+          # Zips, AppImages, .deb/.rpm packages and the Windows installer all
+          # arrive as podsteer-<platform>[-setup].<ext> and leave as
+          # podsteer_<tag>_<platform>[-setup].<ext>.
+          for f in artifacts/podsteer-*.zip artifacts/podsteer-*.AppImage \
+                   artifacts/podsteer-*.deb artifacts/podsteer-*.rpm \
+                   artifacts/podsteer-*-setup.exe; do
             [ -e "$f" ] || continue
-            platform=$(basename "$f" .zip | sed 's/^podsteer-//')
-            mv "$f" "artifacts/podsteer_${version}_${platform}.zip"
+            rest=$(basename "$f" | sed 's/^podsteer-//')
+            mv "$f" "artifacts/podsteer_${version}_${rest}"
           done
           # THE SAME NAMING AS THE ZIPS, and podsteer.com composes this string
           # itself — see `Release.AssetName` there, and the test named
@@ -747,7 +841,7 @@ jobs:
           # The disk image is checksummed too: it is the asset most people
           # will actually download, and "verify what you downloaded" is not
           # advice that should apply to only some of the downloads.
-          shasum -a 256 *.zip *.dmg > "podsteer_${{ github.ref_name }}_checksums.txt"
+          shasum -a 256 *.zip *.dmg *.AppImage *.deb *.rpm *-setup.exe > "podsteer_${{ github.ref_name }}_checksums.txt"
           cat "podsteer_${{ github.ref_name }}_checksums.txt"
 
       # `gh` rather than a third-party release action: it ships on the runner,
@@ -763,7 +857,7 @@ jobs:
             PRERELEASE=""
           fi
           gh release create "${{ github.ref_name }}" \
-            artifacts/*.zip artifacts/*.dmg artifacts/*.cdx.json artifacts/*checksums.txt \
+            artifacts/*.zip artifacts/*.dmg artifacts/*.AppImage artifacts/*.deb artifacts/*.rpm artifacts/*-setup.exe artifacts/*.cdx.json artifacts/*checksums.txt \
             --title "${{ github.ref_name }}" \
             --generate-notes \
             $PRERELEASE

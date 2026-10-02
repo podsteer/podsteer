@@ -1,0 +1,36 @@
+# nfpm config for the .deb and .rpm. Driven by build/package-linux.sh, which
+# exports VERSION (already made package-manager safe) and ARCH (amd64|arm64).
+name: podsteer
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: none
+section: devel
+priority: optional
+maintainer: PodSteer <https://github.com/podsteer/podsteer>
+description: A fast, native Kubernetes client.
+vendor: PodSteer
+homepage: https://podsteer.com
+license: Apache-2.0
+contents:
+  - src: build/bin/podsteer
+    dst: /usr/bin/podsteer
+    file_info:
+      mode: 0755
+  - src: build/linux/podsteer.desktop
+    dst: /usr/share/applications/podsteer.desktop
+  - src: build/appicon.png
+    dst: /usr/share/icons/hicolor/1024x1024/apps/podsteer.png
+  - src: LICENSE
+    dst: /usr/share/doc/podsteer/copyright
+# The webview is not bundled: the binary links the system GTK3 and WebKitGTK
+# 4.1, exactly as the zip does, so the package declares them instead.
+overrides:
+  deb:
+    depends:
+      - libgtk-3-0
+      - libwebkit2gtk-4.1-0
+  rpm:
+    depends:
+      - gtk3
+      - webkit2gtk4.1

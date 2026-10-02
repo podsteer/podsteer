@@ -1,0 +1,17 @@
+# winget manifest TEMPLATE (installer). Not submitted anywhere; see packaging/README.md.
+# Replace @VERSION@ (no leading v) and @SHA256@ (from the release's checksums.txt, UPPERCASE).
+PackageIdentifier: PodSteer.PodSteer
+PackageVersion: "@VERSION@"
+InstallerType: nullsoft
+Scope: user
+InstallModes:
+  - interactive
+  - silent
+InstallerSwitches:
+  Silent: /S
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/podsteer/podsteer/releases/download/v@VERSION@/podsteer_v@VERSION@_windows-amd64-setup.exe
+    InstallerSha256: "@SHA256@"
+ManifestType: installer
+ManifestVersion: 1.9.0

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=PodSteer
+Comment=A fast, native Kubernetes client.
+Exec=podsteer
+Icon=podsteer
+Terminal=false
+Categories=Development;System;
+Keywords=kubernetes;k8s;kubectl;cluster;
+StartupWMClass=podsteer
