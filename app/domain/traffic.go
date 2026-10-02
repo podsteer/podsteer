@@ -276,6 +276,10 @@ type trafficSpec struct {
 	latencyScale float64
 	// endpoints reads a series' labels.
 	endpoints func(labels map[string]string) (source, dest TrafficEndpoint, protocol string)
+	// exclude, when set, drops a series that is not traffic at all — a
+	// monitoring scrape — before it is read. The expressions already filter
+	// it server-side; this keeps an answer that slipped through honest.
+	exclude func(labels map[string]string) bool
 	// missingLabels is said when every series came back without endpoint
 	// labels.
 	missingLabels string
@@ -324,7 +328,14 @@ var trafficSpecs = map[TrafficSource]trafficSpec{
 		metrics: []trafficMetric{
 			{role: TrafficRoleRate, name: "istio_requests_total"},
 			{role: TrafficRoleErrors, name: "istio_requests_total", matchers: `response_code=~"5.."`},
-			{role: TrafficRoleBytes, name: `{__name__=~"istio_tcp_sent_bytes_total|istio_tcp_received_bytes_total"`},
+			// TWO ROWS, NOT ONE NAME ALTERNATION. rate() drops __name__, so
+			// rate({__name__=~"sent|received"}) holds two series with one
+			// label set and Prometheus refuses it outright — HTTP 422 "vector
+			// cannot contain metrics with the same labelset", seen live on
+			// Istio 1.30. Each name is aggregated on its own and MapTraffic
+			// adds the two.
+			{role: TrafficRoleBytes, name: "istio_tcp_sent_bytes_total"},
+			{role: TrafficRoleBytes, name: "istio_tcp_received_bytes_total"},
 			{role: TrafficRoleConnections, name: "istio_tcp_connections_opened_total"},
 			{role: TrafficRoleP50, name: "istio_request_duration_milliseconds", quantile: 0.5},
 			{role: TrafficRoleP95, name: "istio_request_duration_milliseconds", quantile: 0.95},
@@ -352,10 +363,23 @@ var trafficSpecs = map[TrafficSource]trafficSpec{
 		// branch groups by it. replicaset is NOT a key: it changes across a
 		// rollout while the Deployment does not, and grouping by it would
 		// split one edge's percentile in two.
+		//
+		// MONITORING SCRAPES ARE NOT TRAFFIC. Seen live on edge-26.9.3:
+		// linkerd-viz's own Prometheus is meshed, so every scrape it makes of
+		// a proxy's admin port is an outbound request — an edge from
+		// prometheus to every meshed pod. Those requests are addressed to a
+		// pod IP, not a Service, and Linkerd then writes dst_* but NO
+		// dst_service and NO authority; application traffic addressed to a
+		// Service carries both. So the meshed branch requires dst_service and
+		// the outside-the-mesh branch requires an authority. What that also
+		// leaves out is any other request sent straight to a pod IP, which is
+		// stated in CLAUDE.md. linkerdScrape applies the same rule to a
+		// series that arrives anyway.
 		branches: []trafficBranch{
-			{matchers: `direction="outbound",dst_namespace!=""`},
-			{matchers: `direction="outbound",dst_namespace=""`, extraBy: []string{"authority"}, dstUnknown: true},
+			{matchers: `direction="outbound",dst_namespace!="",dst_service!=""`},
+			{matchers: `direction="outbound",dst_namespace="",authority!=""`, extraBy: []string{"authority"}, dstUnknown: true},
 		},
+		exclude:      linkerdScrape,
 		srcNamespace: "namespace",
 		dstNamespace: "dst_namespace",
 		keyBy: []string{
@@ -392,7 +416,10 @@ var trafficSpecs = map[TrafficSource]trafficSpec{
 		dstNamespace: "k8s_dst_namespace",
 		keyBy:        []string{"k8s_src_owner_name", "k8s_src_namespace", "k8s_dst_owner_name", "k8s_dst_namespace"},
 		metrics: []trafficMetric{
-			{role: TrafficRoleBytes, name: `{__name__=~"beyla_network_flow_bytes_total|obi_network_flow_bytes_total"`},
+			// One row per name, for the reason Istio's bytes are split: an
+			// agent exporting both would otherwise collide after rate().
+			{role: TrafficRoleBytes, name: "beyla_network_flow_bytes_total"},
+			{role: TrafficRoleBytes, name: "obi_network_flow_bytes_total"},
 		},
 		endpoints:     beylaEndpoints,
 		missingLabels: "Beyla's flow series came back without k8s_src_owner_name or k8s_dst_owner_name. Those are default attributes when Kubernetes decoration is on (attributes.kubernetes.enable).",
@@ -505,6 +532,16 @@ func TrafficExpressions(source TrafficSource, namespaces []NamespaceName, window
 		return nil, fmt.Errorf("%w: a %s expression", ErrQueryTooLong, source)
 	}
 	return queries, nil
+}
+
+// MaxTrafficQueries is the most expressions any one source sends, which is
+// how many requests a Traffic call can make once its probes are cached.
+func MaxTrafficQueries() int {
+	most := 0
+	for _, spec := range trafficSpecs {
+		most = max(most, len(spec.metrics))
+	}
+	return most
 }
 
 // namespaceAlternation returns the regex alternation that narrows to
@@ -648,6 +685,9 @@ func MapTraffic(
 			value := series.Points[len(series.Points)-1].Value
 			beyond := math.IsInf(value, 1) && isQuantileRole(role)
 			if math.IsNaN(value) || (math.IsInf(value, 0) && !beyond) {
+				continue
+			}
+			if spec.exclude != nil && spec.exclude(series.Labels) {
 				continue
 			}
 			seriesSeen++
@@ -970,6 +1010,16 @@ func hubbleEndpoints(labels map[string]string) (TrafficEndpoint, TrafficEndpoint
 	// Protocol left empty so flows and HTTP for the same pair land on one
 	// edge; MapTraffic names it from what was measured.
 	return read("source_namespace", "source_workload"), read("destination_namespace", "destination_workload"), ""
+}
+
+// linkerdScrape reports whether a Linkerd outbound series is a request sent
+// to a pod IP rather than to a Service or an authority — which is what a
+// Prometheus scrape of a meshed pod is. See the Linkerd row.
+func linkerdScrape(labels map[string]string) bool {
+	if labels["dst_namespace"] != "" {
+		return labels["dst_service"] == ""
+	}
+	return labels["authority"] == ""
 }
 
 func firstNonEmptyLabel(labels map[string]string, names ...string) string {

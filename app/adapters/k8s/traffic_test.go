@@ -125,3 +125,20 @@ func TestQueryInstantRefusesAnOverLongExpressionBeforeAnyRequest(t *testing.T) {
 }
 
 var _ ports.TrafficQueryPort = (*Adapter)(nil)
+
+// The answer Prometheus 3.10 gave, live, to a rate over a name alternation
+// whose two names share every other label. It must reach the operator as the
+// backend's own words, not as a transport failure or an empty layer.
+func TestTheRealDuplicateLabelsetRejectionIsCarriedVerbatim(t *testing.T) {
+	adapter := trafficTestAdapter(t, "dev", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		_, _ = w.Write([]byte(`{"status":"error","errorType":"execution","error":"vector cannot contain metrics with the same labelset"}`))
+	})
+
+	_, err := adapter.QueryInstant(context.Background(), "dev", trafficBackend(),
+		`sum by (source_workload) (rate({__name__=~"istio_tcp_sent_bytes_total|istio_tcp_received_bytes_total"}[5m]))`, time.Now())
+	if !errors.Is(err, ports.ErrMetricsQueryRejected) || !strings.Contains(err.Error(), "same labelset") {
+		t.Fatalf("error %v, want the backend's rejection verbatim", err)
+	}
+}

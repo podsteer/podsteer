@@ -25,6 +25,11 @@ import (
 //   - caretta.json https://github.com/groundcover-com/caretta (README example)
 //   - hubble.json  https://docs.cilium.io/en/stable/observability/metrics/
 //     (labelsContext labels; an empty destination for the world; a +Inf p99)
+//   - istio-live.json, linkerd-live.json — REAL answers to these expressions
+//     from Istio 1.30.5 (Prometheus 3.10) and Linkerd edge-26.9.3
+//     (linkerd-viz's Prometheus 2.55) on the kind demo, 2026-10-02. The
+//     Linkerd one predates the scrape filter, so it carries linkerd-viz's own
+//     Prometheus scraping every meshed pod.
 //   - linkerd-two-authorities.json — one meshed pair answered twice, as a
 //     grouping by authority returns it
 //   - hubble-nolabels.json — Hubble's default flow metric, no context options
@@ -523,5 +528,102 @@ func TestMapTrafficKeepsEdgesTouchingTheScope(t *testing.T) {
 	layer := domain.MapTraffic(domain.TrafficBeyla, domain.TrafficWindow5m, results, nil, []domain.NamespaceName{"in"})
 	if len(layer.Edges) != 1 || layer.Edges[0].Source.Workload != "a" {
 		t.Errorf("edges: %+v", layer.Edges)
+	}
+}
+
+// rate() DROPS __name__, so a rate over a name alternation is two series with
+// one label set whenever both names exist — and Prometheus refuses the whole
+// expression (HTTP 422, seen live on Istio's sent/received bytes). No
+// expression may rate a name-matched selector.
+func TestNoExpressionRatesANameAlternation(t *testing.T) {
+	for _, source := range domain.TrafficSourceNames() {
+		for _, namespaces := range [][]domain.NamespaceName{nil, {"storefront"}} {
+			queries, err := domain.TrafficExpressions(source, namespaces, domain.TrafficWindow5m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, query := range queries {
+				if strings.Contains(query.Expression, "rate({__name__") || strings.Contains(query.Expression, "__name__=~") {
+					t.Errorf("%s %s rates a name alternation: %s", source, query.Role, query.Expression)
+				}
+			}
+		}
+	}
+}
+
+func TestTheBytesOfBothDirectionsAreAdded(t *testing.T) {
+	labels := map[string]string{
+		"source_workload": "shopper", "source_workload_namespace": "storefront",
+		"destination_workload": "orders-db", "destination_workload_namespace": "storefront",
+		"destination_service_name": "orders-db", "request_protocol": "tcp",
+	}
+	// Two queries of one role, as the sent and received rows produce them.
+	results := map[domain.TrafficRole][]domain.PromSeries{
+		domain.TrafficRoleBytes: {
+			{Labels: labels, Points: []domain.SeriesPoint{{Value: 100}}},
+			{Labels: labels, Points: []domain.SeriesPoint{{Value: 900}}},
+		},
+	}
+	layer := domain.MapTraffic(domain.TrafficIstio, domain.TrafficWindow5m, results, nil, nil)
+	if len(layer.Edges) != 1 || layer.Edges[0].BytesPerSec != 1000 {
+		t.Fatalf("edges %+v", layer.Edges)
+	}
+}
+
+// The real Istio answer: ten edges with traffic, the idle cache-warmer pair
+// (rate 0, NaN percentiles) dropped, and the request the source proxy could
+// not attribute drawn to the host it asked for.
+func TestMapTrafficIstioLive(t *testing.T) {
+	layer := domain.MapTraffic(domain.TrafficIstio, domain.TrafficWindow5m, loadTrafficFixture(t, "istio-live"), nil, nil)
+
+	if layer.Status != domain.BackendAnswered || len(layer.Edges) != 11 {
+		t.Fatalf("%s, %d edges: %+v", layer.Status, len(layer.Edges), layer.Edges)
+	}
+	for _, edge := range layer.Edges {
+		if edge.Source.Workload == "cache-warmer" {
+			t.Errorf("an idle pair with NaN percentiles became an edge: %+v", edge)
+		}
+	}
+	cart := findEdge(t, layer, "storefront/shopper", "storefront/cart")
+	if cart.P50 <= 0 || cart.P95 <= cart.P50 || cart.P99 <= 0 {
+		t.Errorf("shopper->cart percentiles: %+v", cart)
+	}
+	recommendations := findEdge(t, layer, "storefront/shopper", "external:recommendations.storefront.svc.cluster.local")
+	if recommendations.ErrorsPerSec <= 0 {
+		t.Errorf("shopper->recommendations: %+v", recommendations)
+	}
+	findEdge(t, layer, "storefront/shopper", "storefront/orders-db")
+}
+
+// The real Linkerd answer, taken before the scrape filter: linkerd-viz's own
+// Prometheus scraping every meshed pod (dst_* without dst_service), plus an
+// anonymous series with neither. Only the application's request remains.
+func TestMapTrafficLinkerdLiveDropsMonitoringScrapes(t *testing.T) {
+	layer := domain.MapTraffic(domain.TrafficLinkerd, domain.TrafficWindow5m, loadTrafficFixture(t, "linkerd-live"), nil, nil)
+
+	if layer.Status != domain.BackendAnswered || len(layer.Edges) != 1 {
+		t.Fatalf("%s, %d edges: %+v", layer.Status, len(layer.Edges), layer.Edges)
+	}
+	edge := findEdge(t, layer, "warehouse/picker", "warehouse/inventory-api")
+	if edge.Dest.Service != "inventory-api" || edge.RequestsPerSec < 3.9 || edge.P50 <= 0 || edge.P99 < edge.P95 {
+		t.Errorf("picker->inventory-api: %+v", edge)
+	}
+}
+
+func TestLinkerdExpressionsRequireAServiceOrAnAuthority(t *testing.T) {
+	queries, err := domain.TrafficExpressions(domain.TrafficLinkerd, nil, domain.TrafficWindow5m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range queries {
+		for _, operand := range splitTopLevelOr(strings.TrimSuffix(strings.TrimPrefix(query.Expression, "histogram_quantile("), ")")) {
+			meshed := strings.Contains(operand, `dst_namespace!=""`)
+			if meshed && !strings.Contains(operand, `dst_service!=""`) {
+				t.Errorf("%s: a meshed operand admits pod-IP scrapes: %s", query.Role, operand)
+			}
+			if !meshed && strings.Contains(operand, `dst_namespace=""`) && !strings.Contains(operand, `authority!=""`) {
+				t.Errorf("%s: an outside-the-mesh operand admits anonymous requests: %s", query.Role, operand)
+			}
+		}
 	}
 }

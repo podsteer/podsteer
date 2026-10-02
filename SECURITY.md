@@ -392,7 +392,7 @@ only, the same response cap — and these are the differences:
 - **A switch-on is a handful of requests, not one.** Opening the layer asks
   one `count()` per source — five in all — to learn which sources exist (the
   answer is remembered for half an hour per cluster and forgotten on
-  disconnect), then one query per measure of the chosen source: up to seven.
+  disconnect), then one query per measure of the chosen source: up to eight.
   Each lands in the audit log as a `get` on `services/proxy`. None is sent on
   a tick; switching the layer on, choosing a source or a window, or pressing
   refresh is what sends them.

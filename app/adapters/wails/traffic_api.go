@@ -35,17 +35,14 @@ func NewTrafficAPI(traffic ports.TrafficUseCase, app *App, logger *slog.Logger) 
 	return &TrafficAPI{traffic: traffic, app: app, logger: logger.With(slog.String("api", "traffic"))}, nil
 }
 
-// trafficProbeRequests is how many requests Sources may make: one probe per
-// source.
-const trafficProbeRequests = 5
-
-// trafficLayerRequests is the most requests one Traffic call may make: the
-// probes when they are not cached, then one per expression.
-const trafficLayerRequests = trafficProbeRequests + 7
+// trafficLayerRequests is the most requests one Traffic call may make: one
+// probe per source when they are not cached, then one per expression of the
+// largest source.
+var trafficLayerRequests = len(domain.TrafficSourceNames()) + domain.MaxTrafficQueries()
 
 // Sources says which traffic sources the cluster's monitoring backend holds.
 func (t *TrafficAPI) Sources(clusterID string) (TrafficSources, error) {
-	ctx, cancel := t.app.requestContextFor(trafficProbeRequests)
+	ctx, cancel := t.app.requestContextFor(len(domain.TrafficSourceNames()))
 	defer cancel()
 
 	id, err := domain.NewClusterID(clusterID)

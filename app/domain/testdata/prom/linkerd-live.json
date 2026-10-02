@@ -1,0 +1,624 @@
+{
+ "rate": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "web",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0.2"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "tap-injector",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0.2"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-destination",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0.4"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "metrics-api",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0.2"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-proxy-injector",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0.2"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-identity",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0.2"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "tap",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0.2"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "picker",
+      "dst_deployment": "inventory-api",
+      "dst_namespace": "warehouse",
+      "dst_service": "inventory-api",
+      "namespace": "warehouse"
+     },
+     "value": [
+      1790966050.166,
+      "3.9379310344827587"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "label-printer",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0.1"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "picker",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0.1"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "inventory-api",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0.2"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.166,
+      "0"
+     ]
+    }
+   ]
+  }
+ },
+ "errors": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.172,
+      "0"
+     ]
+    }
+   ]
+  }
+ },
+ "p50": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "tap-injector",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "0.7073170731707317"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "picker",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "1.1923076923076923"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "inventory-api",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "0.7435897435897435"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "NaN"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "tap",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "0.7435897435897435"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "picker",
+      "dst_deployment": "inventory-api",
+      "dst_namespace": "warehouse",
+      "dst_service": "inventory-api",
+      "namespace": "warehouse"
+     },
+     "value": [
+      1790966050.176,
+      "0.5391879131255902"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "label-printer",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "0.58"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "web",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "0.7837837837837838"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-destination",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "1"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "metrics-api",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "0.7837837837837838"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-proxy-injector",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "1.0769230769230769"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-identity",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.176,
+      "0.8055555555555555"
+     ]
+    }
+   ]
+  }
+ },
+ "p95": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "tap-injector",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "3.6999999999999993"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-identity",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "4.3666666666666645"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "picker",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "3.8499999999999988"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "inventory-api",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "2.8199999999999985"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "NaN"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "web",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "5.166666666666659"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-destination",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "7.818181818181815"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "metrics-api",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "3.0499999999999976"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-proxy-injector",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "6.83333333333333"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "tap",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "3.3666666666666663"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "picker",
+      "dst_deployment": "inventory-api",
+      "dst_namespace": "warehouse",
+      "dst_service": "inventory-api",
+      "namespace": "warehouse"
+     },
+     "value": [
+      1790966050.187,
+      "1.6641025641025626"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "label-printer",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.187,
+      "1.849999999999999"
+     ]
+    }
+   ]
+  }
+ },
+ "p99": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-identity",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "7.100000000000003"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "label-printer",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "2.709999999999999"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "inventory-api",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "4.709999999999999"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-proxy-injector",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "14.200000000000006"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "tap-injector",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "8.55"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "linkerd-destination",
+      "dst_namespace": "linkerd",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "9.927272727272728"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "metrics-api",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "7.100000000000003"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "tap",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "4.420000000000001"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "picker",
+      "dst_deployment": "inventory-api",
+      "dst_namespace": "warehouse",
+      "dst_service": "inventory-api",
+      "namespace": "warehouse"
+     },
+     "value": [
+      1790966050.198,
+      "4.145000000000016"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "picker",
+      "dst_namespace": "warehouse",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "4.709999999999999"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "NaN"
+     ]
+    },
+    {
+     "metric": {
+      "deployment": "prometheus",
+      "dst_deployment": "web",
+      "dst_namespace": "linkerd-viz",
+      "namespace": "linkerd-viz"
+     },
+     "value": [
+      1790966050.198,
+      "9.033333333333331"
+     ]
+    }
+   ]
+  }
+ }
+}
