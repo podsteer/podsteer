@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in PodSteer does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Do not include secrets, cluster names, hostnames or
+        tokens. For a security problem, follow SECURITY.md instead of filing here.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Open ...\n2. Click ...\n3. See ..."
+    validations:
+      required: true
+  - type: textarea
+    id: debug-info
+    attributes:
+      label: Debug info
+      description: In PodSteer, open the command palette or About and choose "Copy debug info", then paste it here. It holds versions and OS only, no cluster, context or host names.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs
+      description: Anything else that helps. Remove sensitive values first.

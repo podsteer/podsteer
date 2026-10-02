@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/podsteer/podsteer/discussions
+    about: Ask a question or float an idea in Discussions before filing an issue.
+  - name: Report a security vulnerability
+    url: https://github.com/podsteer/podsteer/blob/main/SECURITY.md
+    about: Do not open a public issue for a vulnerability. Follow SECURITY.md to report it privately.

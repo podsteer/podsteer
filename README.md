@@ -53,12 +53,21 @@ file, [`Casks/podsteer.rb`](https://github.com/podsteer/homebrew-tap/blob/HEAD/C
 [the latest release](https://github.com/podsteer/podsteer/releases/latest) and
 unzip it. Linux needs `libgtk-3` and `libwebkit2gtk-4.1`.
 
-The Windows build is **not signed**, so SmartScreen will warn on first launch —
-"Windows protected your PC". That is the absence of a certificate, not a
-verdict about the file. Verify the download against the published
-`checksums.txt` if you want to be sure of what you have; a code-signing
-certificate is a cost decision that has not been taken yet, and this note stays
-here until it is.
+From the next release onwards, each release also carries:
+
+- **Linux (amd64 and arm64)** — an AppImage (`chmod +x` and run), a `.deb`
+  (`sudo apt install ./podsteer_<tag>_linux-amd64.deb`) and an `.rpm`
+  (`sudo dnf install ./podsteer_<tag>_linux-amd64.rpm`). The `.deb` and `.rpm`
+  declare the `libgtk-3` / `libwebkit2gtk-4.1` dependencies for you; the
+  AppImage uses the ones already on your system.
+- **Windows** — a per-user installer, `podsteer_<tag>_windows-amd64-setup.exe`.
+
+The Windows executable and installer are signed through Azure Trusted Signing
+when the release pipeline has that configured, and the pipeline warns loudly
+when it has not. A build published without it is **unsigned**, and SmartScreen
+will warn on first launch — "Windows protected your PC". That is the absence of
+a signature, not a verdict about the file. Verify the download against the
+published `checksums.txt` if you want to be sure of what you have.
 
 Every release publishes SHA-256 checksums and a CycloneDX SBOM alongside the
 binaries.
@@ -71,7 +80,7 @@ binaries.
 
 ## Status
 
-What works today, as of v0.3.0:
+What works today:
 
 - **An assessment, not a list.** Ranked findings — crash loops, OOM kills,
   unschedulable pods, rightsizing, APIs the next Kubernetes version removes —
