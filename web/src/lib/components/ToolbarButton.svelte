@@ -29,9 +29,14 @@
      * that missed.
      */
     active?: boolean
+    /**
+     * A toggle's state, announced as `aria-pressed` and drawn as active. Only
+     * for a button that IS a toggle — a copy that just succeeded is `active`.
+     */
+    pressed?: boolean
   }
 
-  let { icon: Icon, label, title, onclick, disabled = false, active = false }: Props = $props()
+  let { icon: Icon, label, title, onclick, disabled = false, active = false, pressed }: Props = $props()
 </script>
 
 <button
@@ -39,10 +44,11 @@
   {onclick}
   {disabled}
   aria-label={label}
+  aria-pressed={pressed}
   title={title ?? label}
   class="state-layer grid size-7 shrink-0 place-items-center rounded-full
          transition-colors duration-100
-         {active
+         {active || pressed
     ? 'text-gauge-normal-ink'
     : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}
          disabled:pointer-events-none disabled:opacity-30"
