@@ -102,6 +102,18 @@ describe('TopologyView', () => {
     expect(screen.getByRole('button', { name: /^Service\s*1$/ })).toBeTruthy()
   })
 
+  it('draws a bridged line with its "via Pod" label and says it in the title', async () => {
+    render(TopologyView, { session: session() })
+    await drawn()
+    // Hide Pods: the Service's selection is re-pointed to the Deployment.
+    await fireEvent.click(screen.getByRole('button', { name: /^Pod\s*12$/ }))
+    await vi.waitFor(() =>
+      expect([...document.querySelectorAll('[data-edge-label]')].map((t) => t.textContent?.trim())).toContain('via Pod'),
+    )
+    const titles = [...document.querySelectorAll('[data-edge] title')].map((t) => t.textContent ?? '')
+    expect(titles).toContain('Service web selects Deployment web (via Pod)')
+  })
+
   it('says Changed instead of redrawing, and reads again only when asked', async () => {
     render(TopologyView, { session: session() })
     await drawn()

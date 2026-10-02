@@ -455,6 +455,37 @@
     (layout?.groups ?? []).filter((g) => !onScreen || onScreen.groups.has(g.id)),
   )
   const showText = $derived(exporting || zoom >= TEXT_ZOOM)
+  /** Line labels need more room than box text before they can be read. */
+  const EDGE_TEXT_ZOOM = 0.6
+  const showEdgeText = $derived(exporting || zoom >= EDGE_TEXT_ZOOM)
+
+  /** The drawn graph's lines by id: their kinds and their own label. */
+  const edgeMeta = $derived(new Map((drawnGraph?.grouped.edges ?? []).map((edge) => [edge.id, edge])))
+
+  /** Where a label sits: the middle of the route's middle segment. */
+  function midpoint(points: { x: number; y: number }[]): { x: number; y: number } {
+    if (points.length === 0) return { x: 0, y: 0 }
+    if (points.length === 1) return points[0]
+    const i = Math.floor((points.length - 1) / 2)
+    return { x: (points[i].x + points[i + 1].x) / 2, y: (points[i].y + points[i + 1].y) / 2 }
+  }
+
+  /** A line in words, for its title and its accessible name — label included. */
+  function edgeSentence(
+    from: string,
+    to: string,
+    meta: { kinds: string[]; label: string } | undefined,
+    decoration: EdgeDecoration | undefined,
+  ): string {
+    const a = nodeMeta.get(from)
+    const b = nodeMeta.get(to)
+    const name = (node: ViewNode | undefined, id: string) =>
+      node ? `${node.apiKind || (node.set === 'group' ? 'Group' : '')} ${node.name}`.trim() : id
+    let said = `${name(a, from)} ${(meta?.kinds ?? []).join(', ')} ${name(b, to)}`
+    if (meta?.label) said += ` (${meta.label})`
+    if (decoration?.title) said += `\n${decoration.title}`
+    return said
+  }
 
   // --- Findings ------------------------------------------------------------
 
@@ -1151,6 +1182,8 @@
 
             {#each edgesToDraw as edge (edge.id)}
               {@const decoration = decorations.get(edge.id)}
+              {@const meta = edgeMeta.get(edge.id)}
+              {@const said = edgeSentence(edge.from, edge.to, meta, decoration)}
               <path
                 data-edge
                 d={edge.path}
@@ -1158,9 +1191,27 @@
                 stroke-width={decoration?.width ? Math.min(Math.max(decoration.width, 1), 12) : 1.25}
                 marker-end="url(#topo-arrow)"
                 class={decoration?.tone ? TONE[decoration.tone] : 'stroke-outline'}
+                role="img"
+                aria-label={said}
               >
-                {#if decoration?.title}<title>{decoration.title}</title>{/if}
+                <title>{said}</title>
               </path>
+              {#if meta?.label && showEdgeText}
+                <!-- The line's own qualifier — "via Pod", "via ReplicaSet" —
+                     at its middle, so a bridged line is never read as direct. -->
+                {@const mid = midpoint(edge.points)}
+                <text
+                  data-edge-label
+                  x={mid.x}
+                  y={mid.y - 4}
+                  text-anchor="middle"
+                  class="fill-on-surface-variant stroke-surface text-[10px]"
+                  stroke-width="3"
+                  paint-order="stroke"
+                >
+                  {meta.label}
+                </text>
+              {/if}
             {/each}
 
             {#each overlay as line (line.id)}
