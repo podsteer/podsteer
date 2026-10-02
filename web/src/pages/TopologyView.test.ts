@@ -40,9 +40,8 @@ let backend: FixtureBackend
 function session(overrides: Record<string, unknown> = {}) {
   return {
     cluster: { id: 'dev' },
-    namespace: 'shop',
+    selectedNamespaces: ['shop'],
     namespaces: [{ name: 'shop' }, { name: 'other' }],
-    topologyScope: null,
     topologyScopeNow: { namespaces: ['shop'], all: false },
     kinds: [
       { id: 'apps/v1/deployments', kind: 'Deployment', namespaced: true },

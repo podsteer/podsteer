@@ -653,7 +653,7 @@ export const HELP_TOPICS = {
       {
         heading: 'What a view holds',
         body: [
-          'The kind, the namespace, the search and the status chips \u2014 the four controls in this row. Applying one sets all four at once and reloads the list.',
+          'The kind, the namespaces, the search and the status chips \u2014 the four controls in this row. Applying one sets all four at once and reloads the list.',
           'It does not hold the sort, the page, the column set or the page size. Each of those is already remembered on its own, per kind or for the whole application, and a view that set them too would silently change every other visit to that kind.',
         ],
       },
@@ -943,7 +943,7 @@ export const HELP_TOPICS = {
   },
   topology: {
     title: 'Topology',
-    lede: 'Every object in the namespaces you chose, and every relationship Kubernetes itself has between them, drawn as one map.',
+    lede: 'Every object in the namespaces chosen in the sidebar, and every relationship Kubernetes itself has between them, drawn as one map.',
     sections: [
       {
         heading: 'What a line means',

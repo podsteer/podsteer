@@ -366,8 +366,8 @@ export const TOPOLOGY_KIND_ID = 'podsteer/topology'
 
 export type { NamespaceScope } from '$lib/namespaceScope'
 
-/** What the topology draws: the namespace filter's set. Kept as a name for
-    TopologyView until its own picker goes (it follows the global one). */
+/** What the topology draws: the namespace filter's set — the page has no
+    scope of its own, it follows the sidebar's picker like every list. */
 export type TopologyScope = NamespaceScope
 
 /**
@@ -675,30 +675,6 @@ export class ClusterSession {
   /** Whether the filter includes this namespace. */
   inScope = (namespace: string): boolean => this.scope.all || this.scope.namespaces.includes(namespace)
 
-  /**
-   * TOPOLOGY COMPAT, until TopologyView's own picker is removed: the page
-   * reads and assigns a scope here, and the scope is now the namespace
-   * filter's. Assigning one selects it. Delete with the picker.
-   */
-  get topologyScope(): TopologyScope | null {
-    return this.scope
-  }
-  set topologyScope(next: TopologyScope | null) {
-    if (!next) return
-    // Each name is split on commas because the `namespace` compat getter
-    // below hands TopologyView the set joined, and the page assigns it back
-    // as one name. A namespace name never holds a comma.
-    void this.selectNamespaces(next.all ? [] : next.namespaces.flatMap((name) => name.split(',')))
-  }
-
-  /**
-   * TOPOLOGY COMPAT, read only by TopologyView's seeding effect: '' for All,
-   * the set comma-joined otherwise (scopeKey). Nothing else may read it —
-   * use `scope`, `singleNamespace` or `inScope`. Delete with the picker.
-   */
-  get namespace(): string {
-    return this.scopeKey
-  }
   /** The client-side search term. */
   /** The term the lists are filtered by. Trails `typedSearch` by a beat. */
   search = $state<string>('')

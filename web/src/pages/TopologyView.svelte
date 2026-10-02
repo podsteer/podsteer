@@ -31,8 +31,7 @@
 <script lang="ts">
   import { onDestroy, tick, untrack, type Snippet } from 'svelte'
   import { toApiError } from '$lib/api/errors'
-  import { ALL_NAMESPACES } from '$lib/api/client'
-  import type { ClusterSession, TopologyScope } from '$stores/session.svelte'
+  import type { ClusterSession } from '$stores/session.svelte'
   import { preferences } from '$stores/preferences.svelte'
   import { iconGeometry } from '$lib/graphIcons'
   import { GROUP_HEADER, type CompoundLayout, type PlacedNode } from '$lib/graphLayout'
@@ -115,50 +114,6 @@
         : scope.namespaces.length <= 2
           ? scope.namespaces.join(', ')
           : `${scope.namespaces.length} namespaces`,
-  )
-
-  // The namespace filter SEEDS the scope; moving it while this page is open
-  // means "draw that one", so a scope chosen here gives way to it.
-  let seenNamespace = untrack(() => session.namespace)
-  $effect(() => {
-    const current = session.namespace
-    if (current === seenNamespace) return
-    seenNamespace = current
-    session.topologyScope =
-      current === ALL_NAMESPACES ? { namespaces: [], all: true } : { namespaces: [current], all: false }
-  })
-
-  let scopeOpen = $state(false)
-  let draftAll = $state(false)
-  let draftNamespaces = $state<string[]>([])
-  let scopeFilter = $state('')
-
-  function openScope(): void {
-    draftAll = scope.all
-    draftNamespaces = [...scope.namespaces]
-    scopeFilter = ''
-    scopeOpen = true
-    void session.refreshNamespaces()
-  }
-
-  function applyScope(): void {
-    const next: TopologyScope = draftAll
-      ? { namespaces: [], all: true }
-      : { namespaces: [...draftNamespaces].sort(), all: false }
-    session.topologyScope = next
-    scopeOpen = false
-  }
-
-  function toggleDraft(name: string): void {
-    draftNamespaces = draftNamespaces.includes(name)
-      ? draftNamespaces.filter((n) => n !== name)
-      : [...draftNamespaces, name]
-  }
-
-  const namespaceChoices = $derived(
-    session.namespaces
-      .map((namespace) => namespace.name)
-      .filter((name) => !scopeFilter || name.toLowerCase().includes(scopeFilter.toLowerCase())),
   )
 
   // --- The graph -----------------------------------------------------------
@@ -963,84 +918,6 @@
 
 <div class="flex min-h-0 flex-1 flex-col">
   <PaneToolbar>
-    <!-- Scope: some namespaces or all of them. -->
-    <div class="relative">
-      <button
-        type="button"
-        onclick={() => (scopeOpen ? (scopeOpen = false) : openScope())}
-        aria-expanded={scopeOpen}
-        aria-haspopup="dialog"
-        class="state-layer flex h-8 items-center gap-1.5 rounded-sm px-2 text-body-medium text-on-surface
-               hover:bg-surface-container"
-        title="What the topology draws"
-      >
-        <span class="max-w-56 truncate">{scopeLabel}</span>
-        <ChevronDown class="size-3.5 text-on-surface-variant" strokeWidth={2} />
-      </button>
-      {#if scopeOpen}
-        <div
-          role="dialog"
-          aria-label="Topology scope"
-          tabindex="-1"
-          onkeydown={(event) => {
-            if (event.key === 'Escape') {
-              event.stopPropagation()
-              scopeOpen = false
-            }
-          }}
-          class="absolute left-0 top-9 z-30 flex max-h-96 w-72 flex-col gap-2 rounded-md border
-                 border-outline-variant bg-surface-container p-3 shadow-lg"
-        >
-          <label class="flex items-center gap-2 text-body-medium text-on-surface">
-            <input type="checkbox" bind:checked={draftAll} />
-            All namespaces
-          </label>
-          <input
-            type="search"
-            bind:value={scopeFilter}
-            placeholder="Filter namespaces…"
-            disabled={draftAll}
-            class="h-8 rounded-sm border border-outline-variant bg-surface px-2 text-body-small text-on-surface
-                   disabled:opacity-50"
-          />
-          <ul class="min-h-0 flex-1 overflow-y-auto" aria-label="Namespaces">
-            {#each namespaceChoices as name (name)}
-              <li>
-                <label class="flex items-center gap-2 py-0.5 text-body-small text-on-surface {draftAll ? 'opacity-50' : ''}">
-                  <input
-                    type="checkbox"
-                    disabled={draftAll}
-                    checked={draftAll || draftNamespaces.includes(name)}
-                    onchange={() => toggleDraft(name)}
-                  />
-                  <span class="truncate">{name}</span>
-                </label>
-              </li>
-            {:else}
-              <li class="text-body-small text-on-surface-variant/70">No namespaces to choose from.</li>
-            {/each}
-          </ul>
-          <div class="flex justify-end gap-2">
-            <button
-              type="button"
-              class="state-layer rounded-sm px-3 py-1 text-label-large text-on-surface-variant hover:bg-surface-container-high"
-              onclick={() => (scopeOpen = false)}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              disabled={!draftAll && draftNamespaces.length === 0}
-              class="rounded-sm bg-primary px-3 py-1 text-label-large text-on-primary disabled:opacity-50"
-              onclick={applyScope}
-            >
-              Draw
-            </button>
-          </div>
-        </div>
-      {/if}
-    </div>
-
     <Select
       compact
       label="Grouping"
