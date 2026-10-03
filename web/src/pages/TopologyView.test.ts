@@ -250,7 +250,7 @@ describe('TopologyView, as the toolbar now has it', () => {
   async function groupByApplication() {
     const trigger = document.querySelector('[data-select-trigger]') as HTMLElement
     await fireEvent.click(trigger)
-    await fireEvent.click(screen.getByRole('option', { name: /Group by application/ }))
+    await fireEvent.click(screen.getByRole('option', { name: /By application/ }))
   }
 
   it('hides unticked applications and keeps the kind counts complete', async () => {
@@ -358,7 +358,7 @@ describe('TopologyView popovers and Help, reviewed', () => {
     await drawn()
     const trigger = document.querySelector('[data-select-trigger]') as HTMLElement
     await fireEvent.click(trigger)
-    await fireEvent.click(screen.getByRole('option', { name: /Group by application/ }))
+    await fireEvent.click(screen.getByRole('option', { name: /By application/ }))
     const apps = screen.getByRole('button', { name: /All applications/ })
     await fireEvent.click(apps)
     const all = screen.getByRole('dialog', { name: 'Applications drawn' }).querySelector('input') as HTMLInputElement
@@ -446,15 +446,40 @@ describe('TopologyView kind row buttons and search width', () => {
     expect(row.scrollLeft).toBe(0)
   })
 
-  it('lets the search field fill the toolbar and the controls keep their size', async () => {
+  it('lets the search field fill the header and the controls keep their size', async () => {
     render(TopologyView, { session: session() })
     await drawn()
     const field = screen.getByRole('textbox', { name: 'Find on the topology' })
-    const box = field.closest('div') as HTMLElement
+    // The same SearchField the list pages' header uses, ⌘K hint and all.
+    const box = field.closest('label') as HTMLElement
     expect(box.className).toContain('flex-1')
     expect(box.className).toContain('min-w-48')
     const live = screen.getByRole('switch')
     expect(live.className).toContain('shrink-0')
+  })
+})
+
+describe('TopologyView in the workspace header', () => {
+  it('hands its count and controls to the header, and draws no row of its own', async () => {
+    const header = vi.fn()
+    render(TopologyView, { session: session(), header })
+    await vi.waitFor(() => expect(header).toHaveBeenCalled())
+    const content = header.mock.calls.at(-1)?.[0]
+    expect(typeof content.count).toBe('function')
+    expect(typeof content.controls).toBe('function')
+    expect(typeof content.focusSearch).toBe('function')
+    expect(document.querySelector('[data-topology-controls]')).toBeNull()
+  })
+
+  it('steps through matches on Enter in the shared search field', async () => {
+    render(TopologyView, { session: session() })
+    await drawn()
+    const field = screen.getByRole('textbox', { name: 'Find on the topology' }) as HTMLInputElement
+    await fireEvent.input(field, { target: { value: 'web' } })
+    await fireEvent.keyDown(field, { key: 'Enter' })
+    expect(words()).toMatch(/1\/\d/)
+    // Enter finds; it does not leave the field.
+    expect(document.activeElement === field || document.activeElement === document.body).toBe(true)
   })
 })
 

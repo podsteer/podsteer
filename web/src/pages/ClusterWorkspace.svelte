@@ -56,6 +56,7 @@ import TimelineView from './TimelineView.svelte'
   import RBACView from './RBACView.svelte'
   import HelmView from './HelmView.svelte'
   import TopologyView from './TopologyView.svelte'
+  import type { TopologyHeaderContent } from '$lib/topologyHeader'
   import { fleet } from '$stores/fleet.svelte'
   import { PanelLeft, AlertTriangle, Download, Check, Plus, Laptop, ShieldQuestion, UserSearch } from '@lucide/svelte'
   import { onMount } from 'svelte'
@@ -75,6 +76,12 @@ import TimelineView from './TimelineView.svelte'
   let { session }: Props = $props()
 
   let searchField: { focus: () => void } | undefined = $state()
+  /**
+   * The topology's header content — its count and its controls, rendered in
+   * THIS header row so the page reads like every list page. Set by the page
+   * while it is mounted.
+   */
+  let topologyHeader = $state.raw<TopologyHeaderContent | null>(null)
 
   /**
    * Whether this platform can open a shell on the operator's own machine, and
@@ -355,7 +362,8 @@ import TimelineView from './TimelineView.svelte'
       void session.requestRefresh()
     } else if (shortcut('focus-search').matches(event)) {
       event.preventDefault()
-      searchField?.focus()
+      if (session.viewMode === 'topology' && topologyHeader) topologyHeader.focusSearch()
+      else searchField?.focus()
     }
   }
 </script>
@@ -415,6 +423,9 @@ import TimelineView from './TimelineView.svelte'
                          tabular-nums text-on-surface-variant">
               {session.visibleCount}
             </span>
+          {/if}
+          {#if session.viewMode === 'topology' && topologyHeader}
+            {@render topologyHeader.count()}
           {/if}
           {#if session.viewMode === 'pods' && session.podSummary.unhealthy > 0}
             <span class="flex items-center gap-1 rounded-full bg-warning-container px-2 py-0.5
@@ -545,6 +556,10 @@ import TimelineView from './TimelineView.svelte'
         {/if}
       {/if}
 
+      {#if session.viewMode === 'topology' && topologyHeader}
+        {@render topologyHeader.controls()}
+      {/if}
+
       <!-- The Permissions page's tools. Refresh re-asks the one question the
            page answers on arrival; the other two are questions of their own,
            each in a dialog, so the page stays the list it opens on. -->
@@ -631,7 +646,7 @@ import TimelineView from './TimelineView.svelte'
     {:else if session.viewMode === 'helm'}
       <HelmView {session} />
     {:else if session.viewMode === 'topology'}
-      <TopologyView {session} />
+      <TopologyView {session} header={(content) => (topologyHeader = content)} />
     {:else if session.viewMode === 'multi-kind'}
       <MultiKindView {session} />
     {:else if session.viewMode === 'security'}
