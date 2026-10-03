@@ -719,6 +719,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
+          # appimagetool refuses to build without desktop-file-validate.
+          sudo apt-get install -y desktop-file-utils
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.41.1
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           case "${{ matrix.arch }}" in amd64) a=x86_64 ;; arm64) a=aarch64 ;; esac

@@ -5,6 +5,6 @@ Comment=A fast, native Kubernetes client.
 Exec=podsteer
 Icon=podsteer
 Terminal=false
-Categories=Development;System;
+Categories=Development;
 Keywords=kubernetes;k8s;kubectl;cluster;
 StartupWMClass=podsteer
