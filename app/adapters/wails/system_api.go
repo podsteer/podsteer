@@ -1,12 +1,15 @@
 package wails
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
+	"sort"
 	"strings"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -88,6 +91,87 @@ func NewSystemAPI(name, version string, app *App, logger *slog.Logger) (*SystemA
 // Info returns the running application's identity.
 func (s *SystemAPI) Info() AppInfo {
 	return s.info
+}
+
+// DebugInfo is what a bug report needs to know about this installation, and
+// nothing about the operator.
+//
+// EVERY FIELD IS A VERSION OR A PLATFORM. No hostname, no user name, no path,
+// no cluster or context name: this is pasted into a public issue tracker, and
+// SECURITY.md's rule about local paths and cluster identity applies to it as
+// it does to logs. The frontend adds the one thing the backend cannot know
+// cheaply — how many clusters are open and what Kubernetes versions they run.
+type DebugInfo struct {
+	// Version is the release version, or "dev" for a working-tree build.
+	Version string `json:"version"`
+	// Commit is the VCS revision when the binary carries one. Release builds
+	// pass -buildvcs=false, so this is usually empty; the version is the
+	// identifier there.
+	Commit string `json:"commit"`
+	// OS is the operating system's name and version, as the OS reports them.
+	OS string `json:"os"`
+	// Platform is GOOS/GOARCH.
+	Platform string `json:"platform"`
+	// GoVersion is the toolchain that built the binary.
+	GoVersion string `json:"goVersion"`
+	// WailsVersion is the application framework version linked in.
+	WailsVersion string `json:"wailsVersion"`
+	// Webview is the embedded browser engine's version where the framework
+	// reports one (WebView2 on Windows), else empty.
+	Webview string `json:"webview"`
+}
+
+// DebugInfo returns the version and platform facts for a bug report.
+func (s *SystemAPI) DebugInfo() DebugInfo {
+	info := DebugInfo{
+		Version:  s.info.Version,
+		Platform: s.info.Platform,
+	}
+
+	if build, ok := debug.ReadBuildInfo(); ok {
+		info.GoVersion = build.GoVersion
+		for _, dep := range build.Deps {
+			if dep.Path == "github.com/wailsapp/wails/v3" {
+				info.WailsVersion = dep.Version
+			}
+		}
+		for _, setting := range build.Settings {
+			if setting.Key == "vcs.revision" {
+				info.Commit = setting.Value
+			}
+		}
+	}
+
+	if wailsApp, ok := s.app.wailsApp(); ok && wailsApp.Env != nil {
+		env := wailsApp.Env.Info()
+		if env.OSInfo != nil {
+			info.OS = strings.TrimSpace(env.OSInfo.Name + " " + env.OSInfo.Version)
+		}
+		info.Webview = webviewVersion(env.PlatformInfo)
+	}
+	return info
+}
+
+// webviewVersion picks the web engine's version out of the framework's
+// platform map. The keys differ per platform and per release, so any entry
+// naming a webview or webkit is accepted; the lookup is sorted so the answer
+// does not depend on map iteration order.
+func webviewVersion(platform map[string]any) string {
+	keys := make([]string, 0, len(platform))
+	for key := range platform {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		lower := strings.ToLower(key)
+		if !strings.Contains(lower, "webview") && !strings.Contains(lower, "webkit") {
+			continue
+		}
+		if text, ok := platform[key].(string); ok && text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 // Credit is one shipped dependency, as the Credits pane shows it.
@@ -174,6 +258,10 @@ func saveDialogFor(suggestedName string) (title string, filters []application.Fi
 		return "Export", []application.FileFilter{
 			{DisplayName: "JSON (*.json)", Pattern: "*.json"},
 		}
+	case ".png":
+		return "Export image", []application.FileFilter{
+			{DisplayName: "PNG (*.png)", Pattern: "*.png"},
+		}
 	case ".log":
 		return "Download logs", []application.FileFilter{
 			{DisplayName: "Log (*.log)", Pattern: "*.log"},
@@ -187,18 +275,41 @@ func saveDialogFor(suggestedName string) (title string, filters []application.Fi
 // showSaveDialog is chooseSavePath's real implementation: the native save
 // dialog, seeded with the suggested filename and filtered by its extension.
 func (s *SystemAPI) showSaveDialog(suggestedName string) (string, error) {
-	wailsApp, ok := s.app.wailsApp()
+	return showSaveDialog(s.app, suggestedName)
+}
+
+// showSaveDialog is the native save dialog, for every API that writes a file
+// the operator places: SaveTextFile, and the pod table's CSV export, which is
+// rendered and written in Go because the rows it covers never reach the
+// webview.
+func showSaveDialog(app *App, suggestedName string) (string, error) {
+	wailsApp, ok := app.wailsApp()
 	if !ok {
 		return "", fmt.Errorf("the window is not running")
 	}
 
 	title, filters := saveDialogFor(suggestedName)
 
-	return wailsApp.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+	path, err := wailsApp.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
 		Title:    title,
 		Filename: suggestedName,
 		Filters:  filters,
 	}).PromptForSingleSelection()
+	return path, dialogError(err)
+}
+
+// errNoFileDialog is a save asked for where there is no native dialog to ask
+// with: the server build, whose window is a browser tab.
+var errNoFileDialog = errors.New("no native file dialog")
+
+// dialogError names the server build's refusal, which Wails words as a plain
+// error ("file dialogs not available in server mode"), so it reaches the
+// interface as what it is rather than as an unexpected failure.
+func dialogError(err error) error {
+	if err != nil && strings.Contains(err.Error(), "not available in server mode") {
+		return fmt.Errorf("%w: %w", errNoFileDialog, err)
+	}
+	return err
 }
 
 // SaveTextFile opens a native save dialog seeded with suggestedName and

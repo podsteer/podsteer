@@ -224,3 +224,93 @@ func TestKubeconfigWatcherStopWaitsForItsGoroutine(t *testing.T) {
 	// shutdown path and a test cleanup can both reach it.
 	watcher.Stop()
 }
+
+// fakeCredentials reports a fixed set of clusters as having new credentials.
+type fakeCredentials struct {
+	mu        sync.Mutex
+	changed   map[domain.ClusterID]bool
+	refreshed []domain.ClusterID
+}
+
+func (f *fakeCredentials) CredentialsChanged(id domain.ClusterID) bool { return f.changed[id] }
+
+func (f *fakeCredentials) RefreshCredentials(id domain.ClusterID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refreshed = append(f.refreshed, id)
+}
+
+func (f *fakeCredentials) refreshedIDs() []domain.ClusterID {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]domain.ClusterID(nil), f.refreshed...)
+}
+
+// A changed kubeconfig refreshes the clients of OPEN clusters whose
+// credentials changed, and nobody else's.
+func TestKubeconfigChangeRefreshesOnlyClustersWhoseCredentialsChanged(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		open    []domain.ClusterID
+		changed map[domain.ClusterID]bool
+		want    []domain.ClusterID
+	}{
+		{"credentials rewritten for an open cluster", []domain.ClusterID{"prod", "dev"}, map[domain.ClusterID]bool{"prod": true}, []domain.ClusterID{"prod"}},
+		{"a touched file that changes no credential", []domain.ClusterID{"prod"}, nil, nil},
+		{"nothing open", nil, map[domain.ClusterID]bool{"prod": true}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config")
+			writeKubeconfigFile(t, path, "apiVersion: v1\nkind: Config\n")
+
+			events := &collectingPublisher{}
+			credentials := &fakeCredentials{changed: tt.changed}
+			watcher, err := application.NewKubeconfigWatcher(application.KubeconfigWatcherDeps{
+				Files:       func() []string { return []string{path} },
+				Events:      events,
+				Credentials: credentials,
+				Open:        func() []domain.ClusterID { return tt.open },
+				Interval:    10 * time.Millisecond,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			watcher.Start(context.Background())
+			t.Cleanup(watcher.Stop)
+
+			// The first tick takes the baseline; a later write moves it.
+			time.Sleep(30 * time.Millisecond)
+			writeKubeconfigFile(t, path, "apiVersion: v1\nkind: Config\n# logged in again\n")
+			waitForEvents(t, events, 1)
+
+			deadline := time.Now().Add(2 * time.Second)
+			for time.Now().Before(deadline) && len(credentials.refreshedIDs()) < len(tt.want) {
+				time.Sleep(5 * time.Millisecond)
+			}
+			got := credentials.refreshedIDs()
+			if len(got) != len(tt.want) || (len(got) == 1 && got[0] != tt.want[0]) {
+				t.Fatalf("refreshed %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRefreshCredentialsRefusesAnUnopenedCluster(t *testing.T) {
+	t.Parallel()
+
+	service, registry := newClusterService(t, &fakeKubeconfig{clusters: []domain.Cluster{mustCluster(t, "dev", true)}}, &fakeKubernetes{}, &recordingPublisher{})
+	if err := service.RefreshCredentials(context.Background(), "dev"); err == nil {
+		t.Fatal("RefreshCredentials() on an unopened cluster = nil, want an error")
+	}
+	registry.Open(mustCluster(t, "dev", true))
+	// Opened, but wired without a refresher: refused, not silently ignored.
+	if err := service.RefreshCredentials(context.Background(), "dev"); err == nil {
+		t.Fatal("RefreshCredentials() without a refresher = nil, want an error")
+	}
+}

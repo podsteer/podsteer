@@ -17,18 +17,31 @@
     topic: HelpTopicId
     /** What the help is about, for the accessible name. */
     about: string
+    /**
+     * Something in the help is about what is on screen right now and worth
+     * reading — a kind that could not be listed, say. Drawn as a small dot on
+     * the (?) and said in its name; the text itself stays in the panel.
+     */
+    notice?: string
   }
 
-  let { topic, about }: Props = $props()
+  let { topic, about, notice }: Props = $props()
 </script>
 
 <button
   type="button"
   onclick={() => help.open(topic)}
-  aria-label="Help with {about}"
-  title="What this does"
-  class="state-layer grid size-8 shrink-0 place-items-center rounded-full text-on-surface-variant
+  aria-label="Help with {about}{notice ? ` — ${notice}` : ''}"
+  title={notice ?? 'What this does'}
+  class="state-layer relative grid size-8 shrink-0 place-items-center rounded-full text-on-surface-variant
          transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
 >
   <CircleHelp class="size-4" strokeWidth={2} />
+  {#if notice}
+    <span
+      data-help-notice
+      class="absolute top-1 right-1 size-2 rounded-full bg-gauge-warn ring-2 ring-surface"
+      aria-hidden="true"
+    ></span>
+  {/if}
 </button>

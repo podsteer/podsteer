@@ -41,6 +41,16 @@ type ClusterServiceDeps struct {
 	// service wired without one simply keeps whatever the adapter cached,
 	// which is what every test wants.
 	Invalidator ClusterInvalidator
+	// OnConnected is told after a successful Connect, and only then — the
+	// operator opening a cluster is the one event allowed to start work on
+	// its behalf, which is how kept port-forwards are restored without any
+	// cluster being connected that nobody opened.
+	//
+	// Optional. Must return promptly: do the work on a goroutine it owns.
+	OnConnected ClusterConnectedHook
+	// Credentials answers RefreshCredentials. Optional; without it the call
+	// is refused rather than pretending to have done something.
+	Credentials CredentialRefresher
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
 	Logger *slog.Logger
 	// Now supplies the current time. Optional; defaults to time.Now.
@@ -82,7 +92,17 @@ func (is Invalidators) Invalidate(id domain.ClusterID) {
 	}
 }
 
+// ClusterConnectedHook is told a cluster has just been connected.
+type ClusterConnectedHook interface {
+	ClusterConnected(id domain.ClusterID)
+	// ClusterDisconnected is called BEFORE the cluster's state is invalidated,
+	// and must not return until work started for it has stopped.
+	ClusterDisconnected(id domain.ClusterID)
+}
+
 type ClusterService struct {
+	credentials CredentialRefresher
+	onConnected ClusterConnectedHook
 	kubeconfig  ports.KubeconfigPort
 	cluster     ports.ClusterPort
 	workloads   ports.WorkloadPort
@@ -132,6 +152,8 @@ func NewClusterService(deps ClusterServiceDeps) (*ClusterService, error) {
 		workloads:   deps.Workloads,
 		metrics:     deps.Metrics,
 		invalidator: deps.Invalidator,
+		onConnected: deps.OnConnected,
+		credentials: deps.Credentials,
 		events:      deps.Events,
 		registry:    deps.Registry,
 		catalog:     deps.Catalog,
@@ -250,7 +272,30 @@ func (s *ClusterService) Connect(ctx context.Context, id domain.ClusterID) (doma
 		slog.String("cluster", id.String()),
 		slog.String("version", version.GitVersion))
 
+	if s.onConnected != nil {
+		s.onConnected.ClusterConnected(id)
+	}
+
 	return connected, nil
+}
+
+// RefreshCredentials drops the client built for an open cluster so the next
+// request builds from the kubeconfig as it is now.
+//
+// What Retry does after an `unauthenticated` failure: the cached client is the
+// reason the same call fails again after the operator has logged in anew in a
+// terminal. Unconditional, unlike the kubeconfig watcher's, because the
+// operator has just told us it is not working.
+func (s *ClusterService) RefreshCredentials(_ context.Context, id domain.ClusterID) error {
+	if !s.registry.IsOpen(id) {
+		return fmt.Errorf("refreshing credentials for %q: %w", id, domain.ErrClusterNotConnected)
+	}
+	if s.credentials == nil {
+		return fmt.Errorf("refreshing credentials for %q: not available", id)
+	}
+	s.credentials.RefreshCredentials(id)
+	s.logger.Info("credentials refreshed on request", slog.String("cluster", id.String()))
+	return nil
 }
 
 // Disconnect closes a connection and forgets everything cached for it.
@@ -262,6 +307,12 @@ func (s *ClusterService) Disconnect(ctx context.Context, id domain.ClusterID) er
 	// The catalog must be cleared too, or a cluster's CRDs would linger and
 	// reappear in the navigator when a different cluster is opened.
 	s.catalog.Forget(id)
+
+	// Before the invalidation, so nothing started for this cluster can rebuild
+	// what is about to be released.
+	if s.onConnected != nil {
+		s.onConnected.ClusterDisconnected(id)
+	}
 
 	// And the adapter's caches, or disconnecting releases nothing: the pooled
 	// TLS connections stay open, the disk sweep is served to the next

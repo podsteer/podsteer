@@ -47,5 +47,9 @@ export default defineConfig({
   test: {
     environment: 'happy-dom',
     include: ['src/**/*.test.ts'],
+    // Timing budgets: run by `npm run bench:layout`, never by `npm test`.
+    // They end in `.bench.test.ts` so the licence scanner, which accepts only
+    // the `.test.` suffix as test code, does not count them as shipped source.
+    exclude: ['src/**/*.bench.test.ts', 'node_modules/**'],
   },
 })

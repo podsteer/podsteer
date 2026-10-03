@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
 )
@@ -89,6 +90,10 @@ const (
 	// OBJECT'S OWN POLICY declined it — which calls for waiting and trying
 	// again, not for different credentials.
 	CodeDisruptionBudget ErrorCode = "disruption_budget"
+	// CodeThrottled means the API server rate limited the request (HTTP 429
+	// outside an eviction). Retryable, and says to wait rather than to look at
+	// budgets or credentials.
+	CodeThrottled ErrorCode = "throttled"
 	// CodeConflict means UpdateResource's PUT carried a resourceVersion the
 	// API server no longer recognises — the object changed since the
 	// manifest was read. Its own code because the recovery is specific and
@@ -337,6 +342,8 @@ func quotedName(message string) string {
 // both "cluster unreachable" and the underlying network error.
 func classifyError(err error) (ErrorCode, string) {
 	switch {
+	case errors.Is(err, errNoFileDialog):
+		return CodeInvalidInput, "Saving a file needs the PodSteer desktop app: this window is served to a browser, which has no file dialog PodSteer can open."
 	case errors.Is(err, domain.ErrNoActiveCluster):
 		return CodeNoActiveCluster, "No cluster is connected yet"
 
@@ -513,6 +520,10 @@ func classifyError(err error) (ErrorCode, string) {
 			"Kubernetes 1.33, or in-place vertical scaling is turned off. Changing the workload's own " +
 			"resources and letting it roll is the way to do it here."
 
+	case errors.Is(err, ports.ErrSidecarResizeUnsupported):
+		return CodeResizeUnsupported, "This cluster accepted the request but did not resize the sidecar — " +
+			"sidecar resize needs Kubernetes 1.37 or the InPlacePodVerticalScalingInitContainers feature."
+
 	case errors.Is(err, ports.ErrEphemeralContainersUnsupported):
 		return CodeEphemeralUnsupported, "This cluster does not support ephemeral debug containers — its API server is too old, or the feature is turned off."
 
@@ -523,6 +534,12 @@ func classifyError(err error) (ErrorCode, string) {
 	// subresource is not RBAC, and telling an operator their account is not
 	// allowed to evict a pod sends them to ask for a permission they already
 	// have.
+	case errors.Is(err, ports.ErrThrottled):
+		return CodeThrottled, "The cluster is rate limiting PodSteer's requests (HTTP 429). It is not a permissions problem; give it a moment and retry."
+
+	case errors.Is(err, application.ErrForwardNotRunning):
+		return CodeNotFound, "That port-forward is no longer running. It may have been stopped, or its cluster disconnected."
+
 	case errors.Is(err, ports.ErrDisruptionBudget):
 		return CodeDisruptionBudget, "A PodDisruptionBudget refused the eviction: it would leave the workload below its minimum."
 
@@ -608,6 +625,8 @@ func classifyError(err error) (ErrorCode, string) {
 
 	case errors.Is(err, domain.ErrEmptyClusterID),
 		errors.Is(err, domain.ErrInvalidNamespaceName),
+		errors.Is(err, domain.ErrEmptyApplicationInstance),
+		errors.Is(err, domain.ErrInvalidApplicationInstance),
 		errors.Is(err, domain.ErrInvalidResourceKind),
 		errors.Is(err, domain.ErrUnsupportedWorkloadKind),
 		errors.Is(err, domain.ErrInvalidKey),
@@ -646,6 +665,11 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, errNotFound),
 		errors.Is(err, errEmptySuggestedName),
 		errors.Is(err, errUnreadableTextFile),
+		// The topology's own refusals: a scope naming no namespace, and an
+		// export that is not a PNG or is implausibly large.
+		errors.Is(err, domain.ErrEmptyTopologyScope),
+		errors.Is(err, errNotPNG),
+		errors.Is(err, errPNGTooLarge),
 		// Both notification refusals are the frontend asking for something
 		// it should not have — an empty headline, or a body long enough to
 		// have started listing objects. Invalid input rather than internal,
@@ -658,6 +682,8 @@ func classifyError(err error) (ErrorCode, string) {
 		errors.Is(err, domain.ErrEmptyResourceName),
 		errors.Is(err, errNoLocalPath),
 		errors.Is(err, errProbeNoContainer),
+		errors.Is(err, domain.ErrUnknownTrafficSource),
+		errors.Is(err, domain.ErrUnknownTrafficWindow),
 		errors.Is(err, ports.ErrInvalidPort):
 		return CodeInvalidInput, err.Error()
 

@@ -9,6 +9,8 @@ describe('dependency map icons', () => {
     const kinds = [
       'ingress', 'service', 'workload', 'replicaset', 'pod',
       'container', 'node', 'config', 'secret', 'claim', 'serviceaccount',
+      // The topology's own kinds, and the collapsed group it draws.
+      'gateway', 'route', 'scaler', 'budget', 'policy', 'object', 'group',
     ]
 
     const drawn = new Set(kinds.map(iconGeometry))

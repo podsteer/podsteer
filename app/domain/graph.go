@@ -27,6 +27,16 @@ const (
 	GraphSecret         GraphKind = "secret"
 	GraphClaim          GraphKind = "claim"
 	GraphServiceAccount GraphKind = "serviceaccount"
+	// The kinds the namespace topology adds. Each is its own category because
+	// each draws a different relationship: a Gateway is where Gateway API
+	// traffic enters, a route (HTTPRoute, GRPCRoute, TCPRoute, TLSRoute) is
+	// how it reaches a Service, a scaler resizes a workload, a budget guards
+	// pods against eviction and a policy selects the pods its rules govern.
+	GraphGateway GraphKind = "gateway"
+	GraphRoute   GraphKind = "route"
+	GraphScaler  GraphKind = "scaler"
+	GraphBudget  GraphKind = "budget"
+	GraphPolicy  GraphKind = "policy"
 	// GraphObject is anything the map has no category for — a CRD instance, a
 	// StorageClass, an IngressClass. Drawn as a plain box rather than borrowed
 	// onto a category it does not belong to: a Deployment's icon on something
@@ -136,14 +146,21 @@ type ServiceRef struct {
 	Name      string
 	Namespace string
 	Selector  map[string]string
-	Type      string
-	Ports     []string
+	// Labels are the Service's OWN labels, which only an application's map
+	// reads: a Service that selects none of an application's pods still belongs
+	// to it by label, and is drawn so the mismatch is visible.
+	Labels map[string]string
+	Type   string
+	Ports  []string
 }
 
 // IngressRef is the little of an Ingress the map needs.
 type IngressRef struct {
 	Name      string
 	Namespace string
+	// Labels are the Ingress's own labels, which only the namespace topology
+	// reads, to group a top-level object by app or by label.
+	Labels map[string]string
 	// Hosts are the rule hosts, for the label.
 	Hosts []string
 	// Backends names the services it routes to.
@@ -543,7 +560,7 @@ func NewWorkloadGraph(input WorkloadGraphInput) PodGraph {
 		}
 	}
 
-	graph.addWorkloadServices(input)
+	graph.addSelectedServices(input.Pods, input.Services, input.Ingresses, nil)
 
 	// ATTACHED BELONGS TO THE PODS, because the pod is what mounts it. A
 	// ReplicaSet does not read a Secret: it carries a template that DECLARES
@@ -568,11 +585,20 @@ func NewWorkloadGraph(input WorkloadGraphInput) PodGraph {
 	return graph
 }
 
-// addWorkloadServices connects services selecting any pod of the workload.
-func (g *PodGraph) addWorkloadServices(input WorkloadGraphInput) {
+// addSelectedServices connects services selecting any of the given pods, and
+// the ingresses routing to a drawn service. Shared by the workload and
+// application maps, whose pods differ and whose rule for a Service does not.
+//
+// DRAWN, when keep names it, EVEN WITH NOTHING TO SELECT. A workload's map
+// omits a Service it cannot currently reach, because that Service is not the
+// workload's. An application's Service belongs to it by label, and one that
+// selects none of its pods is the finding — a selector that drifted from the
+// pod labels — so it is drawn unwell with no edge rather than left out. keep
+// is nil for the workload map, which keeps its behaviour exactly.
+func (g *PodGraph) addSelectedServices(pods []Pod, services []ServiceRef, ingresses []IngressRef, keep func(ServiceRef) bool) {
 	routed := make(map[string]string)
 
-	for _, service := range input.Services {
+	for _, service := range services {
 		// TO THE PODS IT SELECTS, not to the workload above them. A Service
 		// matches labels on PODS and knows nothing about what created them —
 		// so an edge to the controller is a relationship Kubernetes does not
@@ -580,7 +606,7 @@ func (g *PodGraph) addWorkloadServices(input WorkloadGraphInput) {
 		// reaches only SOME of a workload's pods, which is what a half-failed
 		// rollout looks like.
 		var selected []string
-		for _, pod := range input.Pods {
+		for _, pod := range pods {
 			if selectorMatches(service.Selector, pod.Labels()) {
 				selected = append(selected, "pod/"+pod.Name())
 			}
@@ -589,24 +615,29 @@ func (g *PodGraph) addWorkloadServices(input WorkloadGraphInput) {
 		// With no pods there is nothing to select, and a Service drawn against
 		// a workload it cannot currently reach would assert a path that does
 		// not exist.
-		if len(selected) == 0 {
+		if len(selected) == 0 && (keep == nil || !keep(service)) {
 			continue
 		}
 
 		id := "service/" + service.Name
 		routed[service.Name] = id
 
-		g.Nodes = append(g.Nodes, GraphNode{
+		node := GraphNode{
 			ID: id, Kind: GraphService, APIKind: "Service", Name: service.Name,
 			Namespace: service.Namespace, Tier: TierService,
 			Detail: strings.Join(service.Ports, ", "), Healthy: true,
-		})
+		}
+		if len(selected) == 0 {
+			node.Healthy = false
+			node.Detail = "selects none of this application's pods"
+		}
+		g.Nodes = append(g.Nodes, node)
 		for _, podID := range selected {
 			g.Edges = append(g.Edges, GraphEdge{From: id, To: podID, Label: "selects"})
 		}
 	}
 
-	for _, ingress := range input.Ingresses {
+	for _, ingress := range ingresses {
 		var reaches []string
 		for _, backend := range ingress.Backends {
 			if id, ok := routed[backend]; ok {

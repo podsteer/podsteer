@@ -47,6 +47,12 @@
         omitted. Mirrors `SearchField`'s `description`, narrowed to what this
         field needs — it has no separate syntax summary to show when valid. */
     description?: string
+    /**
+     * Takes all the free space in its row and gives it back when the row
+     * needs it, never narrower than a usable field (12rem). Off by default:
+     * the YAML and log panes size theirs as they always have.
+     */
+    fill?: boolean
   }
 
   let {
@@ -61,6 +67,7 @@
     onprevious,
     invalid = false,
     description,
+    fill = false,
   }: Props = $props()
 
   let input = $state<HTMLInputElement | null>(null)
@@ -103,7 +110,7 @@
 
 <!-- The margin is the gap to the first icon: at the toolbar's own spacing the
      field's border sat almost against it and the two read as one control. -->
-<div class="relative mr-3 flex min-w-0 flex-1 items-center">
+<div class="relative mr-3 flex flex-1 items-center {fill ? 'min-w-48 basis-auto' : 'min-w-0'}">
   {#if invalid}
     <AlertCircle
       class="pointer-events-none absolute left-2 size-3.5 text-error"

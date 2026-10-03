@@ -158,6 +158,58 @@ func (m *MetricsQueryAPI) GetSeries(clusterID, metric, scope string, windowMinut
 	return toBackendSeriesResult(result, domain.MetricID(metric), domain.MetricScope(scope)), nil
 }
 
+// MetricsBackendCandidate is one discovered backend for the Settings picker.
+// Pinning one is SettingsAPI.SetMetricsQuery's preferred namespace and
+// service.
+type MetricsBackendCandidate struct {
+	Namespace string `json:"namespace"`
+	Service   string `json:"service"`
+	Port      string `json:"port"`
+	// Product is "Prometheus", "VictoriaMetrics"…
+	Product string `json:"product"`
+	// Rank is discovery's order; 0 is what PodSteer picks when nothing is
+	// pinned.
+	Rank int `json:"rank"`
+	// Verified is the node check's remembered answer — verified, fleet,
+	// mismatch, unverifiable — or "" when this backend has not been checked.
+	Verified string `json:"verified"`
+	// Detail says what the candidate is for, in words.
+	Detail string `json:"detail"`
+	// LinkerdViz marks linkerd-viz's own Prometheus.
+	LinkerdViz bool `json:"linkerdViz"`
+}
+
+// Backends lists every backend discovery found in a cluster, best first. It
+// lists Services and reads nothing from any of them.
+func (m *MetricsQueryAPI) Backends(clusterID string) ([]MetricsBackendCandidate, error) {
+	ctx, cancel := m.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(m.logger, "Backends", err)
+	}
+	candidates, err := m.queries.Backends(ctx, id)
+	if err != nil {
+		return nil, apiError(m.logger, "Backends", err)
+	}
+
+	out := make([]MetricsBackendCandidate, 0, len(candidates))
+	for _, candidate := range candidates {
+		out = append(out, MetricsBackendCandidate{
+			Namespace:  string(candidate.Backend.Namespace),
+			Service:    candidate.Backend.Service,
+			Port:       candidate.Backend.Port,
+			Product:    candidate.Backend.Product(),
+			Rank:       candidate.Rank,
+			Verified:   string(candidate.Verification),
+			Detail:     candidate.Detail,
+			LinkerdViz: candidate.Backend.LinkerdViz,
+		})
+	}
+	return out, nil
+}
+
 func toBackendSeriesResult(
 	result domain.BackendSeriesResult,
 	metric domain.MetricID,

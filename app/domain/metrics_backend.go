@@ -68,6 +68,10 @@ type MetricsBackend struct {
 	// not check, and a wrong guess answers 200 with no series, which reads as
 	// an idle cluster. Zero is the default every single-tenant install uses.
 	Prefix string
+	// LinkerdViz marks linkerd-viz's own Prometheus. It scrapes the Linkerd
+	// proxies and nothing else — no kubelet, no cAdvisor — so it can answer
+	// the topology's Linkerd traffic and cannot answer a chart.
+	LinkerdViz bool
 }
 
 // Found reports whether anything was discovered.
@@ -108,4 +112,18 @@ func (b MetricsBackend) Describe() string {
 		return ""
 	}
 	return fmt.Sprintf("%s in %s", b.Product(), b.Namespace)
+}
+
+// MetricsBackendCandidate is one discovered backend as the Settings picker
+// offers it: the backend, where discovery ranked it, and what PodSteer
+// already knows about it. Nothing about it was queried to produce this.
+type MetricsBackendCandidate struct {
+	Backend MetricsBackend
+	// Rank is the position in discovery's ranking, 0 being the automatic pick.
+	Rank int
+	// Verification is the node check's last answer for this backend, when
+	// one is remembered; empty when it has not been checked.
+	Verification BackendVerification
+	// Detail says in words what the candidate is for.
+	Detail string
 }

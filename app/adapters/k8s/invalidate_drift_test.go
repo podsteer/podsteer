@@ -31,7 +31,9 @@ func TestEveryPerClusterCacheIsDroppedOnInvalidate(t *testing.T) {
 	forgetful := map[string]bool{}
 	// Adapter fields, by name and by type.
 	fields := map[string]string{}
-	var invalidate *ast.FuncDecl
+	// Invalidate delegates what it drops to release, which RefreshClient shares
+	// (the same drop without the port-forward sweep), so the forgets live there.
+	var invalidate, release *ast.FuncDecl
 
 	for _, file := range files {
 		for _, decl := range file.Decls {
@@ -44,6 +46,9 @@ func TestEveryPerClusterCacheIsDroppedOnInvalidate(t *testing.T) {
 				if node.Name.Name == "Invalidate" && receiver == "Adapter" {
 					invalidate = node
 				}
+				if node.Name.Name == "release" && receiver == "Adapter" {
+					release = node
+				}
 			case *ast.GenDecl:
 				collectAdapterFields(node, fields)
 			}
@@ -53,11 +58,14 @@ func TestEveryPerClusterCacheIsDroppedOnInvalidate(t *testing.T) {
 	if invalidate == nil {
 		t.Fatal("no (*Adapter).Invalidate found — this guard is reading the wrong package")
 	}
+	if release == nil {
+		t.Fatal("no (*Adapter).release found — Invalidate's drops moved and this guard did not follow")
+	}
 	if len(fields) == 0 {
 		t.Fatal("no Adapter fields found — this guard is reading the wrong package")
 	}
 
-	dropped := forgottenIn(invalidate)
+	dropped := forgottenIn(release)
 
 	for name, typeName := range fields {
 		if !forgetful[typeName] || dropped[name] {

@@ -109,6 +109,31 @@ class ClusterSettingsStore {
 
   /** The contexts last asked about, so a reload asks about the same set. */
   #asked: string[] = []
+  /**
+   * The contexts whose row came FROM THE BACKEND — present in the file or
+   * known to be absent from it. Any other row is `defaultClusterSettings`, a
+   * guess, and is never written back: saving from a guessed "off, no pin"
+   * row is how a real entry was overwritten.
+   */
+  loadedIds = $state.raw<ReadonlySet<string>>(new Set())
+
+  /** Whether a context's row reflects the file rather than the defaults. */
+  isLoaded = (clusterId: string): boolean => this.loadedIds.has(clusterId)
+
+  /**
+   * Forgets contexts that no longer exist — removed from the kubeconfig — so
+   * a save does not re-ask about them forever. Rows for them go too.
+   */
+  prune = (known: readonly string[]): void => {
+    const keep = new Set(known)
+    this.#asked = this.#asked.filter((id) => keep.has(id))
+    if (this.entries.some((entry) => !keep.has(entry.clusterId))) {
+      this.entries = this.entries.filter((entry) => keep.has(entry.clusterId))
+    }
+    if ([...this.loadedIds].some((id) => !keep.has(id))) {
+      this.loadedIds = new Set([...this.loadedIds].filter((id) => keep.has(id)))
+    }
+  }
   #request = 0
 
   /** Whether anything is being saved at all. False under `podsteer mcp`. */
@@ -128,7 +153,10 @@ class ClusterSettingsStore {
    */
   load = async (clusterIds: string[]): Promise<void> => {
     const request = ++this.#request
-    this.#asked = clusterIds
+    // EVERY ID EVER ASKED ABOUT stays asked about. A caller that wants one
+    // cluster's row (the overview reads its own) must not shrink the set a
+    // save reloads, or the next save would drop every other row.
+    this.#asked = [...new Set([...this.#asked, ...clusterIds])]
     if (this.status === 'idle') this.status = 'loading'
 
     try {
@@ -138,7 +166,21 @@ class ClusterSettingsStore {
       ])
       if (request !== this.#request) return
 
-      this.entries = entries
+      // MERGED, NEVER REPLACED. Loading one cluster used to replace every
+      // row, so Settings → Clusters showed the others as Off — and a save
+      // made from such a stale row wrote "off, no pinned backend" back over
+      // what the file held. Rows for the ids asked are replaced (or dropped
+      // when the file has nothing for them); every other row is kept.
+      const asked = new Set(clusterIds)
+      const fresh = new Map(entries.map((entry) => [entry.clusterId, entry]))
+      const merged = this.entries
+        .filter((entry) => !asked.has(entry.clusterId) || fresh.has(entry.clusterId))
+        .map((entry) => fresh.get(entry.clusterId) ?? entry)
+      for (const entry of entries) {
+        if (!merged.some((held) => held.clusterId === entry.clusterId)) merged.push(entry)
+      }
+      this.entries = merged
+      this.loadedIds = new Set([...this.loadedIds, ...clusterIds])
       this.settingsState = settingsState
       this.status = 'ready'
       this.error = null
@@ -164,6 +206,16 @@ class ClusterSettingsStore {
       'metricsQueryMode' | 'preferredNamespace' | 'preferredService' | 'fleetPolicy'
     >>,
   ): Promise<void> => {
+    // NEVER FROM A GUESS. A row that was not read from the backend is the
+    // defaults; written back it would replace the file's real entry with
+    // "off, no pinned backend". Read it first, and refuse if that fails.
+    if (!this.isLoaded(clusterId)) {
+      await this.load([clusterId])
+      if (!this.isLoaded(clusterId)) {
+        this.error = `${clusterId}'s settings could not be read, so nothing was changed.`
+        return
+      }
+    }
     const current = this.for(clusterId)
     const next = { ...current, ...change }
 

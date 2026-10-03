@@ -22,6 +22,7 @@
   the Go domain (assessCertificateRenewal) where a test argues with it.
 -->
 <script lang="ts">
+  import { normaliseNamespaces } from '$lib/namespaceScope'
   import DetailSection from './DetailSection.svelte'
   import DetailList, { type DetailRow } from './DetailList.svelte'
   import ColumnDivider from './ColumnDivider.svelte'
@@ -817,7 +818,7 @@
   // open Pods first — a fact that is either true or not, showing up
   // depending on where the operator had been.
   $effect(() => {
-    if (report && clusterId) ensureVulnerabilities(clusterId, namespace)
+    if (report && clusterId) ensureVulnerabilities(clusterId, normaliseNamespaces([namespace]))
   })
 
   /**
@@ -828,7 +829,7 @@
    * the fact that turns a per-workload list into a single bump.
    */
   const sharingImage = $derived(
-    report ? workloadsRunningImage(clusterId, namespace, report.artifact) : 0,
+    report ? workloadsRunningImage(clusterId, normaliseNamespaces([namespace]), report.artifact) : 0,
   )
 </script>
 

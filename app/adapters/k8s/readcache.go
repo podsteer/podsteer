@@ -7,6 +7,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // The polling reads a UI makes, coalesced.
@@ -85,27 +87,54 @@ func cachedRead[T any](
 	cache.mu.Unlock()
 
 	fetchCtx, release := detach(ctx)
-	entry.value, entry.err = fetch(fetchCtx)
+	entry.value, entry.err = guardedFetch(fetchCtx, key, fetch)
 	release()
 
-	cache.mu.Lock()
+	// Publishing is a separate step so nothing above can leave the entry "in
+	// flight": a waiter is parked on done, and one that never closes costs
+	// every later caller its full timeout.
+	cache.finish(key, entry)
+
+	if entry.err != nil {
+		return zero, entry.err
+	}
+	return result[T](entry)
+}
+
+// guardedFetch runs the fetch and turns a panic into an error.
+//
+// The fetch includes mapping, and mapping includes the operator's own
+// custom-column expressions. A panic there used to skip the close and leave
+// the entry in flight until forget(); it is now an ordinary failure, which
+// finish() then declines to cache.
+func guardedFetch[T any](ctx context.Context, key string, fetch func(context.Context) (T, error)) (value T, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			var zero T
+			value, err = zero, safego.Error("read cache "+key, r)
+		}
+	}()
+	return fetch(ctx)
+}
+
+// finish publishes a completed entry: stamps it, drops it when it failed, and
+// wakes everyone waiting on it.
+func (c *readCache) finish(key string, entry *readEntry) {
+	defer close(entry.done)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	entry.at = time.Now()
 	if entry.err != nil {
 		// A FAILURE IS NOT WORTH REUSING. Handing the same error to every
 		// caller for two seconds turns one refused read into a pane that
 		// stays broken after the permission is granted, and the retry costs
 		// nothing when the answer was never received.
-		if cache.entries[key] == entry {
-			delete(cache.entries, key)
+		if c.entries[key] == entry {
+			delete(c.entries, key)
 		}
 	}
-	cache.mu.Unlock()
-	close(entry.done)
-
-	if entry.err != nil {
-		return zero, entry.err
-	}
-	return result[T](entry)
 }
 
 // cachedSlice is cachedRead for a list, handing every caller its own slice.

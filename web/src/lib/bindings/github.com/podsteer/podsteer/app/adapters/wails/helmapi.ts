@@ -47,6 +47,14 @@ export function ListReleases(clusterID: string, $namespace: string, refresh: boo
 }
 
 /**
+ * ListReleasesIn is ListReleases over a set of namespaces; empty means every
+ * one. See HelmService.ListReleasesIn for how the listings are merged.
+ */
+export function ListReleasesIn(clusterID: string, namespaces: string[] | null, refresh: boolean): $CancellablePromise<$models.HelmListing> {
+    return $Call.ByID(2926117590, clusterID, namespaces, refresh);
+}
+
+/**
  * ReadRelease reads ONE revision of ONE release, because somebody clicked.
  * 
  * THE SECOND METHOD ON THIS SURFACE, AND A DIFFERENT ACT FROM THE FIRST.

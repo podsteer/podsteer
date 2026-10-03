@@ -54,6 +54,13 @@ export function Credits(): $CancellablePromise<$models.Credit[] | null> {
 }
 
 /**
+ * DebugInfo returns the version and platform facts for a bug report.
+ */
+export function DebugInfo(): $CancellablePromise<$models.DebugInfo> {
+    return $Call.ByID(5708393);
+}
+
+/**
  * Info returns the running application's identity.
  */
 export function Info(): $CancellablePromise<$models.AppInfo> {

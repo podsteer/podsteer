@@ -201,6 +201,27 @@ func TestListVulnerabilitySummariesSumsOneReportPerContainer(t *testing.T) {
 	}
 }
 
+func TestListVulnerabilitySummariesKeepsSameNamedWorkloadsInDifferentNamespacesApart(t *testing.T) {
+	adapter, _ := trivyAdapter(t, "dev", jsonResponse(http.StatusOK, severityTable(t, "",
+		reportRow{namespace: "shop", name: "a", subjectKind: "ReplicaSet", subjectName: "web", critical: 1},
+		reportRow{namespace: "blog", name: "b", subjectKind: "ReplicaSet", subjectName: "web", critical: 7},
+	)))
+
+	listing, err := adapter.ListVulnerabilitySummaries(context.Background(), "dev", domain.NamespaceAll)
+	if err != nil {
+		t.Fatalf("ListVulnerabilitySummaries() error = %v", err)
+	}
+	if len(listing.Summaries) != 2 {
+		t.Fatalf("got %d summaries, want 2 — same Kind/name in two namespaces", len(listing.Summaries))
+	}
+	for _, got := range listing.Summaries {
+		want := map[domain.NamespaceName]int{"shop": 1, "blog": 7}[got.Namespace]
+		if got.Counts.Critical != want || want == 0 {
+			t.Errorf("%s/%s critical = %d, want %d", got.Namespace, got.Subject, got.Counts.Critical, want)
+		}
+	}
+}
+
 // THE READ MUST NOT ASK FOR THE WATCH CACHE, and this is the request-level
 // guard for it.
 //

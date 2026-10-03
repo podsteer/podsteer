@@ -369,10 +369,18 @@ type UpgradeSummary struct {
 	// Count is how many upgrade-impact findings were raised, at any
 	// severity.
 	Count int `json:"count"`
+	// TargetSupport is the support verdict for TargetMinor itself, so the
+	// header can say when the version being checked against is out of
+	// support too.
+	TargetSupport ReleaseSupport `json:"targetSupport"`
 }
 
 func toUpgradeSummary(upgrade domain.UpgradeSummary) UpgradeSummary {
-	return UpgradeSummary{TargetMinor: upgrade.TargetMinor, Count: upgrade.Count}
+	return UpgradeSummary{
+		TargetMinor:   upgrade.TargetMinor,
+		Count:         upgrade.Count,
+		TargetSupport: toReleaseSupport(upgrade.TargetSupport),
+	}
 }
 
 // NodeLoad is one node's share of the work.
@@ -920,6 +928,17 @@ type DiskSummary struct {
 	FullestNode string `json:"fullestNode"`
 	// Filling counts nodes past the warning threshold.
 	Filling int `json:"filling"`
+	// Coverage says how much of the cluster the figures stand for.
+	Coverage DiskCoverage `json:"coverage"`
+}
+
+// DiskCoverage is domain.DiskCoverage: on a cluster too large to ask every
+// kubelet at once, how many answered and how old the oldest answer is.
+type DiskCoverage struct {
+	Asked         int   `json:"asked"`
+	Answered      int   `json:"answered"`
+	OldestSeconds int64 `json:"oldestSeconds"`
+	Rolling       bool  `json:"rolling"`
 }
 
 // toDiskSummary translates the domain's reduction.
@@ -929,6 +948,12 @@ func toDiskSummary(summary domain.DiskSummary) DiskSummary {
 		FullestPercent: summary.FullestPercent,
 		FullestNode:    summary.FullestNode,
 		Filling:        summary.Filling,
+		Coverage: DiskCoverage{
+			Asked:         summary.Coverage.Asked,
+			Answered:      summary.Coverage.Answered,
+			OldestSeconds: summary.Coverage.OldestSeconds,
+			Rolling:       summary.Coverage.Rolling,
+		},
 	}
 }
 

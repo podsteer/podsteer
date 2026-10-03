@@ -1,0 +1,58 @@
+{
+ "bytes": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "k8s_src_owner_name": "web",
+      "k8s_src_namespace": "storefront",
+      "k8s_dst_owner_name": "api",
+      "k8s_dst_namespace": "storefront"
+     },
+     "value": [
+      1759400000.123,
+      "5120.0"
+     ]
+    },
+    {
+     "metric": {
+      "k8s_src_owner_name": "api",
+      "k8s_src_namespace": "storefront",
+      "k8s_dst_owner_name": "web",
+      "k8s_dst_namespace": "storefront"
+     },
+     "value": [
+      1759400000.123,
+      "10240.0"
+     ]
+    },
+    {
+     "metric": {
+      "k8s_src_owner_name": "api",
+      "k8s_src_namespace": "storefront",
+      "k8s_dst_owner_name": "",
+      "k8s_dst_namespace": ""
+     },
+     "value": [
+      1759400000.123,
+      "300.0"
+     ]
+    },
+    {
+     "metric": {
+      "k8s_src_owner_name": "idle",
+      "k8s_src_namespace": "storefront",
+      "k8s_dst_owner_name": "api",
+      "k8s_dst_namespace": "storefront"
+     },
+     "value": [
+      1759400000.123,
+      "0"
+     ]
+    }
+   ]
+  }
+ }
+}

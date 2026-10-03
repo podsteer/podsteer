@@ -29,6 +29,9 @@ export const API_ERROR_CODES = [
   'cancelled',
   'invalid_input',
   'disruption_budget',
+  // The API server rate limited the request (HTTP 429 outside an eviction).
+  // Not a PodDisruptionBudget and not RBAC.
+  'throttled',
   'conflict',
   'ephemeral_unsupported',
   'tar_missing',
@@ -138,6 +141,8 @@ const RETRYABLE: ReadonlySet<ApiErrorCode> = new Set<ApiErrorCode>([
   // disruptions-allowed count moves as other pods finish rolling, so the
   // same eviction can succeed a minute later with nothing else changed.
   'disruption_budget',
+  // Rate limiting passes by itself; the backend's message says to wait.
+  'throttled',
 ])
 
 /** An error returned by a PodSteer backend call. */

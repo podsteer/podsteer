@@ -46,6 +46,14 @@ type SeriesResult struct {
 	// IntervalSeconds is how often a sample is taken, which tells the UI how
 	// long to wait before a second point can possibly exist.
 	IntervalSeconds int `json:"intervalSeconds"`
+	// SampledEverySeconds is how often THIS cluster is being sampled right
+	// now: IntervalSeconds while its tab is the one in front, much less
+	// often while it is behind — so the panel can say why the line is
+	// sparse rather than leave a gap to read as an outage.
+	SampledEverySeconds int `json:"sampledEverySeconds"`
+	// BackgroundEverySeconds is the cadence a cluster drops to while nobody
+	// is looking at it, for the panel to state alongside the line.
+	BackgroundEverySeconds int `json:"backgroundEverySeconds"`
 	// Recording reports whether sampling is on at all.
 	Recording bool `json:"recording"`
 }
@@ -125,11 +133,13 @@ func (h *HistoryAPI) GetSeries(clusterID string, windowMinutes, maxPoints int) (
 	}
 
 	return SeriesResult{
-		Samples:         samples,
-		SpanSeconds:     int64(series.Span().Seconds()),
-		RetentionDays:   retention.Days,
-		IntervalSeconds: int(h.history.SamplingInterval().Seconds()),
-		Recording:       retention.Enabled(),
+		Samples:                samples,
+		SpanSeconds:            int64(series.Span().Seconds()),
+		RetentionDays:          retention.Days,
+		IntervalSeconds:        int(h.history.SamplingInterval().Seconds()),
+		SampledEverySeconds:    int(h.history.SampledEvery(id).Seconds()),
+		BackgroundEverySeconds: int(domain.BackgroundSamplingInterval(h.history.SamplingInterval()).Seconds()),
+		Recording:              retention.Enabled(),
 	}, nil
 }
 

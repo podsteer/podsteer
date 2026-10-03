@@ -7,7 +7,7 @@
   the point of the feature:
 
   - THE NAMESPACE FOLLOWS THE TAB, so the two terminals and the rest of the
-    interface agree. When the tab is on "All namespaces" there is no answer and
+    interface agree. When the tab is on "All namespaces", or on several, there is no answer and
     the field opens EMPTY with the reason beside it — never a fallback to a
     system namespace, which is where the node shell's own default points and is
     the wrong answer here. See $lib/clusterShell.
@@ -48,7 +48,7 @@
   interface Props {
     open: boolean
     clusterId: string
-    /** The namespace the tab is filtered to, or '' when it is on every one. */
+    /** The namespace the tab is filtered to, or '' when it is on every one or several. */
     namespace: string
     onclose: () => void
     /** Called with the image and namespace for a NEW pod. */

@@ -15,6 +15,44 @@ import { Call as $Call, CancellablePromise as $CancellablePromise } from "@wails
 import * as $models from "./models.js";
 
 /**
+ * ApplicationGraph returns the map of one application: the objects labelled
+ * app.kubernetes.io/instance=<instance> in a namespace, and what they own.
+ */
+export function ApplicationGraph(clusterID: string, $namespace: string, instance: string): $CancellablePromise<$models.PodGraph> {
+    return $Call.ByID(2451967040, clusterID, $namespace, instance);
+}
+
+/**
+ * ExportPodsCSV writes every pod the query matches — every page, in the
+ * table's order — as CSV to wherever the operator chooses, and returns the
+ * path, or "" when they cancelled the dialog.
+ * 
+ * RENDERED AND WRITTEN HERE because the rows are: the webview holds one page
+ * now, and shipping the whole list across the bridge to turn it into a file
+ * would be the payload paging exists to avoid. The cells are the table's
+ * own text (see podCSVCell) and the file is web/src/lib/csv.ts's format,
+ * formula guard included. columns are the visible columns, in order.
+ */
+export function ExportPodsCSV(clusterID: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null, query: $models.PodQuery, columns: $models.CSVColumn[] | null, suggestedName: string): $CancellablePromise<string> {
+    return $Call.ByID(2660454060, clusterID, $namespace, annotationKeys, expressions, query, columns, suggestedName);
+}
+
+/**
+ * ExportPodsCSVIn is ExportPodsCSV over a set of namespaces.
+ */
+export function ExportPodsCSVIn(clusterID: string, namespaces: string[] | null, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null, query: $models.PodQuery, columns: $models.CSVColumn[] | null, suggestedName: string): $CancellablePromise<string> {
+    return $Call.ByID(1808650435, clusterID, namespaces, annotationKeys, expressions, query, columns, suggestedName);
+}
+
+/**
+ * ListApplicationPods returns the pods of one application, by the same rule
+ * its map draws them with.
+ */
+export function ListApplicationPods(clusterID: string, $namespace: string, instance: string): $CancellablePromise<$models.Pod[] | null> {
+    return $Call.ByID(2296016952, clusterID, $namespace, instance);
+}
+
+/**
  * ListApplications groups a cluster's workloads by the application they
  * belong to.
  * 
@@ -24,6 +62,28 @@ import * as $models from "./models.js";
  */
 export function ListApplications(clusterID: string, $namespace: string): $CancellablePromise<$models.ApplicationInventory> {
     return $Call.ByID(3578460441, clusterID, $namespace);
+}
+
+/**
+ * ListApplicationsIn is ListApplications over a set of namespaces.
+ */
+export function ListApplicationsIn(clusterID: string, namespaces: string[] | null): $CancellablePromise<$models.ApplicationInventory> {
+    return $Call.ByID(3073368250, clusterID, namespaces);
+}
+
+/**
+ * ListPodKeys names every pod the query matches, across every page — what
+ * "select all matching" ticks. The page in the query is ignored.
+ */
+export function ListPodKeys(clusterID: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null, query: $models.PodQuery): $CancellablePromise<$models.PodKey[] | null> {
+    return $Call.ByID(730312501, clusterID, $namespace, annotationKeys, expressions, query);
+}
+
+/**
+ * ListPodKeysIn is ListPodKeys over a set of namespaces.
+ */
+export function ListPodKeysIn(clusterID: string, namespaces: string[] | null, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null, query: $models.PodQuery): $CancellablePromise<$models.PodKey[] | null> {
+    return $Call.ByID(1900039598, clusterID, namespaces, annotationKeys, expressions, query);
 }
 
 /**
@@ -48,6 +108,13 @@ export function ListPodsForWorkload(clusterID: string, $namespace: string, kind:
 }
 
 /**
+ * ListPodsIn is ListPods over a set of namespaces; empty means every one.
+ */
+export function ListPodsIn(clusterID: string, namespaces: string[] | null, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.Pod[] | null> {
+    return $Call.ByID(3815295109, clusterID, namespaces, annotationKeys, expressions);
+}
+
+/**
  * ListPodsOnNode returns the pods running on one node, across every namespace.
  */
 export function ListPodsOnNode(clusterID: string, nodeName: string): $CancellablePromise<$models.Pod[] | null> {
@@ -68,10 +135,47 @@ export function ListWorkloads(clusterID: string, kind: string, $namespace: strin
 }
 
 /**
+ * ListWorkloadsIn is ListWorkloads over a set of namespaces.
+ */
+export function ListWorkloadsIn(clusterID: string, kind: string, namespaces: string[] | null, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null): $CancellablePromise<$models.Workload[] | null> {
+    return $Call.ByID(2905229115, clusterID, kind, namespaces, annotationKeys, expressions);
+}
+
+/**
  * PodGraph returns the dependency chain around one pod.
  */
 export function PodGraph(clusterID: string, $namespace: string, podName: string): $CancellablePromise<$models.PodGraph> {
     return $Call.ByID(777816347, clusterID, $namespace, podName);
+}
+
+/**
+ * PodUsageHistory returns one pod's recent usage, kept in Go's memory from
+ * every pod list read — so the drawer has a chart for a pod that was never
+ * on a page the webview held. Empty when nothing has measured it yet.
+ */
+export function PodUsageHistory(clusterID: string, $namespace: string, name: string): $CancellablePromise<$models.UsagePoint[] | null> {
+    return $Call.ByID(3381487548, clusterID, $namespace, name);
+}
+
+/**
+ * QueryPods returns one page of the pod table — what its search box, status
+ * chips, sort and pager say — and the counts around it, rather than the whole
+ * list. See domain.QueryPods, and CLAUDE.md, "The pod table is paged in Go".
+ * 
+ * annotationKeys and expressions are the list's projection, exactly as
+ * ListPods takes them; query.Columns are the same custom columns as specs,
+ * for what they add to the searchable text.
+ */
+export function QueryPods(clusterID: string, $namespace: string, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null, query: $models.PodQuery): $CancellablePromise<$models.PodPage> {
+    return $Call.ByID(3494078594, clusterID, $namespace, annotationKeys, expressions, query);
+}
+
+/**
+ * QueryPodsIn is QueryPods over a set of namespaces; the page is cut from
+ * the merged list.
+ */
+export function QueryPodsIn(clusterID: string, namespaces: string[] | null, annotationKeys: string[] | null, expressions: $models.CustomExpression[] | null, query: $models.PodQuery): $CancellablePromise<$models.PodPage> {
+    return $Call.ByID(3979175533, clusterID, namespaces, annotationKeys, expressions, query);
 }
 
 /**
@@ -95,6 +199,13 @@ export function RolloutHistory(clusterID: string, kind: string, $namespace: stri
  */
 export function WorkloadConsumption(clusterID: string, kind: string, $namespace: string): $CancellablePromise<{ [_ in string]?: $models.Consumption } | null> {
     return $Call.ByID(3725178438, clusterID, kind, $namespace);
+}
+
+/**
+ * WorkloadConsumptionIn is WorkloadConsumption over a set of namespaces.
+ */
+export function WorkloadConsumptionIn(clusterID: string, kind: string, namespaces: string[] | null): $CancellablePromise<{ [_ in string]?: $models.Consumption } | null> {
+    return $Call.ByID(2933741961, clusterID, kind, namespaces);
 }
 
 /**

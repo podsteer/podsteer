@@ -6,6 +6,10 @@ change. Everything about the architecture is in [CLAUDE.md](CLAUDE.md), which is
 written for both humans and coding agents and is the fastest way to understand
 why the code is laid out as it is.
 
+Everyone taking part is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md); report concerns to
+[conduct@podsteer.com](mailto:conduct@podsteer.com).
+
 ## Licensing: sign your work
 
 PodSteer is Apache-2.0, and contributions come in under the same licence —

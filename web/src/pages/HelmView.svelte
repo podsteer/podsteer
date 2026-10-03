@@ -56,7 +56,7 @@
   import ErrorBanner from '$lib/components/ErrorBanner.svelte'
   import KubectlHint from '$lib/components/KubectlHint.svelte'
   import { toApiError, type ApiError } from '$lib/api/errors'
-  import { ALL_NAMESPACES, listHelmReleases, type HelmListing, type HelmRelease } from '$lib/api/client'
+  import { listHelmReleasesIn, type HelmListing, type HelmRelease } from '$lib/api/client'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { formatAge, formatClockTime } from '$lib/format'
   import {
@@ -126,13 +126,13 @@
    */
   let generation = 0
 
-  async function load(clusterId: string, namespace: string, refresh: boolean): Promise<void> {
-    listedFor = `${clusterId} ${namespace}`
+  async function load(clusterId: string, namespaces: string[], refresh: boolean): Promise<void> {
+    listedFor = `${clusterId} ${namespaces.join(',')}`
     loading = true
     error = null
     const issued = ++generation
     try {
-      const answer = await listHelmReleases(clusterId, namespace, refresh)
+      const answer = await listHelmReleasesIn(clusterId, namespaces, refresh)
       if (issued !== generation) return
       listing = answer
     } catch (cause) {
@@ -156,9 +156,9 @@
    * the poll tick in disguise.
    */
   $effect(() => {
-    const key = `${session.cluster.id} ${session.namespace}`
+    const key = `${session.cluster.id} ${session.scopeKey}`
     if (key === listedFor) return
-    void load(session.cluster.id, session.namespace, false)
+    void load(session.cluster.id, session.selectedNamespaces, false)
   })
 
   /**
@@ -170,7 +170,7 @@
     const presses = session.manualRefreshes
     if (presses === seenRefreshes) return
     seenRefreshes = presses
-    void load(session.cluster.id, session.namespace, true)
+    void load(session.cluster.id, session.selectedNamespaces, true)
   })
 
   const view = $derived(helmState(listing?.status ?? 'listed', listing?.refusal ?? ''))
@@ -191,8 +191,8 @@
 
   const listedAt = $derived(helmTime(listing?.listedAt ?? 0))
 
-  /** The namespace the page is scoped to, for display and for the commands. */
-  const scope = $derived(session.namespace === ALL_NAMESPACES ? '' : session.namespace)
+  /** The namespaces the page is scoped to, in words; '' for All. */
+  const scope = $derived(session.scope.namespaces.join(', '))
 
   // --- The release drawer ----------------------------------------------------
   //

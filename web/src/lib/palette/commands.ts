@@ -82,6 +82,9 @@ export interface CommandContext {
       namespaces" is offered as a command only when it would change
       anything. */
   showsAllNamespaces: boolean
+  /** The namespaces the filter is on — empty when it is on every one — so
+      "Add namespace X" is offered only for one not already in the set. */
+  selectedNamespaces: string[]
   /** The selected kind's singular name, for "New <kind>" — undefined for a
       pseudo-kind, or before kinds have loaded, mirroring the exact gate
       ClusterWorkspace.svelte's own New button applies to
@@ -97,7 +100,10 @@ export interface CommandHandlers {
   goToKind: (kindId: string) => void | Promise<void>
   focusCluster: (clusterId: string) => void | Promise<void>
   setNamespace: (namespace: string) => void | Promise<void>
+  /** Adds a namespace to the filter's set rather than replacing it. */
+  addNamespace: (namespace: string) => void | Promise<void>
   openSettings: () => void
+  openAbout: () => void
   openOrganise: () => void
   openShortcutSheet: () => void
   refresh: () => void | Promise<void>
@@ -150,15 +156,29 @@ export function buildCommands(context: CommandContext, handlers: CommandHandlers
       run: () => handlers.setNamespace(''),
     })
   }
+  // The filter is a set: "Filter to X" makes it exactly X, "Add namespace X"
+  // widens it by one. Adding is offered only when there is a set to add to
+  // and X is not already in it — on All, adding one would be filtering to it.
+  const selected = new Set(context.selectedNamespaces)
   for (const namespace of context.namespaces) {
     commands.push({
       id: `namespace:${namespace}`,
-      title: namespace,
-      keywords: [],
+      title: `Filter to ${namespace}`,
+      keywords: [namespace, 'namespace'],
       group: 'Namespaces',
       scope: 'cluster',
       run: () => handlers.setNamespace(namespace),
     })
+    if (!context.showsAllNamespaces && !selected.has(namespace)) {
+      commands.push({
+        id: `namespace-add:${namespace}`,
+        title: `Add namespace ${namespace}`,
+        keywords: [namespace, 'namespace'],
+        group: 'Namespaces',
+        scope: 'cluster',
+        run: () => handlers.addNamespace(namespace),
+      })
+    }
   }
 
   commands.push(
@@ -169,6 +189,22 @@ export function buildCommands(context: CommandContext, handlers: CommandHandlers
       group: 'Commands',
       scope: 'global',
       run: handlers.openSettings,
+    },
+    {
+      id: 'action:copy-debug-info',
+      title: 'Copy debug info',
+      keywords: ['bug', 'diagnostics', 'version', 'about', 'support'],
+      group: 'Commands',
+      scope: 'global',
+      run: handlers.openAbout,
+    },
+    {
+      id: 'action:report-bug',
+      title: 'Report a bug',
+      keywords: ['issue', 'github', 'feedback', 'problem'],
+      group: 'Commands',
+      scope: 'global',
+      run: handlers.openAbout,
     },
     {
       id: 'action:organise',

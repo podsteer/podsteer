@@ -59,6 +59,13 @@ export const ADMISSION_GROUP = 'admissionregistration.k8s.io'
  */
 export const PARENT_DEFAULT_KIND = 'Gateway'
 
+/**
+ * The API group Workload and PodGroup — Kubernetes' gang scheduling, beta in
+ * 1.37 — live in. It is also PriorityClass's group, so adopting it at
+ * discovery lists that kind too.
+ */
+export const SCHEDULING_GROUP = 'scheduling.k8s.io'
+
 /** The Kind a route's backend reference means when it names none — likewise a CRD default. */
 export const BACKEND_DEFAULT_KIND = 'Service'
 
@@ -74,6 +81,8 @@ export type StandardPanel =
   | 'validating-admission-policy-binding'
   | 'mutating-admission-policy'
   | 'mutating-admission-policy-binding'
+  | 'workload'
+  | 'pod-group'
 
 /**
  * Selects a panel from the opened object's API group and Kind, or null.
@@ -114,6 +123,12 @@ export function standardPanelFor(
     if (kind === 'ValidatingAdmissionPolicyBinding') return 'validating-admission-policy-binding'
     if (kind === 'MutatingAdmissionPolicy') return 'mutating-admission-policy'
     if (kind === 'MutatingAdmissionPolicyBinding') return 'mutating-admission-policy-binding'
+    return null
+  }
+
+  if (group === SCHEDULING_GROUP) {
+    if (kind === 'Workload') return 'workload'
+    if (kind === 'PodGroup') return 'pod-group'
     return null
   }
 

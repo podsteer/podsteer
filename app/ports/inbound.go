@@ -36,6 +36,11 @@ type ClusterService interface {
 	// Disconnect closes a connection and releases everything cached for it.
 	Disconnect(ctx context.Context, id domain.ClusterID) error
 
+	// RefreshCredentials drops the client an open cluster is using so the next
+	// request is built from the kubeconfig as it stands — the answer to a 401
+	// after the operator logged in again elsewhere. Does not end port-forwards.
+	RefreshCredentials(ctx context.Context, id domain.ClusterID) error
+
 	// Connections returns the currently connected clusters, in the order they
 	// were connected, so the tab bar does not reorder itself on refresh.
 	Connections(ctx context.Context) ([]domain.Cluster, error)
@@ -88,9 +93,43 @@ type WorkloadService interface {
 	// the annotations projection asks for — see domain.Projection.
 	ListPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Pod, error)
 
+	// ListPodsIn is ListPods over a scope of namespaces. The *In methods
+	// below are the same reads over a scope: cluster-wide when it is All or
+	// wide, one read per namespace otherwise, and a failure of any one
+	// namespace is the failure of the list, never a shorter answer.
+	ListPodsIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, projection domain.Projection) ([]domain.Pod, error)
+
+	// QueryPods answers one page of the pod list — search, status chips,
+	// sort, offset and limit — with the counts the table around it needs.
+	// See domain.QueryPods.
+	QueryPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection, query domain.PodQuery) (domain.PodPage, error)
+
+	// QueryPodsIn is QueryPods over a scope; the page is cut from the merged list.
+	QueryPodsIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, projection domain.Projection, query domain.PodQuery) (domain.PodPage, error)
+
+	// MatchingPods is every pod a query keeps, in order, page ignored — for
+	// the CSV export.
+	MatchingPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection, query domain.PodQuery) ([]domain.Pod, error)
+
+	// MatchingPodsIn is MatchingPods over a scope.
+	MatchingPodsIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, projection domain.Projection, query domain.PodQuery) ([]domain.Pod, error)
+
+	// PodUsageHistory is one pod's recent usage, kept in memory from the pod
+	// lists already read. Never persisted.
+	PodUsageHistory(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, name string) ([]domain.UsagePoint, error)
+
+	// ListPodKeys names every pod a query keeps, for "select all matching".
+	ListPodKeys(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection, query domain.PodQuery) ([]domain.PodKey, error)
+
+	// ListPodKeysIn is ListPodKeys over a scope.
+	ListPodKeysIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, projection domain.Projection, query domain.PodQuery) ([]domain.PodKey, error)
+
 	// ListWorkloads returns controllers of the given kind, each carrying the
 	// annotations projection asks for.
 	ListWorkloads(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Workload, error)
+
+	// ListWorkloadsIn is ListWorkloads over a scope.
+	ListWorkloadsIn(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, scope domain.NamespaceScope, projection domain.Projection) ([]domain.Workload, error)
 
 	// PodGraph returns the dependency chain around one pod, from whatever
 	// routes to it down to its containers and what it consumes.
@@ -99,6 +138,15 @@ type WorkloadService interface {
 	// WorkloadGraph returns the dependency chain around one workload: what
 	// routes to it, the pods it currently has, and what they consume.
 	WorkloadGraph(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.PodGraph, error)
+
+	// ApplicationGraph returns the map of one application: the objects
+	// labelled app.kubernetes.io/instance=<instance> in a namespace, what they
+	// own, and what routes to and is consumed by their pods.
+	ApplicationGraph(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, instance string) (domain.PodGraph, error)
+
+	// ListApplicationPods returns the pods of one application by the same
+	// membership rule its map uses, for the Logs tab.
+	ListApplicationPods(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, instance string) ([]domain.Pod, error)
 
 	// ListPodsOnNode returns the pods the scheduler has placed on one node,
 	// across every namespace — "what is running on this machine" is a question
@@ -133,6 +181,9 @@ type WorkloadService interface {
 	// belong to, using Kubernetes' own recommended labels.
 	ListApplications(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.ApplicationInventory, error)
 
+	// ListApplicationsIn is ListApplications over a scope.
+	ListApplicationsIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope) (domain.ApplicationInventory, error)
+
 	// WorkloadConsumption does the same for a whole list, keyed by
 	// "namespace/name".
 	//
@@ -140,6 +191,9 @@ type WorkloadService interface {
 	// no metrics API, or for an account that cannot list pods: the
 	// controllers are one cheap read, and this is the namespace's pods.
 	WorkloadConsumption(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, namespace domain.NamespaceName) (map[string]domain.AggregateUsage, error)
+
+	// WorkloadConsumptionIn is WorkloadConsumption over a scope.
+	WorkloadConsumptionIn(ctx context.Context, id domain.ClusterID, kind domain.WorkloadKind, scope domain.NamespaceScope) (map[string]domain.AggregateUsage, error)
 }
 
 // EventService is the use-case surface for reading Kubernetes Events.
@@ -148,6 +202,9 @@ type EventService interface {
 	// almost always read from the top, each carrying the annotations
 	// projection asks for.
 	ListEvents(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, projection domain.Projection) ([]domain.Event, error)
+
+	// ListEventsIn is ListEvents over a scope of namespaces.
+	ListEventsIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, projection domain.Projection) ([]domain.Event, error)
 
 	// ListEventsForResource returns events for a specific resource.
 	ListEventsForResource(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind, name string) ([]domain.Event, error)
@@ -170,6 +227,22 @@ type EventService interface {
 type FleetService interface {
 	// ListPods lists pods in the given namespace of each cluster.
 	ListPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Pod], error)
+
+	// The *In methods are the same fan-outs over a scope of namespaces.
+	ListPodsIn(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope) ([]domain.ClusterRead[domain.Pod], error)
+	QueryPodsIn(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope, query domain.PodQuery) (domain.FleetPodPage, error)
+	MatchingPodsIn(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope, query domain.PodQuery) ([]domain.Pod, error)
+	ListWorkloadsIn(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope) ([]domain.ClusterRead[domain.Workload], error)
+	ListEventsIn(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope) ([]domain.ClusterRead[domain.Event], error)
+	ListTableIn(ctx context.Context, ids []domain.ClusterID, group, resource string, scope domain.NamespaceScope) ([]domain.ClusterRead[domain.ResourceTable], error)
+
+	// QueryPods answers one page of the merged pod list, with every
+	// cluster's own verdict. See domain.FleetPodPage.
+	QueryPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName, query domain.PodQuery) (domain.FleetPodPage, error)
+
+	// MatchingPods is every pod of the merged list a query keeps, page
+	// ignored — for the CSV export.
+	MatchingPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName, query domain.PodQuery) ([]domain.Pod, error)
 
 	// ListWorkloads lists every controller kind in domain.FleetWorkloadKinds
 	// in the given namespace of each cluster. A cluster that refuses some
@@ -235,6 +308,10 @@ type HistoryService interface {
 	// SetSamplingInterval changes the cadence, taking effect at once rather
 	// than after the current interval elapses.
 	SetSamplingInterval(interval time.Duration) error
+
+	// SampledEvery is how often one cluster is actually being sampled now:
+	// the interval while somebody is looking at it, slower while nobody is.
+	SampledEvery(id domain.ClusterID) time.Duration
 }
 
 // RBACService is the use-case surface for the RBAC explorer.
@@ -304,6 +381,9 @@ type HelmService interface {
 	// beside it actionable rather than decorative.
 	ListReleases(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, refresh bool) (domain.HelmListing, error)
 
+	// ListReleasesIn is ListReleases over a scope of namespaces.
+	ListReleasesIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, refresh bool) (domain.HelmListing, error)
+
 	// ReadRelease reads ONE revision of ONE release, because somebody
 	// clicked.
 	//
@@ -361,6 +441,9 @@ type ResourceService interface {
 	// Each row carries its labels and the annotations projection asks for.
 	ListTable(ctx context.Context, id domain.ClusterID, kindID string, namespace domain.NamespaceName, projection domain.Projection) (domain.ResourceTable, error)
 
+	// ListTableIn is ListTable over a scope of namespaces; the tables are merged.
+	ListTableIn(ctx context.Context, id domain.ClusterID, kindID string, scope domain.NamespaceScope, projection domain.Projection) (domain.ResourceTable, error)
+
 	// NamespaceInventory reports what one namespace holds, kind by kind.
 	//
 	// A use case rather than a port method because the answer is assembled:
@@ -396,6 +479,9 @@ type ResourceService interface {
 	// and is never an error. See ports.ResourcePort for why this is not part
 	// of any list call.
 	VulnerabilitySummaries(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) (domain.VulnerabilityListing, error)
+
+	// VulnerabilitySummariesIn is VulnerabilitySummaries over a scope.
+	VulnerabilitySummariesIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope) (domain.VulnerabilityListing, error)
 }
 
 // SettingsService is the use-case surface for the backend-owned settings.
@@ -496,6 +582,10 @@ type MetricsQueryUseCase interface {
 		scope domain.MetricScope,
 		window time.Duration,
 	) (domain.BackendSeriesResult, error)
+
+	// Backends lists every backend discovery found, best first, for the
+	// Settings picker. A service listing only: nothing is queried.
+	Backends(ctx context.Context, id domain.ClusterID) ([]domain.MetricsBackendCandidate, error)
 }
 
 // VendorCLIService is what the frontend asks about cloud CLIs.

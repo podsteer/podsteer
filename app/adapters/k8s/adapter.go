@@ -96,6 +96,9 @@ type Adapter struct {
 	// else — see promquery.go, where the reason is that each retry is a
 	// denied request in somebody's audit log.
 	queryRefusals forbiddenBackends
+	// forwardRoutes remembers which backends refused the proxy itself and
+	// are reached through an ephemeral port-forward — see promforward.go.
+	forwardRoutes forwardRoutes
 	// generations numbers each cluster's connection. Everything the
 	// monitoring-backend read caches is written under the generation captured
 	// before the request, so an answer computed against a connection that has
@@ -123,6 +126,9 @@ type Adapter struct {
 	// two caches above it holds nothing for long — it exists to stop the same
 	// request leaving twice in one tick. See readcache.go.
 	reads readCache
+	// changes tells the topology that something in a cluster changed: the
+	// watch stores' events and every write. See topology.go; nil is a no-op.
+	changes *changeNotifier
 }
 
 // Compile-time proof that the adapter satisfies every outbound port it claims.
@@ -156,10 +162,16 @@ func New(cfg Config, logger *slog.Logger) *Adapter {
 	factory := newClientFactory(cfg)
 	factory.logger = scoped
 
+	changes := &changeNotifier{}
+	watches := newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery)
+	// Before anything can start a reflector: ensure runs only on a read.
+	watches.changes = changes
+
 	return &Adapter{
 		factory:    factory,
 		logger:     scoped,
-		watches:    newWatchManager(cfg.LiveWatch, scoped, idleAfter, sweepEvery, recheckEvery),
+		changes:    changes,
+		watches:    watches,
 		forwards:   portForwards{byID: make(map[string]*forwarder)},
 		nodeShells: nodeShells{byID: make(map[string]domain.NodeShell)},
 
@@ -240,7 +252,13 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// disconnected cluster's forward simply stayed in the activity list,
 	// labelled with a cluster nothing was connected to.
 	a.stopPortForwardsFor(id)
-	// THE CLIENT GOES NEXT, AND THE ORDER IS LOAD-BEARING. A read racing
+	a.release(id)
+}
+
+// release drops everything held for id except its port-forwards. Invalidate
+// stops those first; RefreshClient leaves them.
+func (a *Adapter) release(id domain.ClusterID) {
+	// THE CLIENT GOES FIRST HERE, AND THE ORDER IS LOAD-BEARING. A read racing
 	// this call can re-`ensure` a watch set at any point, so the invalidation
 	// has to happen while `forget` is still ahead of it: the racing read gets
 	// a rebuilt client, and `forget` then destroys whatever set exists.
@@ -277,6 +295,9 @@ func (a *Adapter) Invalidate(id domain.ClusterID) {
 	// client set the factory just dropped, which is what keeps it from
 	// outliving the config it was built from.
 	a.queryRefusals.forget(id)
+	// And which backends are reached through a forward: the next connection
+	// may be another cluster, where the proxy works.
+	a.forwardRoutes.forget(id)
 	// And WHERE monitoring is, not only whether it may be reached. This is
 	// the longest-lived answer the adapter holds — half an hour, because a
 	// monitoring stack is installed once — and it is a Service coordinate, so
@@ -323,4 +344,7 @@ func (a *Adapter) StopAllWatches() {
 func (a *Adapter) forgetReads(id domain.ClusterID) {
 	a.reads.forget(id.String())
 	a.helm.forget(id)
+	// A write is a change, and the writes say which cluster but not where in
+	// it; the topology's feed coalesces this with whatever the watch saw.
+	a.changes.changed(id, domain.NamespaceAll)
 }

@@ -161,7 +161,13 @@ function coordinates(kind: ResourceKind): Pick<BulkItem, 'group' | 'version' | '
   return { group: kind.group, version: kind.version, kind: kind.kind }
 }
 
-export function podItem(kind: ResourceKind, pod: Pod): BulkItem {
+/** Only the three facts a plan reads, so a pod known by its key alone — ticked
+    by "select all matching", or on a page no longer on screen — plans the
+    same as one whose row is. */
+export function podItem(
+  kind: ResourceKind,
+  pod: Pick<Pod, 'namespace' | 'name' | 'controlledBy'>,
+): BulkItem {
   const controller = controllerOf(pod.controlledBy)
   return {
     ...coordinates(kind),

@@ -15,7 +15,7 @@ const view = (over: Partial<SavedView> = {}): SavedView => ({
   id: 'crashing-pods',
   name: 'Crashing pods',
   kindId: 'core/v1/pods',
-  namespace: 'kube-system',
+  namespaces: ['kube-system'],
   search: 're:crash',
   statusFilters: ['crashing'],
   ...over,
@@ -64,7 +64,7 @@ describe('viewMatches', () => {
     expect(
       viewMatches(view(), {
         kindId: 'core/v1/pods',
-        namespace: 'kube-system',
+        namespaces: ['kube-system'],
         search: 're:crash',
         statusFilters: ['crashing'],
       }),
@@ -77,23 +77,35 @@ describe('viewMatches', () => {
     expect(
       viewMatches(view({ statusFilters: ['crashing', 'pending'] }), {
         kindId: 'core/v1/pods',
-        namespace: 'kube-system',
+        namespaces: ['kube-system'],
         search: 're:crash',
         statusFilters: ['pending', 'crashing'],
       }),
     ).toBe(true)
   })
 
+  it('compares the namespaces as a set', () => {
+    const current = {
+      kindId: 'core/v1/pods',
+      namespaces: ['keda', 'billing'],
+      search: 're:crash',
+      statusFilters: ['crashing'],
+    }
+    expect(viewMatches(view({ namespaces: ['billing', 'keda'] }), current)).toBe(true)
+    expect(viewMatches(view({ namespaces: ['billing'] }), current)).toBe(false)
+    expect(viewMatches(view({ namespaces: [] }), current)).toBe(false)
+  })
+
   it('does not tick a view that differs in any of the four things it holds', () => {
     const current = {
       kindId: 'core/v1/pods',
-      namespace: 'kube-system',
+      namespaces: ['kube-system'],
       search: 're:crash',
       statusFilters: ['crashing'],
     }
 
     expect(viewMatches(view({ kindId: 'apps/v1/deployments' }), current)).toBe(false)
-    expect(viewMatches(view({ namespace: 'default' }), current)).toBe(false)
+    expect(viewMatches(view({ namespaces: ['default'] }), current)).toBe(false)
     expect(viewMatches(view({ search: '' }), current)).toBe(false)
     expect(viewMatches(view({ statusFilters: [] }), current)).toBe(false)
     expect(viewMatches(view({ statusFilters: ['crashing', 'pending'] }), current)).toBe(false)
@@ -102,27 +114,39 @@ describe('viewMatches', () => {
 
 describe('describeView', () => {
   it('says what it selects, in the order somebody reads it', () => {
-    expect(describeView(view(), 'Pods', '__all__')).toBe(
+    expect(describeView(view(), 'Pods')).toBe(
       'Pods · kube-system · re:crash · crashing',
     )
   })
 
-  it('says all namespaces rather than printing the sentinel', () => {
-    expect(describeView(view({ namespace: '__all__', search: '', statusFilters: [] }), 'Pods', '__all__')).toBe(
+  it('says all namespaces for an empty set', () => {
+    expect(describeView(view({ namespaces: [], search: '', statusFilters: [] }), 'Pods')).toBe(
       'Pods · all namespaces',
+    )
+  })
+
+  it('names a set by the trigger rule, or by a label function given', () => {
+    expect(describeView(view({ namespaces: ['keda', 'billing', 'shop'], search: '', statusFilters: [] }), 'Pods')).toBe(
+      'Pods · billing +2',
+    )
+    expect(
+      describeView(view({ namespaces: ['a', 'b', 'c', 'd'], search: '', statusFilters: [] }), 'Pods'),
+    ).toBe('Pods · 4 namespaces')
+    expect(describeView(view({ search: '', statusFilters: [] }), 'Pods', (names) => names.join('+'))).toBe(
+      'Pods · kube-system',
     )
   })
 
   it('counts chips rather than listing them once there are several', () => {
     expect(
-      describeView(view({ search: '', statusFilters: ['crashing', 'pending'] }), 'Pods', '__all__'),
+      describeView(view({ search: '', statusFilters: ['crashing', 'pending'] }), 'Pods'),
     ).toContain('2 status filters')
   })
 
   it('falls back to the kind id for a kind this cluster does not serve', () => {
     // The list is not keyed by cluster, so a view can name a CRD that only
     // one of the open clusters has. Its id is still a true answer.
-    expect(describeView(view({ kindId: 'acme.io/v1/widgets' }), '', '__all__')).toContain(
+    expect(describeView(view({ kindId: 'acme.io/v1/widgets' }), '')).toContain(
       'acme.io/v1/widgets',
     )
   })
@@ -145,7 +169,21 @@ describe('sanitiseViews', () => {
   it('fills in what is merely missing rather than dropping the view', () => {
     const [only] = sanitiseViews([{ name: 'Bare', kindId: 'core/v1/pods' }])
 
-    expect(only).toMatchObject({ id: 'bare', namespace: '', search: '', statusFilters: [] })
+    expect(only).toMatchObject({ id: 'bare', namespaces: [], search: '', statusFilters: [] })
+  })
+
+  it('migrates the single namespace every view held before the filter was a set', () => {
+    const [named, all, both] = sanitiseViews([
+      { name: 'Old', kindId: 'core/v1/pods', namespace: 'kube-system' },
+      { name: 'Old all', kindId: 'core/v1/pods', namespace: '' },
+      { name: 'New', kindId: 'core/v1/pods', namespaces: ['shop', 'keda', 'shop', 7], namespace: 'ignored' },
+    ])
+
+    expect(named.namespaces).toEqual(['kube-system'])
+    expect(all.namespaces).toEqual([])
+    // The new field wins, sorted and deduplicated, and the old one is never kept.
+    expect(both.namespaces).toEqual(['keda', 'shop'])
+    for (const view of [named, all, both]) expect(view).not.toHaveProperty('namespace')
   })
 
   it('gives two entries with one id two ids, so neither shadows the other', () => {

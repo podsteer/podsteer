@@ -653,7 +653,7 @@ export const HELP_TOPICS = {
       {
         heading: 'What a view holds',
         body: [
-          'The kind, the namespace, the search and the status chips \u2014 the four controls in this row. Applying one sets all four at once and reloads the list.',
+          'The kind, the namespaces, the search and the status chips \u2014 the four controls in this row. Applying one sets all four at once and reloads the list.',
           'It does not hold the sort, the page, the column set or the page size. Each of those is already remembered on its own, per kind or for the whole application, and a view that set them too would silently change every other visit to that kind.',
         ],
       },
@@ -937,6 +937,58 @@ export const HELP_TOPICS = {
         body: [
           "PodSteer does not upgrade, roll back or uninstall. Each re-renders a chart, diffs it against what is live, applies the difference and prunes what the new manifest drops — Helm's own work, and doing it approximately deletes production objects. Copy the command and run it in your own shell.",
           'Run helm get values first: Helm does not carry values forward, and an upgrade without them reverts every value you have set. REPO and VERSION are yours to fill in — a release records the chart\'s name, never where it came from — and the chart name stays a placeholder until a payload tab has been opened.',
+        ],
+      },
+    ],
+  },
+  topology: {
+    title: 'Topology',
+    lede: 'Every object in the namespaces chosen in the sidebar, and every relationship Kubernetes itself has between them, drawn as one map.',
+    sections: [
+      {
+        heading: 'What a line means',
+        body: [
+          'Every line is a relationship the cluster holds: an owner and what it owns, a Service and the pods its selector matches, an Ingress or Route and its backends, an autoscaler and its target, a disruption budget or network policy and the pods it selects, a pod and the configuration it names. A line labelled "via Pod" or "via ReplicaSet" stands in for a hidden kind in between, and says so.',
+          'The counts beside the kinds are complete. Switching a kind off, folding a set of pods or collapsing a group changes what is drawn, never what the page says it found.',
+        ],
+      },
+      {
+        heading: 'Finding an object',
+        body: [
+          'Type a name in Find. kind: and ns: narrow it — kind:Service, ns:web, or both with a name. Enter goes to the next match and Shift+Enter to the previous; an object folded into a set or a collapsed group is found on the box that stands for it.',
+        ],
+      },
+      {
+        heading: 'Bounded',
+        body: [
+          'ConfigMaps, Secrets and volume claims are drawn by the names the pod templates give them. PodSteer does not read them to draw the map — a Secret is never read at all — so a box can name something that does not exist.',
+        ],
+      },
+      {
+        heading: 'Unreadable',
+        body: [
+          'When your account may not list a kind in this scope, its objects are missing from the map, and so is anything reached only through them. "This drawing", above, names the kinds when it happens, and the (?) on the toolbar carries a dot.',
+        ],
+      },
+      {
+        heading: 'Summarised',
+        body: [
+          'Above three thousand pods the backend folds each owner’s pods into one box with complete counts, rather than sending every pod. Narrow the scope to see them one by one.',
+        ],
+      },
+      {
+        heading: 'Changed, and Live',
+        body: [
+          'The map never redraws on its own timer. When something in the scope changes, the toolbar says "Changed — Refresh". Live redraws by itself after a change, waiting longer the bigger the map, and never moves what you are looking at.',
+        ],
+      },
+      {
+        heading: 'Observed traffic',
+        body: [
+          'A layer drawn over the map, not relationships: what the cluster’s own monitoring backend measured between workloads over a window. Off until you switch it on; nothing is asked before that, and nothing on a timer after.',
+          'PodSteer reads it from the Prometheus it discovered in the cluster, through the API server’s proxy on your credentials — only where reading a monitoring backend is turned on, in Settings → Clusters. The backend logs the queries, and "What PodSteer asked" shows them.',
+          'Sources: Istio (sidecars or ambient with istio_requests_total), Linkerd (linkerd-viz’s Prometheus), Beyla or OBI network metrics, Caretta, and Hubble metrics with workload labels. PodSteer installs nothing in your cluster; it only reads metrics that are already there.',
+          'A backend PodSteer could not verify as holding this cluster is named as such; one holding several clusters is narrowed to this one’s namespaces where it can be.',
         ],
       },
     ],

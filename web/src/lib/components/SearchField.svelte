@@ -39,6 +39,22 @@
      * effect (`describeQuery`). Omit to leave both unset.
      */
     description?: string
+    /**
+     * The accessible name, when the placeholder is too short to be one — a
+     * placeholder of syntax hints says nothing to a screen reader.
+     */
+    label?: string
+    /**
+     * Enter steps through matches instead of leaving the field — for a page
+     * that FINDS (the topology) rather than filters. Shift+Enter goes back.
+     */
+    onsubmit?: (backwards: boolean) => void
+    /**
+     * Inside a menu (a namespace or application list's filter): no ⌘K hint,
+     * since ⌘K reaches the page's search and not this one, and the field
+     * takes focus as the menu opens.
+     */
+    inMenu?: boolean
   }
 
   let {
@@ -49,6 +65,9 @@
     class: className = '',
     invalid = false,
     description,
+    label,
+    onsubmit,
+    inMenu = false,
   }: Props = $props()
 
   // `aria-describedby` needs an id to point at, and this field can appear
@@ -59,6 +78,14 @@
 
   let inputEl = $state<HTMLInputElement | null>(null)
 
+  // A menu's filter is where typing goes the moment the menu opens.
+  let focusedOnce = false
+  $effect(() => {
+    if (!inMenu || !inputEl || focusedOnce) return
+    focusedOnce = true
+    inputEl.focus()
+  })
+
   /** Focus the search field. Called from outside via Cmd+K. */
   export function focus(): void {
     inputEl?.focus()
@@ -66,6 +93,11 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && onsubmit) {
+      event.preventDefault()
+      onsubmit(event.shiftKey)
+      return
+    }
     // Enter has nothing to confirm — every keystroke already filters the
     // table live — so it just gets the cursor out of the field.
     if (event.key === 'Escape' || event.key === 'Enter') {
@@ -109,7 +141,7 @@
     spellcheck="false"
     {value}
     {placeholder}
-    aria-label={placeholder}
+    aria-label={label ?? placeholder}
     aria-invalid={invalid || undefined}
     aria-describedby={description ? descriptionId : undefined}
     title={description}
@@ -140,7 +172,7 @@
     >
       <X class="size-3" strokeWidth={2.5} />
     </button>
-  {:else}
+  {:else if !inMenu}
     <span
       class="pointer-events-none absolute right-2 flex items-center gap-0.5 rounded border
              border-outline-variant/40 bg-surface-container px-1.5 py-0.5 text-label-small

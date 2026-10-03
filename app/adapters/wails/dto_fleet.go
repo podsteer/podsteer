@@ -169,3 +169,54 @@ func toClusterEvents(reads []domain.ClusterRead[domain.Event], now time.Time) []
 	}
 	return out
 }
+
+// FleetPodPage is one page of the merged All-clusters pod list, and every
+// open cluster's verdict for the status strip. See domain.FleetPodPage.
+type FleetPodPage struct {
+	// Page is the page itself and its counts, as one cluster's list has.
+	Page PodPage `json:"page"`
+	// Clusters are every cluster read, in tab order, whether or not the
+	// strip's selection shows its rows.
+	Clusters []FleetPodShare `json:"clusters"`
+}
+
+// FleetPodShare is one cluster's chip in the strip: its verdict and the rows
+// it contributes.
+type FleetPodShare struct {
+	Cluster string   `json:"cluster"`
+	Status  string   `json:"status"`
+	Reason  string   `json:"reason"`
+	Missing []string `json:"missing"`
+	// Rows counts the rows this cluster contributes before any filter.
+	Rows int `json:"rows"`
+	// RowsAt is when they were read, in milliseconds since the epoch; zero
+	// when there are none.
+	RowsAt int64 `json:"rowsAt"`
+	// Stale says they were kept from an earlier answer.
+	Stale bool `json:"stale"`
+}
+
+func toFleetPodPage(page domain.FleetPodPage, now time.Time) FleetPodPage {
+	shares := make([]FleetPodShare, len(page.Clusters))
+	for i, share := range page.Clusters {
+		cluster, status, reason, missing := readHeader(domain.ClusterRead[domain.Pod]{
+			Cluster: share.Cluster,
+			Status:  share.Status,
+			Err:     share.Err,
+			Missing: share.Missing,
+		})
+		entry := FleetPodShare{
+			Cluster: cluster,
+			Status:  status,
+			Reason:  reason,
+			Missing: missing,
+			Rows:    share.Rows,
+			Stale:   share.Stale,
+		}
+		if !share.RowsAt.IsZero() {
+			entry.RowsAt = share.RowsAt.UnixMilli()
+		}
+		shares[i] = entry
+	}
+	return FleetPodPage{Page: toPodPage(page.PodPage, now), Clusters: shares}
+}

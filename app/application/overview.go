@@ -109,6 +109,13 @@ type OverviewService struct {
 	mu       sync.Mutex
 	cache    map[domain.ClusterID]overviewEntry
 	inflight map[domain.ClusterID]*overviewCall
+
+	// demanded is when somebody last ASKED for each cluster's assessment —
+	// a tab's own poll or the comparison selector, never the sampler, which
+	// calls OverviewWithin. It is what lets the sampler tell the cluster an
+	// operator is looking at from the twelve open behind it. See
+	// LastDemanded.
+	demanded map[domain.ClusterID]time.Time
 }
 
 var _ ports.OverviewService = (*OverviewService)(nil)
@@ -169,7 +176,32 @@ var controllerKinds = []domain.WorkloadKind{
 // alternative is an error page in front of an operator who is looking at this
 // screen precisely because something is wrong.
 func (s *OverviewService) Overview(ctx context.Context, id domain.ClusterID) (domain.Overview, error) {
+	s.noteDemand(id)
 	return s.OverviewWithin(ctx, id, overviewFreshness)
+}
+
+// noteDemand stamps a cluster as asked about now.
+func (s *OverviewService) noteDemand(id domain.ClusterID) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.demanded == nil {
+		s.demanded = make(map[domain.ClusterID]time.Time, 4)
+	}
+	s.demanded[id] = time.Now()
+}
+
+// LastDemanded is when somebody last asked for this cluster's assessment —
+// Overview or OverviewForTarget, which in the desktop process only a tab on
+// screen calls (the MCP subcommand calls Overview too, but runs in a process
+// of its own with its own service and no sampler) — or the zero time when
+// nobody has since it was opened.
+//
+// Not OverviewWithin, deliberately: that is the history sampler's door, and
+// a cluster the sampler reads is not thereby one anybody is looking at.
+func (s *OverviewService) LastDemanded(id domain.ClusterID) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.demanded[id]
 }
 
 // OverviewForTarget assesses a connected cluster against a specific upgrade
@@ -191,6 +223,7 @@ func (s *OverviewService) OverviewForTarget(
 	if _, err := s.registry.Get(id); err != nil {
 		return domain.Overview{}, err
 	}
+	s.noteDemand(id)
 	return s.assessWithRetry(ctx, id, targetMinor)
 }
 
@@ -282,6 +315,7 @@ func (s *OverviewService) forget(id domain.ClusterID) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.cache, id)
+	delete(s.demanded, id)
 }
 
 // assessAttempts is how many times an unreachable cluster is re-read before
@@ -716,6 +750,19 @@ func (s *OverviewService) assess(ctx context.Context, id domain.ClusterID, targe
 		TargetVersion:   targetMinor,
 		Now:             time.Now().UTC(),
 	})
+
+	// What the disk figures cover, from the adapter that knows: on a cluster
+	// swept in batches the fullest disk is the fullest of what has answered.
+	// Only beside figures THIS assessment got: a sweep that failed this time
+	// leaves the disks empty, and the last good sweep's coverage beside them
+	// would claim nodes answered that are not in the figure.
+	if reporter, ok := s.metrics.(interface {
+		FilesystemCoverage(domain.ClusterID) (domain.DiskCoverage, bool)
+	}); ok && nodeDisks != nil {
+		if coverage, known := reporter.FilesystemCoverage(id); known {
+			overview.Nodes.Disks.Coverage = coverage
+		}
+	}
 
 	s.logger.Info("assessed cluster",
 		slog.String("cluster", string(id)),

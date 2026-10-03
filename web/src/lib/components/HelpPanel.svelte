@@ -30,6 +30,8 @@
   import { CircleHelp, X } from '@lucide/svelte'
 
   const topic = $derived(helpTopic(help.topic))
+  /** What the page on screen says about itself now, above the standing text. */
+  const live = $derived(help.topic ? (help.provided[help.topic] ?? []) : [])
 
   function onKeydown(event: KeyboardEvent): void {
     if (event.key !== 'Escape') return
@@ -98,6 +100,16 @@
     </header>
 
     <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      {#each live as section, index (index)}
+        <section class="mt-6 first:mt-0 rounded-sm bg-surface-container px-3 py-2" data-help-live>
+          <h3 class="text-title-medium font-semibold text-on-surface">{section.heading}</h3>
+          {#each section.body as paragraph, at (at)}
+            <p class="mt-2 text-body-medium leading-relaxed text-on-surface-variant">
+              {paragraph}
+            </p>
+          {/each}
+        </section>
+      {/each}
       {#each topic.sections as section (section.heading)}
         <section class="mt-6 first:mt-0">
           <h3 class="text-title-medium font-semibold text-on-surface">{section.heading}</h3>

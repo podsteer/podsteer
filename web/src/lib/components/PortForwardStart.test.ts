@@ -120,7 +120,7 @@ describe('choosing a local port for a forward', () => {
 
     await fireEvent.click(getByRole('button', { name: 'Forward' }))
 
-    expect(onstart).toHaveBeenCalledWith(8080)
+    expect(onstart).toHaveBeenCalledWith(8080, false)
   })
 
   it('reports 0 for an empty field, which means the operating system chooses', async () => {
@@ -131,6 +131,17 @@ describe('choosing a local port for a forward', () => {
 
     await fireEvent.click(getByRole('button', { name: 'Forward' }))
 
-    expect(onstart).toHaveBeenCalledWith(0)
+    expect(onstart).toHaveBeenCalledWith(0, false)
+  })
+
+  it('keeps nothing across restarts unless the box is ticked', async () => {
+    // OPT-IN PER FORWARD. The default is that nothing is saved, and what is
+    // saved is only asked for here.
+    const { getByLabelText, getByRole } = render(PortForwardStart, { ...props, portName: '' })
+
+    await fireEvent.click(getByLabelText('Keep'))
+    await fireEvent.click(getByRole('button', { name: 'Forward' }))
+
+    expect(onstart).toHaveBeenCalledWith(0, true)
   })
 })

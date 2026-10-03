@@ -10,7 +10,11 @@
 class SettingsDialogState {
   open = $state(false)
 
-  show = (): void => {
+  /** A section the opener asked for, consumed by the dialog when it opens. */
+  requestedSection = $state<string | null>(null)
+
+  show = (section?: string): void => {
+    this.requestedSection = section ?? null
     this.open = true
   }
 

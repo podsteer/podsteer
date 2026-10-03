@@ -189,7 +189,22 @@
     return counts
   }
 
-  const podChipCounts = $derived(countChips(session.searchedFleetPods, POD_STATUS_CHIPS))
+  // Counted in Go with the page, on the same terms — see PodsView.
+  const podChipCounts = $derived(
+    Object.fromEntries(POD_STATUS_CHIPS.map((chip) => [chip.id, fleet.podCounts.chipCounts?.[chip.id] ?? 0])),
+  )
+
+  /**
+   * Asks Go for the merged page whenever what it names changes — see the
+   * same effect in PodsView. Only the pods table is paged in Go; the key is
+   * empty on the others and never changes there.
+   */
+  let askedFor: string | null = null
+  $effect(() => {
+    const key = session.pageQueryKey
+    if (askedFor !== null && key !== '' && key !== askedFor) void session.requeryPods()
+    askedFor = key
+  })
   const workloadChipCounts = $derived(countChips(session.searchedFleetWorkloads, WORKLOAD_CHIPS))
   const eventChipCounts = $derived(countChips(session.searchedFleetEvents, EVENT_CHIPS))
 
@@ -385,38 +400,15 @@
   function exportCSV(): CSVExport {
     switch (fleet.tab) {
       case 'pods': {
+        // Rendered and written in Go, as the single-cluster pod table's is:
+        // the rows are paged there. The cluster is a column like any other.
         const visible = POD_COLUMNS.filter(isColumnVisible)
-        const cell = (pod: FleetRow<Pod>, id: string): string => {
-          switch (id) {
-            case 'status':
-              return podStatusLabel(pod)
-            case 'cluster':
-              return pod.cluster
-            case 'name':
-              return pod.name
-            case 'namespace':
-              return pod.namespace
-            case 'cpu':
-              return pod.cpu
-            case 'memory':
-              return pod.memory
-            case 'ready':
-              return pod.ready
-            case 'restarts':
-              return String(pod.restarts)
-            case 'controlledBy':
-              return pod.controlledBy || '—'
-            case 'node':
-              return pod.nodeName || '—'
-            case 'age':
-              return formatAge(pod.ageSeconds)
-            default:
-              return ''
-          }
-        }
         return {
-          columns: visible.map((column) => column.label),
-          rows: session.sortedFleetPods.map((pod) => visible.map((column) => cell(pod, column.id))),
+          save: (filename) =>
+            session.exportFleetPodsCSV(
+              visible.map((column) => ({ id: column.id, label: column.label })),
+              filename,
+            ),
         }
       }
       case 'workloads': {

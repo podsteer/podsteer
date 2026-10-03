@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -44,6 +45,83 @@ type Forward struct {
 	// sought. The local port stays bound throughout, so whatever is pointed
 	// at it keeps its address.
 	Reconnecting bool
+	// Lost reports that the reconnect window ran out: nothing matching the
+	// selector came back, and the local port has been released. The forward
+	// stays listed rather than vanishing, because a row that disappears after
+	// two minutes of a network outage is indistinguishable from one the
+	// operator stopped. It keeps looking, slowly, and comes back by itself
+	// when the cluster does; Stop dismisses it.
+	Lost bool
+	// Target is what the operator asked to be forwarded to, as against the pod
+	// it happens to be landed on today. It is what a kept forward is rebuilt
+	// from after a restart.
+	Target ForwardTarget
+}
+
+// ForwardTargetKind says what a forward was asked to point at.
+type ForwardTargetKind string
+
+const (
+	// ForwardToPod is a forward onto one pod's container port.
+	ForwardToPod ForwardTargetKind = "pod"
+	// ForwardToService is a forward onto a Service's port, which PodSteer
+	// resolves to a pod behind it.
+	ForwardToService ForwardTargetKind = "service"
+)
+
+// IsValid reports whether the kind is one this build understands.
+func (k ForwardTargetKind) IsValid() bool {
+	return k == ForwardToPod || k == ForwardToService
+}
+
+// ForwardTarget is the operator's request, kept apart from where it landed.
+//
+// A POD NAME CHANGES WITH EVERY ROLLOUT and a Service's does not, which is why
+// a kept forward is most durable when it points at a Service; a pod forward
+// whose pod is gone by the next launch is reported as paused with the reason.
+type ForwardTarget struct {
+	Kind ForwardTargetKind
+	// Name is the pod or the Service.
+	Name string
+	// ServicePort is the Service port as the operator named it — a number or
+	// a name. Empty for a pod.
+	ServicePort string
+	// PortName is the port's name, which decides the scheme guess.
+	PortName string
+}
+
+// KeptForward is the definition of a forward the operator asked to keep
+// across restarts. It is what reaches the settings file.
+//
+// DEFINITION ONLY, NEVER STATE AND NEVER A SECRET: a context, a namespace, a
+// pod or Service name, two port numbers. No credential, no selector, no
+// address beyond a loopback port, and nothing the cluster returned.
+type KeptForward struct {
+	Namespace NamespaceName
+	Target    ForwardTarget
+	// RemotePort is the container port for a pod forward.
+	RemotePort int
+	// LocalPort is the port on this machine, as bound — never zero, so a
+	// restored forward gives back the address whatever was pointed at it
+	// already has.
+	LocalPort int
+}
+
+// Validate reports whether the definition is usable.
+func (k KeptForward) Validate() error {
+	if strings.TrimSpace(string(k.Namespace)) == "" || strings.TrimSpace(k.Target.Name) == "" {
+		return errors.New("a kept forward needs a namespace and a target")
+	}
+	if !k.Target.Kind.IsValid() {
+		return fmt.Errorf("a kept forward has an unknown target kind %q", k.Target.Kind)
+	}
+	if k.LocalPort < 1 || k.LocalPort > 65535 {
+		return fmt.Errorf("a kept forward has local port %d", k.LocalPort)
+	}
+	if k.Target.Kind == ForwardToPod && (k.RemotePort < 1 || k.RemotePort > 65535) {
+		return fmt.Errorf("a kept forward has remote port %d", k.RemotePort)
+	}
+	return nil
 }
 
 // Address is where to point a browser.

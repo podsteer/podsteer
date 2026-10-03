@@ -14,6 +14,7 @@ import (
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // terminalSizeQueue implements ports.TerminalSizeQueue for resize events.
@@ -238,6 +239,9 @@ func (t *TerminalAPI) StartSession(clusterID, namespace, podName, containerName 
 
 	// Start the exec in a goroutine
 	go func() {
+		// Registered first so it runs LAST: the session's own cleanup below
+		// still runs while a panic unwinds, and only then is it contained.
+		defer safego.Recover("terminal session")
 		defer func() {
 			t.mu.Lock()
 			delete(t.sessions, sessionID)
@@ -353,6 +357,9 @@ func (t *TerminalAPI) StartAttachSession(clusterID, namespace, podName, containe
 	}
 
 	go func() {
+		// Registered first so it runs LAST: the session's own cleanup below
+		// still runs while a panic unwinds, and only then is it contained.
+		defer safego.Recover("terminal session")
 		defer func() {
 			t.mu.Lock()
 			delete(t.sessions, sessionID)
@@ -708,6 +715,9 @@ func (t *TerminalAPI) openExecSession(parent context.Context, id domain.ClusterI
 	stdoutWriter := &terminalOutputWriter{sessionID: sessionID, app: t.app}
 
 	go func() {
+		// Registered first so it runs LAST: the session's own cleanup below
+		// still runs while a panic unwinds, and only then is it contained.
+		defer safego.Recover("terminal session")
 		defer func() {
 			t.mu.Lock()
 			delete(t.sessions, sessionID)
@@ -764,6 +774,9 @@ func (t *TerminalAPI) openAttachSession(parent context.Context, id domain.Cluste
 	stdoutWriter := &terminalOutputWriter{sessionID: sessionID, app: t.app}
 
 	go func() {
+		// Registered first so it runs LAST: the session's own cleanup below
+		// still runs while a panic unwinds, and only then is it contained.
+		defer safego.Recover("terminal session")
 		defer func() {
 			t.mu.Lock()
 			delete(t.sessions, sessionID)

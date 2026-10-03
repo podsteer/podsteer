@@ -253,6 +253,12 @@ var adoptedGroups = map[string]bool{
 	// nothing in the catalog covers this group, so the whole of what admits or
 	// refuses a write was unreachable.
 	"admissionregistration.k8s.io": true,
+	// Workload and PodGroup, Kubernetes' gang scheduling (beta in 1.37, behind
+	// the GenericWorkload gate). Same reasoning as the two above: a cluster has
+	// them only when the gate and the API group are enabled, and nothing in
+	// the catalog covers the group. PriorityClass lives here too, so it is
+	// listed as a side effect.
+	"scheduling.k8s.io": true,
 }
 
 // Worth knowing before adding to the list above: `x-k8s.io` groups — Cluster

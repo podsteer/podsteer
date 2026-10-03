@@ -12,6 +12,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -387,7 +388,7 @@ func TestClusterReportsTheDefaultsForAClusterWithNoEntry(t *testing.T) {
 
 	got := settings.Cluster("never-opened")
 
-	if got != domain.DefaultClusterSettings() {
+	if !reflect.DeepEqual(got, domain.DefaultClusterSettings()) {
 		t.Fatalf("Cluster() = %+v, want the defaults", got)
 	}
 	if got.MetricsQuery.Mode != domain.MetricsQueryOff {
@@ -788,5 +789,43 @@ func TestProxyDialerRefusesWhatValidateRefuses(t *testing.T) {
 		if _, err := settings.Dialer(); err == nil {
 			t.Errorf("Dialer() accepted %+v", settings)
 		}
+	}
+}
+
+func TestNormaliseDropsUnusableOrDuplicatedKeptForwards(t *testing.T) {
+	good := domain.KeptForward{
+		Namespace: "web", RemotePort: 8080, LocalPort: 18080,
+		Target: domain.ForwardTarget{Kind: domain.ForwardToPod, Name: "api-0"},
+	}
+	tests := []struct {
+		name      string
+		forwards  []domain.KeptForward
+		wantKept  int
+		wantReset int
+	}{
+		{"a good one survives", []domain.KeptForward{good}, 1, 0},
+		{"an unknown kind is dropped", []domain.KeptForward{{Namespace: "web", LocalPort: 1, Target: domain.ForwardTarget{Kind: "x", Name: "a"}}}, 0, 1},
+		{"a port out of range is dropped", []domain.KeptForward{{Namespace: "web", RemotePort: 80, LocalPort: 70000, Target: domain.ForwardTarget{Kind: domain.ForwardToPod, Name: "a"}}}, 0, 1},
+		{"one local port kept twice keeps the first", []domain.KeptForward{good, {Namespace: "other", LocalPort: 18080, Target: domain.ForwardTarget{Kind: domain.ForwardToService, Name: "s"}}}, 1, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := domain.DefaultSettings()
+			settings.Clusters["prod"] = domain.ClusterSettings{KeptForwards: tt.forwards}
+
+			reset := settings.Normalise()
+
+			if reset != tt.wantReset {
+				t.Errorf("Normalise() reset %d, want %d", reset, tt.wantReset)
+			}
+			if got := len(settings.Cluster("prod").KeptForwards); got != tt.wantKept {
+				t.Errorf("kept %d forwards, want %d", got, tt.wantKept)
+			}
+			if tt.wantKept == 0 {
+				if _, present := settings.Clusters["prod"]; present {
+					t.Error("an entry with nothing in it was kept")
+				}
+			}
+		})
 	}
 }

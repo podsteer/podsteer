@@ -14,6 +14,7 @@ import (
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // FleetServiceDeps are the collaborators FleetService needs.
@@ -45,6 +46,10 @@ type FleetServiceDeps struct {
 	// slow and the rest are answered without it. Optional; defaults to
 	// fleetReadBudget. Tests shorten it.
 	ReadBudget time.Duration
+	// TextOrder places characters in the order the merged pod table sorts
+	// text in — see WorkloadServiceDeps.TextOrder. Optional for the same
+	// reason.
+	TextOrder domain.CollationKey
 	// Logger receives diagnostics. Optional; defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -95,7 +100,12 @@ type FleetService struct {
 	catalog   *domain.Catalog
 	registry  *Registry
 	budget    time.Duration
+	textOrder domain.CollationKey
 	logger    *slog.Logger
+
+	// podMemo keeps each cluster's last pod rows for the merged table's
+	// slow and unreachable clusters. See QueryPods.
+	podMemo podMemo
 
 	// late holds what a read that outlived its budget eventually came back
 	// with, keyed by cluster, read and namespace, until the next read of the
@@ -139,6 +149,8 @@ var (
 // "slow", both of which are about the tab, not about which cluster the rows
 // were read from.
 func (s *FleetService) Invalidate(id domain.ClusterID) {
+	s.podMemo.forget(id)
+
 	prefix := string(id) + "|"
 	s.late.Range(func(key, _ any) bool {
 		if name, ok := key.(string); ok && strings.HasPrefix(name, prefix) {
@@ -202,6 +214,7 @@ func NewFleetService(deps FleetServiceDeps) (*FleetService, error) {
 		catalog:   deps.Catalog,
 		registry:  deps.Registry,
 		budget:    budget,
+		textOrder: deps.TextOrder,
 		logger:    logger.With(slog.String("service", "fleet")),
 	}, nil
 }
@@ -215,8 +228,17 @@ func NewFleetService(deps FleetServiceDeps) (*FleetService, error) {
 // so `label:` works here exactly as it does on a single cluster.
 // ListPods lists pods in the given namespace of each cluster.
 func (s *FleetService) ListPods(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Pod], error) {
-	return fanOut(ctx, s, "pods", namespace, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.Pod, []string, error) {
-		pods, err := s.workloads.ListPods(ctx, id, namespace, domain.Projection{})
+	return s.ListPodsIn(ctx, ids, domain.ScopeOf(namespace))
+}
+
+// ListPodsIn is ListPods over a scope of namespaces: each cluster reads the
+// scope the way a single cluster does (see readScoped), and a namespace a
+// cluster does not have contributes no rows.
+func (s *FleetService) ListPodsIn(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope) ([]domain.ClusterRead[domain.Pod], error) {
+	return fanOut(ctx, s, "pods", scope, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.Pod, []string, error) {
+		pods, err := readScoped(ctx, scope, domain.Pod.Namespace, func(ctx context.Context, namespace domain.NamespaceName) ([]domain.Pod, error) {
+			return s.workloads.ListPods(ctx, id, namespace, domain.Projection{})
+		})
 		return pods, nil, err
 	})
 }
@@ -224,15 +246,27 @@ func (s *FleetService) ListPods(ctx context.Context, ids []domain.ClusterID, nam
 // ListWorkloads lists every kind in domain.FleetWorkloadKinds in the given
 // namespace of each cluster.
 func (s *FleetService) ListWorkloads(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Workload], error) {
-	return fanOut(ctx, s, "workloads", namespace, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.Workload, []string, error) {
-		return s.readWorkloads(ctx, id, namespace)
+	return s.ListWorkloadsIn(ctx, ids, domain.ScopeOf(namespace))
+}
+
+// ListWorkloadsIn is ListWorkloads over a scope of namespaces.
+func (s *FleetService) ListWorkloadsIn(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope) ([]domain.ClusterRead[domain.Workload], error) {
+	return fanOut(ctx, s, "workloads", scope, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.Workload, []string, error) {
+		return s.readWorkloads(ctx, id, scope)
 	})
 }
 
 // ListEvents lists events in the given namespace of each cluster.
 func (s *FleetService) ListEvents(ctx context.Context, ids []domain.ClusterID, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.Event], error) {
-	return fanOut(ctx, s, "events", namespace, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.Event, []string, error) {
-		events, err := s.events.ListEvents(ctx, id, namespace, domain.Projection{})
+	return s.ListEventsIn(ctx, ids, domain.ScopeOf(namespace))
+}
+
+// ListEventsIn is ListEvents over a scope of namespaces.
+func (s *FleetService) ListEventsIn(ctx context.Context, ids []domain.ClusterID, scope domain.NamespaceScope) ([]domain.ClusterRead[domain.Event], error) {
+	return fanOut(ctx, s, "events", scope, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.Event, []string, error) {
+		events, err := readScoped(ctx, scope, domain.Event.Namespace, func(ctx context.Context, namespace domain.NamespaceName) ([]domain.Event, error) {
+			return s.events.ListEvents(ctx, id, namespace, domain.Projection{})
+		})
 		return events, nil, err
 	})
 }
@@ -257,9 +291,15 @@ func (s *FleetService) ListEvents(ctx context.Context, ids []domain.ClusterID, n
 // cluster's answer arrives late and is handed to the next read, where rows
 // separated from their columns would be cells nothing could position.
 func (s *FleetService) ListTable(ctx context.Context, ids []domain.ClusterID, group, resource string, namespace domain.NamespaceName) ([]domain.ClusterRead[domain.ResourceTable], error) {
+	return s.ListTableIn(ctx, ids, group, resource, domain.ScopeOf(namespace))
+}
+
+// ListTableIn is ListTable over a scope of namespaces; each cluster's table
+// is merged as BrowseService.ListTableIn merges one.
+func (s *FleetService) ListTableIn(ctx context.Context, ids []domain.ClusterID, group, resource string, scope domain.NamespaceScope) ([]domain.ClusterRead[domain.ResourceTable], error) {
 	name := "table:" + group + "/" + resource
 
-	return fanOut(ctx, s, name, namespace, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.ResourceTable, []string, error) {
+	return fanOut(ctx, s, name, scope, ids, func(ctx context.Context, id domain.ClusterID) ([]domain.ResourceTable, []string, error) {
 		kind, err := s.catalog.LookupByResource(id, group, resource)
 		if err != nil {
 			// Not wrapped in anything the classifier reads: this cluster is
@@ -268,7 +308,13 @@ func (s *FleetService) ListTable(ctx context.Context, ids []domain.ClusterID, gr
 			return nil, nil, errKindUnserved
 		}
 
-		table, err := s.resources.ListTable(ctx, id, kind.ID(), namespace, domain.Projection{})
+		kindScope := scope
+		if !kind.Namespaced {
+			kindScope = domain.NamespaceScope{All: true}
+		}
+		table, err := readTableScoped(ctx, kind, kindScope, func(ctx context.Context, namespace domain.NamespaceName) (domain.ResourceTable, error) {
+			return s.resources.ListTable(ctx, id, kind.ID(), namespace, domain.Projection{})
+		})
 		if err != nil {
 			return nil, nil, err
 		}
@@ -291,7 +337,7 @@ var errKindUnserved = errors.New("this cluster does not serve that kind")
 // is missing. Only when nothing answered is the cluster reported failed,
 // with the first refusal standing for all of them — they are the same
 // refusal or the same outage, and five copies of it say nothing more.
-func (s *FleetService) readWorkloads(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName) ([]domain.Workload, []string, error) {
+func (s *FleetService) readWorkloads(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope) ([]domain.Workload, []string, error) {
 	kinds := domain.FleetWorkloadKinds()
 	results := make([][]domain.Workload, len(kinds))
 	errs := make([]error, len(kinds))
@@ -299,7 +345,9 @@ func (s *FleetService) readWorkloads(ctx context.Context, id domain.ClusterID, n
 	var wg sync.WaitGroup
 	for i, kind := range kinds {
 		wg.Go(func() {
-			results[i], errs[i] = s.workloads.ListWorkloads(ctx, id, kind, namespace, domain.Projection{})
+			results[i], errs[i] = readScoped(ctx, scope, domain.Workload.Namespace, func(ctx context.Context, namespace domain.NamespaceName) ([]domain.Workload, error) {
+				return s.workloads.ListWorkloads(ctx, id, kind, namespace, domain.Projection{})
+			})
 		})
 	}
 	wg.Wait()
@@ -342,7 +390,7 @@ type clusterReader[T any] func(ctx context.Context, id domain.ClusterID) (items 
 // with the cluster they name the question a late answer belongs to — see
 // lateKey. A package function rather than a method because Go has no
 // generic methods; the service is the receiver in all but syntax.
-func fanOut[T any](ctx context.Context, s *FleetService, name string, namespace domain.NamespaceName, ids []domain.ClusterID, read clusterReader[T]) ([]domain.ClusterRead[T], error) {
+func fanOut[T any](ctx context.Context, s *FleetService, name string, scope domain.NamespaceScope, ids []domain.ClusterID, read clusterReader[T]) ([]domain.ClusterRead[T], error) {
 	targets, err := s.targets(ids)
 	if err != nil {
 		return nil, err
@@ -360,7 +408,7 @@ func fanOut[T any](ctx context.Context, s *FleetService, name string, namespace 
 	group.SetLimit(fleetConcurrency)
 	for i, id := range targets {
 		group.Go(func() error {
-			results[i] = readOne(ctx, s, name, namespace, id, read)
+			results[i] = readOne(ctx, s, name, scope, id, read)
 			return nil
 		})
 	}
@@ -425,8 +473,8 @@ type lateAnswer struct {
 // The same "<cluster>|<rest>" shape the adapter's read cache keys by, and
 // for the same reason it is sound: a ClusterID may not contain the
 // separator, and a namespace is a DNS label.
-func lateKey(id domain.ClusterID, name string, namespace domain.NamespaceName) string {
-	return string(id) + "|" + name + "|" + namespace.String()
+func lateKey(id domain.ClusterID, name string, scope string) string {
+	return string(id) + "|" + name + "|" + scope
 }
 
 // readOne reads one cluster within the budget, and settles what to say when
@@ -442,8 +490,8 @@ func lateKey(id domain.ClusterID, name string, namespace domain.NamespaceName) s
 // of never, and one that is actually down is reported unreachable once its
 // dial has timed out instead of slow forever. The goroutine exits when the
 // read returns, which the request deadline bounds.
-func readOne[T any](ctx context.Context, s *FleetService, name string, namespace domain.NamespaceName, id domain.ClusterID, read clusterReader[T]) domain.ClusterRead[T] {
-	key := lateKey(id, name, namespace)
+func readOne[T any](ctx context.Context, s *FleetService, name string, scope domain.NamespaceScope, id domain.ClusterID, read clusterReader[T]) domain.ClusterRead[T] {
+	key := lateKey(id, name, scope.Key())
 
 	type answer struct {
 		items   []T
@@ -457,8 +505,14 @@ func readOne[T any](ctx context.Context, s *FleetService, name string, namespace
 	readCtx, release := outlive(ctx)
 	go func() {
 		defer release()
-		items, missing, err := read(readCtx, id)
-		done <- answer{items: items, missing: missing, err: err}
+		var a answer
+		if safego.Run("fleet read "+id.String(), func() {
+			items, missing, err := read(readCtx, id)
+			a = answer{items: items, missing: missing, err: err}
+		}) {
+			a = answer{err: errors.New("the read stopped unexpectedly")}
+		}
+		done <- a
 	}()
 
 	timer := time.NewTimer(s.budget)

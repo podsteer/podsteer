@@ -291,3 +291,52 @@ func TestWaiterLeavesWhenItsOwnCallerGivesUp(t *testing.T) {
 		t.Fatalf("waiter did not leave on its own cancellation: %v", err)
 	}
 }
+
+func TestAPanickingFetchIsAnErrorAndIsNotCached(t *testing.T) {
+	// A mapper panic (custom-column expressions run inside the fetch) used to
+	// leave the entry in flight until forget(), so every later caller waited
+	// out its whole timeout.
+	tests := []struct {
+		name  string
+		panic any
+	}{
+		{"string", "boom"},
+		{"error", errors.New("kaboom")},
+		{"nil map write", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cache readCache
+			var calls atomic.Int64
+
+			fetch := func(context.Context) ([]string, error) {
+				if calls.Add(1) == 1 {
+					if tt.panic == nil {
+						var m map[string]int
+						m["x"] = 1 //nolint:staticcheck // SA5000 on purpose: a real runtime panic, not a panic(value)
+					}
+					panic(tt.panic)
+				}
+				return []string{"ok"}, nil
+			}
+
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+
+			if _, err := cachedRead(&cache, ctx, "dev|pods|", fetch); err == nil {
+				t.Fatal("a panicking fetch returned no error")
+			}
+			cache.mu.Lock()
+			held := len(cache.entries)
+			cache.mu.Unlock()
+			if held != 0 {
+				t.Fatalf("%d entries held after a panic, want none", held)
+			}
+
+			got, err := cachedRead(&cache, ctx, "dev|pods|", fetch)
+			if err != nil || len(got) != 1 {
+				t.Fatalf("retry after panic = %v, %v; want a fresh successful read", got, err)
+			}
+		})
+	}
+}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // This file records what a cluster looked like over time, so the dashboard can
@@ -74,6 +75,10 @@ type HistoryService struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 	once   sync.Once
+
+	// sampled is when each cluster was last sampled, for the due gate.
+	// Guarded by mu.
+	sampled map[domain.ClusterID]time.Time
 
 	// newTicker builds the sampler's tick source. Unexported and set only by
 	// tests: the cadence floor is ten seconds, so a test that waited for real
@@ -166,6 +171,9 @@ func (s *HistoryService) Close() {
 // run is the sampler loop. It is the only goroutine this service starts.
 func (s *HistoryService) run(ctx context.Context) {
 	defer close(s.done)
+	// A backstop: the work inside the loop is contained per iteration, so this
+	// only catches the loop machinery itself.
+	defer safego.Recover("history sampler")
 
 	sampleTicks, stopSamples := s.newTicker(s.SamplingInterval())
 	// Through a closure, because the sampler is rebuilt on reconfigure and a
@@ -178,7 +186,7 @@ func (s *HistoryService) run(ctx context.Context) {
 
 	// Prune once at startup: retention has to be enforced against what a
 	// previous run left behind, not only against what this one writes.
-	s.prune(ctx)
+	safego.Run("history prune", func() { s.prune(ctx) })
 
 	// One sample immediately, so a chart has a point to draw within seconds
 	// of the application opening rather than after the first half minute.
@@ -192,7 +200,7 @@ func (s *HistoryService) run(ctx context.Context) {
 		case <-sampleTicks:
 			s.sampleAll(ctx)
 		case <-prunes.C:
-			s.prune(ctx)
+			safego.Run("history prune", func() { s.prune(ctx) })
 		case <-s.reconfigure:
 			// Rebuild rather than Reset: the new cadence should start from
 			// now, so shortening it takes effect immediately instead of after
@@ -222,26 +230,110 @@ func (s *HistoryService) sampleAll(ctx context.Context) {
 
 	interval := s.SamplingInterval()
 
+	now := time.Now()
 	for _, cluster := range s.registry.All() {
 		if err := ctx.Err(); err != nil {
 			return
 		}
-
-		overview, err := s.assess(ctx, cluster.ID(), interval)
-		if err != nil {
-			s.logger.Debug("skipping sample",
-				slog.String("cluster", cluster.ID().String()),
-				slog.String("error", err.Error()))
+		if !s.due(cluster.ID(), now) {
 			continue
 		}
 
-		sample := domain.NewSampleFromOverview(overview)
-		if err := s.history.Append(ctx, cluster.ID(), sample); err != nil {
-			s.logger.Warn("recording sample failed",
-				slog.String("cluster", cluster.ID().String()),
-				slog.String("error", err.Error()))
-		}
+		// ONE CLUSTER'S PANIC IS THAT CLUSTER'S GAP. The assessment is a
+		// full read of the cluster mapped through code that has met input it
+		// did not expect before; a nil dereference there used to end the
+		// process, and now costs one sample for one cluster.
+		safego.Run("history sample "+cluster.ID().String(), func() {
+			if s.sampleCluster(ctx, cluster, interval) {
+				s.markSampled(cluster.ID(), now)
+			}
+		})
 	}
+}
+
+// demander is the OverviewService's LastDemanded, asserted rather than put on
+// the port: a test's fake assessment answers "always on screen" by not having
+// it, which is the cadence every sample had before this gate existed.
+type demander interface {
+	LastDemanded(domain.ClusterID) time.Time
+}
+
+// SampledEvery is how often a cluster is being sampled right now: every
+// interval while somebody is looking at it — its assessment was asked for
+// within the last two intervals — and every max(ten intervals, five
+// minutes) while nobody is.
+//
+// WHY THE SAMPLER SLOWS DOWN BEHIND THE OPERATOR'S BACK. A sample is a whole
+// assessment — ten or so cluster-wide reads — and with a dozen tabs open the
+// sampler read every one of them on every tick, though only the one in
+// front had anybody looking at its Trend panel. In front, the sample reuses
+// the assessment the tab's own poll just made; behind, it was a cluster
+// read nobody asked for. The chart says which cadence it was drawn at (see
+// SeriesResult.sampledEverySeconds), so a background gap is never mistaken
+// for an outage.
+func (s *HistoryService) SampledEvery(id domain.ClusterID) time.Duration {
+	return s.cadence(id, time.Now(), s.SamplingInterval())
+}
+
+func (s *HistoryService) cadence(id domain.ClusterID, now time.Time, interval time.Duration) time.Duration {
+	tracker, ok := s.overview.(demander)
+	if !ok {
+		return interval
+	}
+	if last := tracker.LastDemanded(id); !last.IsZero() && now.Sub(last) <= 2*interval {
+		return interval
+	}
+	return domain.BackgroundSamplingInterval(interval)
+}
+
+// due reports whether a cluster's next sample is owed at now — the
+// sampler's one gate, ahead of the per-cluster panic wrapper so a skipped
+// cluster costs nothing at all.
+//
+// A cluster at the foreground cadence is owed a sample on EVERY tick — one
+// tick, one sample, whatever the clock says between them. Only the slower
+// background cadence is measured, with half an interval of slack because
+// ticks are not exact, and measured from the last SUCCESSFUL sample (see
+// markSampled): a background cluster whose assessment failed is tried again
+// on the next tick rather than ten intervals later.
+func (s *HistoryService) due(id domain.ClusterID, now time.Time) bool {
+	interval := s.SamplingInterval()
+	every := s.cadence(id, now, interval)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	last, ok := s.sampled[id]
+	return !ok || every <= interval || now.Sub(last) >= every-interval/2
+}
+
+// markSampled stamps a cluster's last successful sample.
+func (s *HistoryService) markSampled(id domain.ClusterID, at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sampled == nil {
+		s.sampled = make(map[domain.ClusterID]time.Time, 4)
+	}
+	s.sampled[id] = at
+}
+
+// sampleCluster records one cluster's sample, and reports whether it did.
+func (s *HistoryService) sampleCluster(ctx context.Context, cluster domain.Cluster, interval time.Duration) bool {
+	overview, err := s.assess(ctx, cluster.ID(), interval)
+	if err != nil {
+		s.logger.Debug("skipping sample",
+			slog.String("cluster", cluster.ID().String()),
+			slog.String("error", err.Error()))
+		return false
+	}
+
+	sample := domain.NewSampleFromOverview(overview)
+	if err := s.history.Append(ctx, cluster.ID(), sample); err != nil {
+		s.logger.Warn("recording sample failed",
+			slog.String("cluster", cluster.ID().String()),
+			slog.String("error", err.Error()))
+		return false
+	}
+	return true
 }
 
 // assess reads one cluster's overview, bounded in time and willing to reuse

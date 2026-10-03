@@ -9,6 +9,7 @@ import (
 
 	"github.com/podsteer/podsteer/app/domain"
 	"github.com/podsteer/podsteer/app/ports"
+	"github.com/podsteer/podsteer/app/safego"
 )
 
 // Copying a file to or from a container is two halves joined by a pipe: the
@@ -127,11 +128,19 @@ func (s *ManagementService) DownloadFromPod(ctx context.Context, id domain.Clust
 	// reader stops, or ctx is cancelled — every one of which is arranged
 	// below before this function returns.
 	go func() {
-		err := s.management.CopyFromPod(ctx, id, namespace, podName, containerName, remotePath, writer)
-		// A nil closes cleanly, which the reader sees as the archive's end;
-		// an error reaches the reader as its next read.
-		_ = writer.CloseWithError(err)
-		execDone <- err
+		var err error
+		// Deferred so a panic still closes the pipe and answers: the reader
+		// below is parked on both.
+		defer func() {
+			if r := recover(); r != nil {
+				err = safego.Error("file copy from pod", r)
+			}
+			// A nil closes cleanly, which the reader sees as the archive's
+			// end; an error reaches the reader as its next read.
+			_ = writer.CloseWithError(err)
+			execDone <- err
+		}()
+		err = s.management.CopyFromPod(ctx, id, namespace, podName, containerName, remotePath, writer)
 	}()
 
 	summary, localErr := s.archive.Extract(ctx, reader, localDir, s.limits, progress)
@@ -178,12 +187,19 @@ func (s *ManagementService) UploadToPod(ctx context.Context, id domain.ClusterID
 	packDone := make(chan packed, 1)
 
 	go func() {
-		summary, err := s.archive.Pack(ctx, writer, localPath, s.limits, progress)
-		// A nil closes cleanly — tar in the container sees the end of the
-		// archive. An error truncates it, and tar's own complaint about
-		// that is the consequence transferOutcome ranks below the cause.
-		_ = writer.CloseWithError(err)
-		packDone <- packed{summary: summary, err: err}
+		var summary domain.TransferSummary
+		var err error
+		defer func() {
+			if r := recover(); r != nil {
+				err = safego.Error("file copy to pod", r)
+			}
+			// A nil closes cleanly — tar in the container sees the end of the
+			// archive. An error truncates it, and tar's own complaint about
+			// that is the consequence transferOutcome ranks below the cause.
+			_ = writer.CloseWithError(err)
+			packDone <- packed{summary: summary, err: err}
+		}()
+		summary, err = s.archive.Pack(ctx, writer, localPath, s.limits, progress)
 	}()
 
 	execErr := s.management.CopyToPod(ctx, id, namespace, podName, containerName, remoteDir, reader)

@@ -22,12 +22,19 @@
  */
 
 import {
-  vulnerabilitySummaries,
+  vulnerabilitySummariesIn,
   type VulnerabilityListing,
   type VulnerabilitySummary,
 } from '$lib/api/client'
 
-/** One cluster-and-namespace's answer, keyed by the subject's "Kind/name". */
+/**
+ * One cluster-and-scope's answer, keyed by "namespace/Kind/name".
+ *
+ * The namespace is part of the key because a scope can span several, and
+ * two namespaces routinely hold a ReplicaSet of the same name. A summary
+ * from a backend that does not say its namespace is keyed under '' and
+ * matched by Kind/name alone, as before.
+ */
 type Summaries = Record<string, VulnerabilitySummary>
 
 /**
@@ -52,8 +59,14 @@ interface Reading {
 const loaded = $state<Record<string, Reading>>({})
 const inFlight = new Set<string>()
 
-function keyOf(clusterId: string, namespace: string): string {
-  return `${clusterId}/${namespace}`
+/** Per cluster and namespace scope — the scope's sorted names, '' for All. */
+function keyOf(clusterId: string, namespaces: readonly string[]): string {
+  return `${clusterId}/${namespaces.join(',')}`
+}
+
+/** The namespace a summary says it is from, '' when it does not say. */
+function namespaceOf(summary: VulnerabilitySummary): string {
+  return (summary as VulnerabilitySummary & { namespace?: string }).namespace ?? ''
 }
 
 /**
@@ -66,17 +79,19 @@ function keyOf(clusterId: string, namespace: string): string {
  * from Go, so the only failure this can see is a cluster that has genuinely
  * gone away — which the list beside it is already saying.
  */
-export function ensureVulnerabilities(clusterId: string, namespace: string): void {
+export function ensureVulnerabilities(clusterId: string, namespaces: readonly string[]): void {
   if (!clusterId) return
 
-  const key = keyOf(clusterId, namespace)
+  const key = keyOf(clusterId, namespaces)
   if (key in loaded || inFlight.has(key)) return
 
   inFlight.add(key)
-  void vulnerabilitySummaries(clusterId, namespace)
+  void vulnerabilitySummariesIn(clusterId, [...namespaces])
     .then((listing: VulnerabilityListing) => {
       const bySubject: Summaries = {}
-      for (const summary of listing.summaries ?? []) bySubject[summary.subject] = summary
+      for (const summary of listing.summaries ?? []) {
+        bySubject[`${namespaceOf(summary)}/${summary.subject}`] = summary
+      }
       loaded[key] = {
         bySubject,
         status: listing.status,
@@ -109,12 +124,13 @@ export function ensureVulnerabilities(clusterId: string, namespace: string): voi
  */
 export function vulnerabilitiesFor(
   clusterId: string,
-  namespace: string,
-  pod: { name: string; controlledBy: string },
+  namespaces: readonly string[],
+  pod: { name: string; controlledBy: string; namespace?: string },
 ): VulnerabilitySummary | undefined {
-  const reading = loaded[keyOf(clusterId, namespace)]
+  const reading = loaded[keyOf(clusterId, namespaces)]
   if (!reading) return undefined
-  return reading.bySubject[pod.controlledBy || `Pod/${pod.name}`]
+  const subject = pod.controlledBy || `Pod/${pod.name}`
+  return reading.bySubject[`${pod.namespace ?? ''}/${subject}`] ?? reading.bySubject[`/${subject}`]
 }
 
 /**
@@ -128,7 +144,7 @@ export function vulnerabilitiesFor(
  */
 export function vulnerabilityReadFor(
   clusterId: string,
-  namespace: string,
+  namespaces: readonly string[],
 ): {
   complete: boolean
   truncated: boolean
@@ -137,7 +153,7 @@ export function vulnerabilityReadFor(
   remaining: number
   cap: number
 } | undefined {
-  const reading = loaded[keyOf(clusterId, namespace)]
+  const reading = loaded[keyOf(clusterId, namespaces)]
   if (!reading) return undefined
   return {
     complete: reading.status === 'complete',
@@ -171,11 +187,11 @@ export function vulnerabilityReadFor(
  */
 export function workloadsRunningImage(
   clusterId: string,
-  namespace: string,
+  namespaces: readonly string[],
   image: string,
 ): number {
   if (!image) return 0
-  const reading = loaded[keyOf(clusterId, namespace)]
+  const reading = loaded[keyOf(clusterId, namespaces)]
   if (!reading) return 0
 
   let count = 0
@@ -198,8 +214,8 @@ export function workloadsRunningImage(
  * render as "nothing found". See vulnerabilityReadFor: only a completed read
  * lets an absence stand for anything.
  */
-export function summariesFor(clusterId: string, namespace: string): VulnerabilitySummary[] {
-  const reading = loaded[keyOf(clusterId, namespace)]
+export function summariesFor(clusterId: string, namespaces: readonly string[]): VulnerabilitySummary[] {
+  const reading = loaded[keyOf(clusterId, namespaces)]
   if (!reading) return []
   return Object.values(reading.bySubject)
 }

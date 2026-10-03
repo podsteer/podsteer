@@ -455,3 +455,56 @@ func TestSamplerPrunesAtStartup(t *testing.T) {
 		t.Error("expected a prune at startup")
 	}
 }
+
+// panickingOverview panics for one cluster and answers for the others.
+type panickingOverview struct {
+	stubOverview
+	panicFor domain.ClusterID
+}
+
+func (p panickingOverview) Overview(ctx context.Context, id domain.ClusterID) (domain.Overview, error) {
+	if id == p.panicFor {
+		var overview *domain.Overview
+		return *overview, nil // a nil dereference, as a mapper bug would produce
+	}
+	return p.stubOverview.Overview(ctx, id)
+}
+
+func (p panickingOverview) OverviewForTarget(ctx context.Context, id domain.ClusterID, _ string) (domain.Overview, error) {
+	return p.Overview(ctx, id)
+}
+
+// One cluster's panic costs that cluster one sample. It used to end the
+// process, with every port-forward and shell in it.
+func TestSamplerSurvivesAPanickingAssessment(t *testing.T) {
+	t.Parallel()
+
+	store := newRecordingHistory()
+	registry := application.NewRegistry()
+	registry.Open(mustCluster(t, "dev", true)) // first, so it panics before prod
+	registry.Open(mustCluster(t, "prod", false))
+
+	service, err := application.NewHistoryService(application.HistoryServiceDeps{
+		History:  store,
+		Overview: panickingOverview{panicFor: "dev"},
+		Registry: registry,
+	})
+	if err != nil {
+		t.Fatalf("NewHistoryService() error = %v", err)
+	}
+	if err := service.SetRetention(context.Background(), domain.NewRetention(1)); err != nil {
+		t.Fatalf("SetRetention() error = %v", err)
+	}
+
+	service.Start(context.Background())
+	defer service.Close()
+
+	select {
+	case <-store.written:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the cluster after the panicking one was never sampled")
+	}
+	if got := store.count(); got != 1 {
+		t.Fatalf("recorded %d samples, want 1 (prod only)", got)
+	}
+}

@@ -522,6 +522,15 @@ export interface BulkResultDTO {
 }
 
 /**
+ * CSVColumn is one column of a CSV export: the table's column id, which
+ * decides the cell, and the heading it is shown under.
+ */
+export interface CSVColumn {
+    "id": string;
+    "label": string;
+}
+
+/**
  * CapacitySummary is the cluster's capacity across every dimension.
  */
 export interface CapacitySummary {
@@ -1195,6 +1204,21 @@ export interface Credit {
 }
 
 /**
+ * CustomColumnSpec is one custom column, as $lib/customColumns persists it.
+ */
+export interface CustomColumnSpec {
+    /**
+     * Source is "label", "annotation" or "jsonpath".
+     */
+    "source": string;
+
+    /**
+     * Key is the label or annotation key, or the JSONPath expression.
+     */
+    "key": string;
+}
+
+/**
  * CustomExpression is one operator-written JSONPath column, as the interface
  * sends it: the column's own id, and the path to read.
  * 
@@ -1214,6 +1238,56 @@ export interface CustomExpression {
      * Path is the JSONPath, as typed: `.status.phase`, `{.spec.replicas}`.
      */
     "path": string;
+}
+
+/**
+ * DebugInfo is what a bug report needs to know about this installation, and
+ * nothing about the operator.
+ * 
+ * EVERY FIELD IS A VERSION OR A PLATFORM. No hostname, no user name, no path,
+ * no cluster or context name: this is pasted into a public issue tracker, and
+ * SECURITY.md's rule about local paths and cluster identity applies to it as
+ * it does to logs. The frontend adds the one thing the backend cannot know
+ * cheaply — how many clusters are open and what Kubernetes versions they run.
+ */
+export interface DebugInfo {
+    /**
+     * Version is the release version, or "dev" for a working-tree build.
+     */
+    "version": string;
+
+    /**
+     * Commit is the VCS revision when the binary carries one. Release builds
+     * pass -buildvcs=false, so this is usually empty; the version is the
+     * identifier there.
+     */
+    "commit": string;
+
+    /**
+     * OS is the operating system's name and version, as the OS reports them.
+     */
+    "os": string;
+
+    /**
+     * Platform is GOOS/GOARCH.
+     */
+    "platform": string;
+
+    /**
+     * GoVersion is the toolchain that built the binary.
+     */
+    "goVersion": string;
+
+    /**
+     * WailsVersion is the application framework version linked in.
+     */
+    "wailsVersion": string;
+
+    /**
+     * Webview is the embedded browser engine's version where the framework
+     * reports one (WebView2 on Windows), else empty.
+     */
+    "webview": string;
 }
 
 /**
@@ -1279,6 +1353,17 @@ export interface DirectoryListing {
 }
 
 /**
+ * DiskCoverage is domain.DiskCoverage: on a cluster too large to ask every
+ * kubelet at once, how many answered and how old the oldest answer is.
+ */
+export interface DiskCoverage {
+    "asked": number;
+    "answered": number;
+    "oldestSeconds": number;
+    "rolling": boolean;
+}
+
+/**
  * DiskSummary is what the kubelets said about node filesystems.
  */
 export interface DiskSummary {
@@ -1303,6 +1388,11 @@ export interface DiskSummary {
      * Filling counts nodes past the warning threshold.
      */
     "filling": number;
+
+    /**
+     * Coverage says how much of the cluster the figures stand for.
+     */
+    "coverage": DiskCoverage;
 }
 
 /**
@@ -1559,6 +1649,50 @@ export interface Finding {
      */
     "truncated": boolean;
     "oldestSeconds": number;
+}
+
+/**
+ * FleetPodPage is one page of the merged All-clusters pod list, and every
+ * open cluster's verdict for the status strip. See domain.FleetPodPage.
+ */
+export interface FleetPodPage {
+    /**
+     * Page is the page itself and its counts, as one cluster's list has.
+     */
+    "page": PodPage;
+
+    /**
+     * Clusters are every cluster read, in tab order, whether or not the
+     * strip's selection shows its rows.
+     */
+    "clusters": FleetPodShare[] | null;
+}
+
+/**
+ * FleetPodShare is one cluster's chip in the strip: its verdict and the rows
+ * it contributes.
+ */
+export interface FleetPodShare {
+    "cluster": string;
+    "status": string;
+    "reason": string;
+    "missing": string[] | null;
+
+    /**
+     * Rows counts the rows this cluster contributes before any filter.
+     */
+    "rows": number;
+
+    /**
+     * RowsAt is when they were read, in milliseconds since the epoch; zero
+     * when there are none.
+     */
+    "rowsAt": number;
+
+    /**
+     * Stale says they were kept from an earlier answer.
+     */
+    "stale": boolean;
 }
 
 /**
@@ -2139,6 +2273,44 @@ export interface MetricsBackend {
 }
 
 /**
+ * MetricsBackendCandidate is one discovered backend for the Settings picker.
+ * Pinning one is SettingsAPI.SetMetricsQuery's preferred namespace and
+ * service.
+ */
+export interface MetricsBackendCandidate {
+    "namespace": string;
+    "service": string;
+    "port": string;
+
+    /**
+     * Product is "Prometheus", "VictoriaMetrics"…
+     */
+    "product": string;
+
+    /**
+     * Rank is discovery's order; 0 is what PodSteer picks when nothing is
+     * pinned.
+     */
+    "rank": number;
+
+    /**
+     * Verified is the node check's remembered answer — verified, fleet,
+     * mismatch, unverifiable — or "" when this backend has not been checked.
+     */
+    "verified": string;
+
+    /**
+     * Detail says what the candidate is for, in words.
+     */
+    "detail": string;
+
+    /**
+     * LinkerdViz marks linkerd-viz's own Prometheus.
+     */
+    "linkerdViz": boolean;
+}
+
+/**
  * Namespace is a namespace as presented to the UI.
  */
 export interface Namespace {
@@ -2544,6 +2716,17 @@ export interface NodeShell {
 }
 
 /**
+ * NodeState is how healthy a box is: ok, warn, bad or neutral (domain.NodeState
+ * names them). `neutral` means nothing was checked, not that it is fine.
+ * 
+ * NO GO CONSTANTS, DELIBERATELY: the binding generator turns a string type
+ * with constants into a TypeScript enum, which a contract written as a string
+ * union cannot accept. Without them it is `string`, which the contract
+ * narrows.
+ */
+export type NodeState = string;
+
+/**
  * NodeSummary counts nodes by condition.
  */
 export interface NodeSummary {
@@ -2740,6 +2923,30 @@ export interface Overview {
      * field that could ask about one neither table has heard of.
      */
     "knownMinors": string[] | null;
+}
+
+/**
+ * PausedPortForward is a forward saved across restarts that is not running.
+ */
+export interface PausedPortForward {
+    "clusterId": string;
+    "namespace": string;
+    "targetKind": string;
+    "targetName": string;
+
+    /**
+     * Port is what was forwarded: the container port for a pod, the Service
+     * port (a number or a name) for a Service.
+     */
+    "port": string;
+    "localPort": number;
+
+    /**
+     * State is "paused" (its cluster is not connected), "restoring" or
+     * "failed". Reason is set only for "failed".
+     */
+    "state": string;
+    "reason": string;
 }
 
 /**
@@ -3020,6 +3227,125 @@ export interface PodGraph {
 }
 
 /**
+ * PodKey names one pod for "select all matching", with the controller a
+ * bulk plan reads off a row.
+ */
+export interface PodKey {
+    "namespace": string;
+    "name": string;
+    "uid": string;
+    "controlledBy": string;
+    "cluster": string;
+}
+
+/**
+ * PodPage is one page of the pod table and the counts around it.
+ */
+export interface PodPage {
+    /**
+     * Rows are the page, in display order.
+     */
+    "rows": Pod[] | null;
+
+    /**
+     * Offset is where the page starts, after clamping past-the-end offsets
+     * to the last page.
+     */
+    "offset": number;
+
+    /**
+     * Matched counts what the search and chips kept: the pager's total.
+     */
+    "matched": number;
+
+    /**
+     * Total counts the list before any filter.
+     */
+    "total": number;
+
+    /**
+     * Unhealthy counts the unhealthy pods before any filter.
+     */
+    "unhealthy": number;
+
+    /**
+     * ChipCounts holds, per chip id, how many of the SEARCHED rows it would
+     * select.
+     */
+    "chipCounts": { [_ in string]?: number } | null;
+
+    /**
+     * QueryError explains a search that did not parse, and so matched
+     * nothing — a regex the webview accepts and Go's dialect does not.
+     */
+    "queryError": string;
+
+    /**
+     * Pinned is the pinned pod, from the whole list, or null when it is no
+     * longer there.
+     */
+    "pinned": Pod | null;
+}
+
+/**
+ * PodQuery is one page query of the pod table — what the frontend's search
+ * box, status chips, sort and pager currently say. See domain.PodQuery.
+ */
+export interface PodQuery {
+    /**
+     * Text is the search box, in the filter language of web/src/lib/query.ts.
+     */
+    "text": string;
+
+    /**
+     * Chips are the pressed status chips' ids.
+     */
+    "chips": string[] | null;
+
+    /**
+     * SortColumn is the sorted column's id, "" for the list's own order.
+     */
+    "sortColumn": string;
+
+    /**
+     * Descending reverses the sort.
+     */
+    "descending": boolean;
+
+    /**
+     * Columns are the operator's own columns on the list — searchable text,
+     * and a sort can name one.
+     */
+    "columns": CustomColumnSpec[] | null;
+
+    /**
+     * Clusters narrows the merged All-clusters list; empty means every
+     * cluster. Ignored on one cluster's list.
+     */
+    "clusters": string[] | null;
+
+    /**
+     * Offset and Limit select the page.
+     */
+    "offset": number;
+    "limit": number;
+
+    /**
+     * Pinned names the pod open in the drawer, returned beside the page
+     * whatever the page. Empty name pins nothing.
+     */
+    "pinned": PodRef;
+}
+
+/**
+ * PodRef names one pod within a list.
+ */
+export interface PodRef {
+    "namespace": string;
+    "name": string;
+}
+
+/**
  * PodSummary counts pods by the state an operator cares about.
  */
 export interface PodSummary {
@@ -3097,6 +3423,26 @@ export interface PortForward {
      * whatever is pointed at it keeps its address and simply stalls.
      */
     "reconnecting": boolean;
+
+    /**
+     * Lost reports that the reconnect window ran out. The row stays, nothing
+     * is bound, and the forward keeps looking slowly; ReconnectPortForward
+     * asks it to try again at once and StopPortForward dismisses it.
+     */
+    "lost": boolean;
+
+    /**
+     * Kept reports that this forward is saved and will be restored when its
+     * cluster is next connected after a restart.
+     */
+    "kept": boolean;
+
+    /**
+     * TargetKind and TargetName say what was asked for — "pod" or "service" —
+     * as against Pod, which is wherever it landed.
+     */
+    "targetKind": string;
+    "targetName": string;
 }
 
 /**
@@ -3840,6 +4186,20 @@ export interface SeriesResult {
     "intervalSeconds": number;
 
     /**
+     * SampledEverySeconds is how often THIS cluster is being sampled right
+     * now: IntervalSeconds while its tab is the one in front, much less
+     * often while it is behind — so the panel can say why the line is
+     * sparse rather than leave a gap to read as an outage.
+     */
+    "sampledEverySeconds": number;
+
+    /**
+     * BackgroundEverySeconds is the cadence a cluster drops to while nobody
+     * is looking at it, for the panel to state alongside the line.
+     */
+    "backgroundEverySeconds": number;
+
+    /**
      * Recording reports whether sampling is on at all.
      */
     "recording": boolean;
@@ -4145,6 +4505,205 @@ export interface TopConsumers {
 }
 
 /**
+ * TopologyEdge is one relationship.
+ */
+export interface TopologyEdge {
+    "from": string;
+    "to": string;
+    "kind": TopologyEdgeKind;
+    "label": string;
+}
+
+/**
+ * TopologyEdgeKind is the relationship an edge draws: owns, selects, routes,
+ * scales, protects, policy-selects, attaches or runs-as (domain.EdgeKind
+ * names them). No constants, for the reason NodeState has none.
+ */
+export type TopologyEdgeKind = string;
+
+/**
+ * TopologyGraph is a scope of namespaces and everything between its objects.
+ */
+export interface TopologyGraph {
+    "nodes": TopologyNode[] | null;
+    "edges": TopologyEdge[] | null;
+
+    /**
+     * Counts is per Kubernetes Kind, COMPLETE even when pods are summarised.
+     */
+    "counts": { [_ in string]?: number } | null;
+    "unreadable": string[] | null;
+    "bounded": string;
+
+    /**
+     * Summarised is true when pods were folded in the backend because there
+     * were too many to draw.
+     */
+    "summarised": boolean;
+
+    /**
+     * GeneratedAt is when the sources were read, RFC 3339.
+     */
+    "generatedAt": string;
+}
+
+/**
+ * TopologyNode is one box on the topology.
+ */
+export interface TopologyNode {
+    "id": string;
+
+    /**
+     * Kind is the graph kind: pod, workload, replicaset, service, ingress,
+     * gateway, route, scaler, budget, policy, config, secret, claim,
+     * serviceaccount, node, object.
+     */
+    "kind": string;
+
+    /**
+     * APIKind is the Kubernetes Kind, verbatim, for navigation.
+     */
+    "apiKind": string;
+    "name": string;
+    "namespace": string;
+    "state": NodeState;
+    "detail": string;
+
+    /**
+     * Group is the sibling set for folding, as in the other map shapes.
+     */
+    "group": string;
+
+    /**
+     * Labels are set on top-level objects only, for grouping by app or label.
+     */
+    "labels"?: { [_ in string]?: string } | null;
+
+    /**
+     * PodSummary is set only on a backend-folded pod set.
+     */
+    "podSummary"?: TopologyPodSummary | null;
+}
+
+/**
+ * TopologyPodSummary is a pod set folded by the backend above the summary cap. The
+ * counts are complete.
+ */
+export interface TopologyPodSummary {
+    "total": number;
+    "ready": number;
+    "unhealthy": number;
+
+    /**
+     * Members are the folded pods' names, sorted — what a finding about one
+     * of them is matched against.
+     */
+    "members"?: string[] | null;
+}
+
+/**
+ * TrafficEdge is the traffic observed between two endpoints over a window.
+ */
+export interface TrafficEdge {
+    "source": TrafficEndpoint;
+    "dest": TrafficEndpoint;
+    "protocol": string;
+    "requestsPerSec": number;
+    "errorsPerSec": number;
+    "bytesPerSec": number;
+    "connections": number;
+
+    /**
+     * P50, P95 and P99 are milliseconds; -1 when the source does not expose
+     * latency.
+     */
+    "p50": number;
+    "p95": number;
+    "p99": number;
+
+    /**
+     * LatencyBeyondBuckets is true when a percentile fell in the histogram's
+     * +Inf bucket — slower than its largest bound. That percentile is -1, and
+     * this is what tells it apart from "not exposed".
+     */
+    "latencyBeyondBuckets": boolean;
+}
+
+/**
+ * TrafficEndpoint is one end of an observed edge.
+ */
+export interface TrafficEndpoint {
+    "namespace": string;
+    "workload": string;
+    "service": string;
+    "external": string;
+    "unknown": boolean;
+
+    /**
+     * NodeID is the topology node this endpoint maps to, '' when unmapped.
+     */
+    "nodeId": string;
+}
+
+/**
+ * TrafficLayer is one source's traffic over one window.
+ */
+export interface TrafficLayer {
+    "source": string;
+    "window": string;
+    "edges": TrafficEdge[] | null;
+    "unmapped": TrafficEndpoint[] | null;
+    "status": string;
+    "message": string;
+
+    /**
+     * Provenance is which backend answered, as the metrics query feature
+     * reports it.
+     */
+    "provenance": SeriesProvenance;
+
+    /**
+     * Expressions are the PromQL that was sent, shown to the operator.
+     */
+    "expressions": string[] | null;
+}
+
+/**
+ * TrafficSourceStatus says whether one source's metrics were found.
+ */
+export interface TrafficSourceStatus {
+    /**
+     * Source is istio, linkerd, beyla, caretta or hubble.
+     */
+    "source": string;
+    "available": boolean;
+
+    /**
+     * Detail is what was found, or what would be needed.
+     */
+    "detail": string;
+}
+
+/**
+ * TrafficSources answers which traffic sources the chosen backend holds.
+ */
+export interface TrafficSources {
+    /**
+     * Backend is the Prometheus the queries go to, as the metrics query
+     * feature names it.
+     */
+    "backend": string;
+    "sources": TrafficSourceStatus[] | null;
+
+    /**
+     * Status is the metrics query backend status: answered, not-enabled,
+     * forbidden…
+     */
+    "status": string;
+    "message": string;
+}
+
+/**
  * UpdateStatus is what the interface shows about newer releases.
  */
 export interface UpdateStatus {
@@ -4197,6 +4756,29 @@ export interface UpgradeSummary {
      * severity.
      */
     "count": number;
+
+    /**
+     * TargetSupport is the support verdict for TargetMinor itself, so the
+     * header can say when the version being checked against is out of
+     * support too.
+     */
+    "targetSupport": ReleaseSupport;
+}
+
+/**
+ * UsagePoint is one measurement of a pod's usage.
+ */
+export interface UsagePoint {
+    /**
+     * At is when it was read, in milliseconds since the epoch.
+     */
+    "at": number;
+
+    /**
+     * CPUCores and MemoryBytes are what was measured.
+     */
+    "cpuCores": number;
+    "memoryBytes": number;
 }
 
 /**
@@ -4327,6 +4909,12 @@ export interface VulnerabilitySummary {
      * other's format.
      */
     "subject": string;
+
+    /**
+     * Namespace is the workload's namespace; match a row on it as well as
+     * on Subject, since the same Kind/name can exist in several.
+     */
+    "namespace": string;
     "critical": number;
     "high": number;
     "medium": number;

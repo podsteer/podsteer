@@ -53,12 +53,21 @@ file, [`Casks/podsteer.rb`](https://github.com/podsteer/homebrew-tap/blob/HEAD/C
 [the latest release](https://github.com/podsteer/podsteer/releases/latest) and
 unzip it. Linux needs `libgtk-3` and `libwebkit2gtk-4.1`.
 
-The Windows build is **not signed**, so SmartScreen will warn on first launch —
-"Windows protected your PC". That is the absence of a certificate, not a
-verdict about the file. Verify the download against the published
-`checksums.txt` if you want to be sure of what you have; a code-signing
-certificate is a cost decision that has not been taken yet, and this note stays
-here until it is.
+Each release also carries (from v0.6.0; earlier releases ship the zips only):
+
+- **Linux (amd64 and arm64)** — an AppImage (`chmod +x` and run), a `.deb`
+  (`sudo apt install ./podsteer_<tag>_linux-amd64.deb`) and an `.rpm`
+  (`sudo dnf install ./podsteer_<tag>_linux-amd64.rpm`). The `.deb` and `.rpm`
+  declare the `libgtk-3` / `libwebkit2gtk-4.1` dependencies for you; the
+  AppImage uses the ones already on your system.
+- **Windows** — a per-user installer, `podsteer_<tag>_windows-amd64-setup.exe`.
+
+The Windows build is **not code-signed yet**. The release pipeline signs the
+executable and installer through Azure Trusted Signing once that is configured,
+and warns loudly when it is not; a build published without it is unsigned, and
+SmartScreen will warn on first launch — "Windows protected your PC". That is the absence of
+a signature, not a verdict about the file. Verify the download against the
+published `checksums.txt` if you want to be sure of what you have.
 
 Every release publishes SHA-256 checksums and a CycloneDX SBOM alongside the
 binaries.
@@ -71,14 +80,24 @@ binaries.
 
 ## Status
 
-What works today, as of v0.3.0:
+What works today:
 
 - **An assessment, not a list.** Ranked findings — crash loops, OOM kills,
   unschedulable pods, rightsizing, APIs the next Kubernetes version removes —
   with capacity measured against requests rather than usage.
 - **Several clusters at once**, one per tab, plus an All-clusters view and a
   Multi-kind table; cloud cluster discovery through the aws, az, gcloud or
-  doctl CLI you already use.
+  doctl CLI you already use. One namespace selector in the sidebar takes
+  several namespaces and applies across pages.
+- **Applications and Topology**: an Applications map and Logs tab with level
+  chips and a volume histogram; a Topology page that draws a namespace, several
+  or all as one map where every line is a real relationship, grouped by
+  namespace, application or label, with findings badges and PNG export
+  (desktop app only). Kubernetes 1.37 gang-scheduling `Workload` and
+  `PodGroup` panels sit beside it.
+- **Observed traffic, only when you switch it on**: rates, errors and p50–p99
+  read from the cluster's own Prometheus (Istio, Linkerd, Beyla/OBI, Caretta or
+  Hubble metrics), with the PromQL shown. Nothing is installed in the cluster.
 - **Safe writes of any kind**: server-side apply with field conflicts named,
   rollout history and rollback, drain with a preview, bulk actions with a
   review step, and the kubectl equivalent of every write.
@@ -96,6 +115,12 @@ What works today, as of v0.3.0:
 
 [podsteer.com/features](https://podsteer.com/features/) describes each in
 full, including what it deliberately does not do.
+
+Built for large clusters: the pod table is filtered, sorted and paged in Go, so
+a refresh at 10,000 pods moves roughly 120 KB rather than 23 MB, and sampling
+slows for clusters in background tabs. Credentials refresh for tabs left open,
+a throttled call is reported as throttling, and a dropped port-forward shows
+"Lost — Reconnect" (opt-in "Keep across restarts" remembers it).
 
 Capacity is sampled every 30 seconds while the application is open and kept
 locally, which is the only way to have a trend at all — Kubernetes reports only
@@ -170,7 +195,7 @@ itself and talks to it over stdin and stdout. No port is opened, nothing is
 served over HTTP, and nothing PodSteer operates is contacted.
 
 Every tool is **read-only**: lists, manifests, bounded log reads, events, the
-cluster and pod assessments, the dependency map and the RBAC reviews. There is
+cluster and pod assessments, the ranked cluster findings with their evidence (filterable by severity and namespace), the dependency map and the RBAC reviews — 19 tools in all. There is
 no delete, scale, apply, exec or port-forward, and no tool that reveals a
 Secret's values. It reads your own kubeconfig with your own credentials, so it
 can see exactly what your account can see and nothing more — a refusal comes

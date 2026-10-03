@@ -39,7 +39,8 @@
     "dev": "vite",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "bench:layout": "vitest run --config vitest.bench.config.ts"
   },
   "type": "module",
   "version": "0.1.0"

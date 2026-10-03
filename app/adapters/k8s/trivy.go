@@ -206,7 +206,11 @@ func (a *Adapter) readVulnerabilityRows(
 		Namespaced: true,
 	}
 
-	bySubject := make(map[string]domain.VulnerabilitySummary)
+	type summaryKey struct {
+		namespace domain.NamespaceName
+		subject   string
+	}
+	bySubject := make(map[summaryKey]domain.VulnerabilitySummary)
 	listing := domain.VulnerabilityListing{Status: domain.VulnerabilityReadComplete}
 	continueToken := ""
 
@@ -244,7 +248,8 @@ func (a *Adapter) readVulnerabilityRows(
 
 		for i := range table.Rows {
 			row := &table.Rows[i]
-			labels := rowMetadata(row, domain.Projection{}).labels
+			metadata := rowMetadata(row, domain.Projection{})
+			labels := metadata.labels
 			subject := domain.VulnerabilitySubject(
 				labels[trivyResourceKindLabel], labels[trivyResourceNameLabel])
 			listing.Read++
@@ -255,14 +260,16 @@ func (a *Adapter) readVulnerabilityRows(
 				continue
 			}
 
-			held := bySubject[subject]
+			key := summaryKey{namespace: metadata.namespace, subject: subject}
+			held := bySubject[key]
+			held.Namespace = metadata.namespace
 			held.Subject = subject
 			held.Counts = held.Counts.Add(columns.counts(row.Cells))
 			held.Reports++
 			if image := columns.image(row.Cells); image != "" && !slices.Contains(held.Images, image) {
 				held.Images = append(held.Images, image)
 			}
-			bySubject[subject] = held
+			bySubject[key] = held
 		}
 
 		continueToken = table.Continue
@@ -287,7 +294,10 @@ func (a *Adapter) readVulnerabilityRows(
 		listing.Summaries = append(listing.Summaries, summary)
 	}
 	sort.Slice(listing.Summaries, func(i, j int) bool {
-		return listing.Summaries[i].Subject < listing.Summaries[j].Subject
+		if listing.Summaries[i].Subject != listing.Summaries[j].Subject {
+			return listing.Summaries[i].Subject < listing.Summaries[j].Subject
+		}
+		return listing.Summaries[i].Namespace < listing.Summaries[j].Namespace
 	})
 	// Sorted so two reads of the same cluster state produce the same slice,
 	// which is what makes the cache comparable and the tests deterministic —

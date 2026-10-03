@@ -1,6 +1,6 @@
 /**
- * A view somebody named and kept: a kind, a namespace, a search, and the
- * status chips that were pressed.
+ * A view somebody named and kept: a kind, a set of namespaces, a search, and
+ * the status chips that were pressed.
  *
  * WHAT A VIEW IS NOT. It does not carry the sort, the page, the column set or
  * the page size. Each of those is already remembered somewhere of its own —
@@ -31,6 +31,8 @@
  * answer the namespace picker gives.
  */
 
+import { namespaceLabelOf, normaliseNamespaces, scopeOf } from './namespaceScope'
+
 /** One saved view. */
 export interface SavedView {
   /** Stable, derived from the name, and readable in an exported file. */
@@ -39,8 +41,14 @@ export interface SavedView {
   name: string
   /** The catalog kind id, e.g. "core/v1/pods". */
   kindId: string
-  /** The namespace filter, or the all-namespaces sentinel. */
-  namespace: string
+  /**
+   * The namespace filter as a set, sorted; empty means every namespace.
+   *
+   * A view written before the filter was a set holds a single `namespace`
+   * string instead ('' for All); sanitiseViews reads that and nothing ever
+   * writes it again.
+   */
+  namespaces: string[]
   /** The search box's text, in the search grammar. */
   search: string
   /** Status chip ids pressed on the Pods page. Empty everywhere else. */
@@ -50,7 +58,8 @@ export interface SavedView {
 /** What the current view is, for capturing and for comparing. */
 export interface ViewState {
   kindId: string
-  namespace: string
+  /** Sorted; empty means every namespace. */
+  namespaces: string[]
   search: string
   statusFilters: string[]
 }
@@ -102,11 +111,12 @@ export function cleanViewName(name: string): string {
  * Compares chips as a SET, because the order they were pressed in is not part
  * of what anybody saved: pressing "pending" then "crashing" is the same view
  * as the other way round, and a menu that failed to tick it would look broken.
+ * The namespaces are a set for the same reason.
  */
 export function viewMatches(view: SavedView, current: ViewState): boolean {
   return (
     view.kindId === current.kindId &&
-    view.namespace === current.namespace &&
+    sameSet(view.namespaces, current.namespaces) &&
     view.search === current.search &&
     sameSet(view.statusFilters, current.statusFilters)
   )
@@ -129,10 +139,10 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
 export function describeView(
   view: SavedView,
   kindTitle: string,
-  allNamespaces: string,
+  namespaceLabel: (namespaces: string[]) => string = describeNamespaces,
 ): string {
   const parts = [kindTitle || view.kindId]
-  parts.push(view.namespace === allNamespaces ? 'all namespaces' : view.namespace)
+  parts.push(namespaceLabel(view.namespaces))
   if (view.search) parts.push(view.search)
   if (view.statusFilters.length > 0) {
     parts.push(
@@ -142,6 +152,27 @@ export function describeView(
     )
   }
   return parts.join(' · ')
+}
+
+/** The default wording for a view's namespaces: the trigger's label rule,
+    with All in lower case because it sits mid-sentence. */
+export function describeNamespaces(namespaces: string[]): string {
+  return namespaces.length === 0 ? 'all namespaces' : namespaceLabelOf(scopeOf(namespaces)).label
+}
+
+/**
+ * The namespaces a stored view names. `namespaces` when it is there; else
+ * the single `namespace` string every view held before the filter was a set
+ * ('' was All); else All.
+ */
+function storedNamespaces(candidate: { namespaces?: unknown; namespace?: unknown }): string[] {
+  if (Array.isArray(candidate.namespaces)) {
+    return normaliseNamespaces(
+      candidate.namespaces.filter((name): name is string => typeof name === 'string'),
+    )
+  }
+  if (typeof candidate.namespace === 'string') return normaliseNamespaces([candidate.namespace])
+  return []
 }
 
 /**
@@ -161,7 +192,7 @@ export function sanitiseViews(value: unknown): SavedView[] {
 
   for (const entry of value) {
     if (!entry || typeof entry !== 'object') continue
-    const candidate = entry as Partial<SavedView>
+    const candidate = entry as Partial<SavedView> & { namespace?: unknown }
 
     const name = typeof candidate.name === 'string' ? cleanViewName(candidate.name) : ''
     const kindId = typeof candidate.kindId === 'string' ? candidate.kindId : ''
@@ -177,7 +208,7 @@ export function sanitiseViews(value: unknown): SavedView[] {
       id,
       name,
       kindId,
-      namespace: typeof candidate.namespace === 'string' ? candidate.namespace : '',
+      namespaces: storedNamespaces(candidate),
       search: typeof candidate.search === 'string' ? candidate.search : '',
       statusFilters: Array.isArray(candidate.statusFilters)
         ? candidate.statusFilters.filter((chip): chip is string => typeof chip === 'string')

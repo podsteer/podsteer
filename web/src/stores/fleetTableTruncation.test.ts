@@ -14,7 +14,7 @@ vi.mock('$lib/api/client', async () => {
   const actual = await vi.importActual<Record<string, unknown>>('$lib/api/client')
   return {
     ...actual,
-    listFleetTable: (...args: unknown[]) => listFleetTable(...args),
+    listFleetTableIn: (...args: unknown[]) => listFleetTable(...args),
   }
 })
 
@@ -57,18 +57,18 @@ describe('the merged table’s truncation caveat', () => {
       share('staging', 'ok', 2, false),
     ])
 
-    await fleet.refresh('shop')
+    await fleet.refresh(['shop'])
 
     expect(fleet.tableTruncated).toEqual({ prod: 1000 })
   })
 
   it('clears it when that cluster comes back complete', async () => {
     listFleetTable.mockResolvedValueOnce([share('prod', 'ok', 3, true)])
-    await fleet.refresh('shop')
+    await fleet.refresh(['shop'])
     expect(fleet.tableTruncated.prod).toBe(1000)
 
     listFleetTable.mockResolvedValueOnce([share('prod', 'ok', 3, false)])
-    await fleet.refresh('shop')
+    await fleet.refresh(['shop'])
 
     expect(fleet.tableTruncated.prod).toBeUndefined()
   })
@@ -78,17 +78,17 @@ describe('the merged table’s truncation caveat', () => {
     // its caveat has to stay up with them — cleared here, the operator would
     // be looking at a prefix presented as the whole set.
     listFleetTable.mockResolvedValueOnce([share('prod', 'ok', 3, true)])
-    await fleet.refresh('shop')
+    await fleet.refresh(['shop'])
 
     listFleetTable.mockResolvedValueOnce([share('prod', 'unreachable', 0, false)])
-    await fleet.refresh('shop')
+    await fleet.refresh(['shop'])
 
     expect(fleet.tableTruncated.prod).toBe(1000)
   })
 
   it('is dropped entirely when a different kind is chosen', async () => {
     listFleetTable.mockResolvedValueOnce([share('prod', 'ok', 3, true)])
-    await fleet.refresh('shop')
+    await fleet.refresh(['shop'])
 
     fleet.chooseKind({ group: 'acme.io', resource: 'gadgets', title: 'Gadgets' } as never)
 

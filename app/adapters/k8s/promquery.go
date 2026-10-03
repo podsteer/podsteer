@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -203,38 +202,27 @@ func (a *Adapter) QueryNodes(
 	ctx context.Context,
 	id domain.ClusterID,
 	backend domain.MetricsBackend,
-) ([]string, error) {
+) (domain.NodeProbeAnswer, error) {
 	body, err := a.proxyQuery(ctx, id, backend, "/api/v1/query", map[string]string{
 		"query": domain.NodeProbeExpression,
 		"time":  formatQueryInstant(time.Now()),
 	})
 	if err != nil {
-		return nil, err
+		return domain.NodeProbeAnswer{}, err
 	}
 
 	decoded, err := decodeQueryResponse(body)
 	if err != nil {
-		return nil, err
+		return domain.NodeProbeAnswer{}, err
 	}
 
-	// A SET, because a backend fronting several clusters reports the same
-	// node name from many series and the caller compares sets rather than
-	// counting them.
-	seen := make(map[string]struct{}, len(decoded.Data.Result))
+	// SETS, read in the domain: a backend fronting several clusters reports
+	// the same node from many series, and the caller compares sets.
+	labels := make([]map[string]string, 0, len(decoded.Data.Result))
 	for _, result := range decoded.Data.Result {
-		if name := result.Metric[domain.NodeProbeLabel]; name != "" {
-			seen[name] = struct{}{}
-		}
+		labels = append(labels, result.Metric)
 	}
-
-	names := make([]string, 0, len(seen))
-	for name := range seen {
-		names = append(names, name)
-	}
-	// Sorted so anything logging or diffing them meets a stable order; map
-	// iteration is not one.
-	sort.Strings(names)
-	return names, nil
+	return domain.ReadNodeProbe(labels), nil
 }
 
 // QueryRange evaluates one expression over a range. See
@@ -317,6 +305,12 @@ func (a *Adapter) proxyQuery(
 		return nil, fmt.Errorf("%s: %w", op, ports.ErrForbidden)
 	}
 
+	// A backend known to refuse the proxy goes straight to its forward,
+	// rather than earning another 403 on every query.
+	if a.forwardRoutes.uses(id, generation, backend) {
+		return a.queryThroughForward(ctx, id, backend, path, params, proxyRefusalCause(backend, nil))
+	}
+
 	set, err := a.factory.clientsFor(id)
 	if err != nil {
 		return nil, err
@@ -349,12 +343,26 @@ func (a *Adapter) proxyQuery(
 	ctx, cancel := context.WithTimeout(ctx, queryTimeout)
 	defer cancel()
 
-	body, status, err := fetchBounded(ctx, set.queryHTTP, request.URL().String(), maxQueryResponseBytes)
+	body, status, header, err := fetchBoundedWithHeader(ctx, set.queryHTTP, request.URL().String(), maxQueryResponseBytes)
 	if err != nil {
 		if errors.Is(err, ports.ErrMetricsQueryTooLarge) {
 			return nil, fmt.Errorf("%s: %w", op, err)
 		}
 		return nil, classify(op, err)
+	}
+
+	// THE BACKEND'S OWN 403 TO THE PROXY gets one more try, over an
+	// ephemeral port-forward — see promforward.go. Only the backend's: a
+	// Kubernetes Status means the API server refused the account, and that
+	// is not something to route around.
+	if status == http.StatusForbidden {
+		if _, isKube := decodeKubernetesStatus(body); !isKube {
+			answer, err := a.queryThroughForward(ctx, id, backend, path, params, proxyRefusalCause(backend, header))
+			if err == nil {
+				a.forwardRoutes.remember(id, generation, backend)
+			}
+			return answer, err
+		}
 	}
 
 	if err := a.classifyQueryStatus(id, generation, op, status, body); err != nil {
@@ -371,15 +379,22 @@ func (a *Adapter) proxyQuery(
 // Reading one byte past the cap is what makes an answer AT the cap
 // distinguishable from one over it without reading the whole of the latter.
 func fetchBounded(ctx context.Context, client *http.Client, url string, cap int64) ([]byte, int, error) {
+	body, status, _, err := fetchBoundedWithHeader(ctx, client, url, cap)
+	return body, status, err
+}
+
+// fetchBoundedWithHeader is fetchBounded that also returns the response's
+// headers, which is how a mesh's refusal is told apart from the backend's.
+func fetchBoundedWithHeader(ctx context.Context, client *http.Client, url string, cap int64) ([]byte, int, http.Header, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	request.Header.Set("Accept", "application/json")
 
 	response, err := client.Do(request)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<16))
@@ -388,12 +403,12 @@ func fetchBounded(ctx context.Context, client *http.Client, url string, cap int6
 
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, cap+1))
 	if int64(len(body)) > cap {
-		return nil, response.StatusCode, fmt.Errorf("%w: over %d bytes", ports.ErrMetricsQueryTooLarge, cap)
+		return nil, response.StatusCode, response.Header, fmt.Errorf("%w: over %d bytes", ports.ErrMetricsQueryTooLarge, cap)
 	}
 	if readErr != nil {
-		return nil, response.StatusCode, readErr
+		return nil, response.StatusCode, response.Header, readErr
 	}
-	return body, response.StatusCode, nil
+	return body, response.StatusCode, response.Header, nil
 }
 
 // classifyQueryStatus turns an HTTP status into the sentinel the panel reads,

@@ -474,6 +474,9 @@ type DiskSummary struct {
 	FullestNode    string
 	// Filling counts nodes past the warning threshold.
 	Filling int
+	// Coverage says how much of the cluster these figures stand for, when
+	// the adapter can say; the zero value is "every node, just now".
+	Coverage DiskCoverage
 }
 
 // StorageSummary is the cluster's persistent storage at a glance.
@@ -1017,6 +1020,11 @@ type UpgradeSummary struct {
 	// severity: an API about to break, one served but unused, or one merely
 	// deprecated that survives this target regardless.
 	Count int
+	// TargetSupport is what the support-window table says about the target
+	// itself. An upgrade can land on a minor that is already past end of
+	// life — the next minor after an old cluster usually is — and "nothing
+	// to migrate" says nothing about whether the destination is patched.
+	TargetSupport ReleaseSupport
 }
 
 // NewOverview assesses a cluster snapshot.
@@ -1060,7 +1068,11 @@ func NewOverview(input OverviewInput) Overview {
 	if targetMinor != "" && input.APIsKnown {
 		target := ServerVersion{GitVersion: "v" + targetMinor}
 		upgradeFindings = UpgradeImpact(input.ServedAPIs, input.Version, target, input.APIUsage)
-		upgrade = UpgradeSummary{TargetMinor: targetMinor, Count: len(upgradeFindings)}
+		upgrade = UpgradeSummary{
+			TargetMinor:   targetMinor,
+			Count:         len(upgradeFindings),
+			TargetSupport: SupportFor(target, now),
+		}
 	}
 
 	findings := make([]Finding, 0, 16)
@@ -2934,4 +2946,23 @@ func pressureFindings(nodes []Node) []Finding {
 		Count:    count,
 		KindID:   nodeKindID,
 	}}
+}
+
+// DiskCoverage says how much of a cluster a disk figure stands for.
+//
+// Above a node count the kubelets are asked a batch at a time rather than
+// all at once (see app/adapters/k8s/filesystems.go), so the "fullest disk"
+// is the fullest of what has answered, some of it minutes old. That is a
+// weaker claim than "the fullest node", and the overview has to make the
+// weaker claim when it is the true one.
+type DiskCoverage struct {
+	// Asked is how many nodes the cluster has.
+	Asked int
+	// Answered is how many of them the figure includes.
+	Answered int
+	// OldestSeconds is how old the oldest answer in it is.
+	OldestSeconds int64
+	// Rolling says the nodes are asked in batches, so the figure is
+	// assembled over several sweeps.
+	Rolling bool
 }

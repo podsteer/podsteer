@@ -162,6 +162,16 @@ export function ReadKubeconfigFile(): $CancellablePromise<string> {
 }
 
 /**
+ * RefreshCredentials makes an open cluster re-read its credentials from the
+ * kubeconfig. Retry after an "unauthenticated" failure calls it first: the
+ * cached client keeps presenting the old token or certificate, so a retry on
+ * its own can only fail the same way.
+ */
+export function RefreshCredentials(clusterID: string): $CancellablePromise<void> {
+    return $Call.ByID(3078581752, clusterID);
+}
+
+/**
  * SetReadOnly marks a connected cluster read-only in PodSteer, or lifts the
  * mark.
  * 

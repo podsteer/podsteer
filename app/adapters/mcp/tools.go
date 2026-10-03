@@ -58,7 +58,29 @@ const (
 	// maxSinceSeconds bounds how far back a log read may reach — a day,
 	// beyond which the tail is what anyone actually wants.
 	maxSinceSeconds = 24 * 60 * 60
+	// defaultFindings and maxFindings bound cluster_findings. A cluster rarely
+	// has more than a few dozen distinct findings; each carries up to 25
+	// subjects, so the cap is on findings rather than on rows.
+	defaultFindings = 50
+	maxFindings     = 200
 )
+
+// severityNames are the values of the severity filter, most urgent last in
+// the schema only because info is the default floor.
+var severityNames = []string{"info", "warning", "critical"}
+
+// severityFloor orders the severities. Unknown values rank as info so a
+// severity added to the domain later is shown rather than dropped.
+func severityFloor(severity string) int {
+	switch domain.Severity(severity) {
+	case domain.SeverityCritical:
+		return 2
+	case domain.SeverityWarning:
+		return 1
+	default:
+		return 0
+	}
+}
 
 // toolset holds the readers the handlers close over.
 type toolset struct {
@@ -228,6 +250,21 @@ func buildTools(deps Deps) []Tool {
 				"This is the analysis, not a list — start here when asked what is wrong with a cluster.",
 			Schema: object([]string{"cluster"}, map[string]Property{"cluster": cluster}),
 			Call:   t.assessCluster,
+		},
+		{
+			Name:  "cluster_findings",
+			Title: "List a cluster's findings",
+			Description: "Returns ONLY PodSteer's ranked findings for a cluster — the same list the Overview shows, most urgent first — each with its severity, title, summary, advice, " +
+				"the complete affected count and the objects it names as evidence (at most 25 per finding, with subjectsTruncated saying when the cap hid some). " +
+				"Filter by severity (a floor: warning returns warning and critical) and by namespace. A namespace filter keeps findings naming at least one object in that namespace and lists only those objects; " +
+				"cluster-scoped findings (nodes) have no namespace and are excluded by it. Use assess_cluster for capacity and node and pod summaries as well.",
+			Schema: object([]string{"cluster"}, map[string]Property{
+				"cluster":   cluster,
+				"namespace": text("Only findings naming an object in this namespace. Omit for every namespace."),
+				"severity":  choice("Minimum severity: critical, warning (warning and critical) or info (everything, the default).", severityNames...),
+				"limit":     bounded(fmt.Sprintf("Maximum findings to return (default %d).", defaultFindings), 1, maxFindings, defaultFindings),
+			}),
+			Call: t.clusterFindings,
 		},
 		{
 			Name:  "assess_pod",
@@ -820,6 +857,114 @@ func (t *toolset) assessCluster(ctx context.Context, args Arguments) (any, error
 	}
 
 	return renderOverview(overview), nil
+}
+
+// clusterFindingsOut is the findings alone, with how much the filters hid.
+type clusterFindingsOut struct {
+	Cluster   string `json:"cluster"`
+	Namespace string `json:"namespace,omitempty"`
+	Severity  string `json:"severity,omitempty"`
+	Health    string `json:"health"`
+	// Total is every finding the cluster has, before any filter.
+	Total int `json:"total"`
+	// Matched is how many survived the filters, before the limit.
+	Matched   int                  `json:"matched"`
+	Truncated bool                 `json:"truncated,omitempty"`
+	Findings  []findingEvidenceOut `json:"findings"`
+	Note      string               `json:"note,omitempty"`
+}
+
+// findingEvidenceOut is a finding plus how complete its evidence is.
+type findingEvidenceOut struct {
+	findingOut
+	// SubjectsTruncated is true when Count exceeds the objects listed because
+	// the domain caps one finding's subjects.
+	SubjectsTruncated bool `json:"subjectsTruncated,omitempty"`
+}
+
+// hasNamespacedSubject reports whether any subject lives in a namespace.
+// A capped finding listing only cluster-scoped objects (nodes) cannot be
+// hiding objects in a namespace.
+func hasNamespacedSubject(subjects []domain.Subject) bool {
+	for _, subject := range subjects {
+		if !subject.Namespace.IsAll() {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *toolset) clusterFindings(ctx context.Context, args Arguments) (any, error) {
+	id, err := t.cluster(ctx, args)
+	if err != nil {
+		return nil, err
+	}
+
+	namespace, err := namespaceOf(args, "namespace")
+	if err != nil {
+		return nil, err
+	}
+	floor := severityFloor(args.String("severity"))
+	limit := int(args.Int("limit", defaultFindings))
+
+	overview, err := t.overview.Overview(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	out := clusterFindingsOut{
+		Cluster:   id.String(),
+		Namespace: namespace.String(),
+		Severity:  args.String("severity"),
+		Health:    string(overview.Health),
+		Total:     len(overview.Findings),
+		Findings:  []findingEvidenceOut{},
+	}
+
+	// Already ranked by the domain (severity, then extent, then title), so
+	// order is preserved and nothing here re-ranks.
+	unverifiable := 0
+	for _, finding := range overview.Findings {
+		if severityFloor(string(finding.Severity)) < floor {
+			continue
+		}
+
+		kept := finding
+		if !namespace.IsAll() {
+			kept.Subjects = nil
+			for _, subject := range finding.Subjects {
+				if subject.Namespace == namespace {
+					kept.Subjects = append(kept.Subjects, subject)
+				}
+			}
+			if len(kept.Subjects) == 0 {
+				// A capped finding may name objects here that the cap hid;
+				// it cannot be shown, but it must be counted.
+				if finding.Truncated() && hasNamespacedSubject(finding.Subjects) {
+					unverifiable++
+				}
+				continue
+			}
+		}
+
+		out.Matched++
+		if len(out.Findings) >= limit {
+			continue
+		}
+		rendered := renderFindings([]domain.Finding{kept})[0]
+		// Count stays the finding's cluster-wide count: narrowing the
+		// subjects must not make a finding look smaller than it is.
+		out.Findings = append(out.Findings, findingEvidenceOut{
+			findingOut:        rendered,
+			SubjectsTruncated: finding.Truncated(),
+		})
+	}
+	out.Truncated = len(out.Findings) < out.Matched
+
+	if unverifiable > 0 {
+		out.Note = fmt.Sprintf("%d capped finding(s) list no object in this namespace but name more objects than the 25 shown, so they may affect it; call without namespace to see them.", unverifiable)
+	}
+	return out, nil
 }
 
 func (t *toolset) assessPod(ctx context.Context, args Arguments) (any, error) {

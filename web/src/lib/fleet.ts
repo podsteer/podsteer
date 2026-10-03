@@ -79,6 +79,15 @@ export interface ClusterAnswer<T> {
   /** Whether `rows` are older than the read that produced `status` — kept
       from an earlier answer because this one brought none. */
   stale: boolean
+  /** How many rows the cluster contributes, when they are held in Go rather
+      than in `rows` — the merged pod table's, which is paged there. Absent
+      means `rows.length`. */
+  count?: number
+}
+
+/** How many rows an answer stands for — see ClusterAnswer.count. */
+export function rowCount<T>(answer: ClusterAnswer<T>): number {
+  return answer.count ?? answer.rows.length
 }
 
 /** A row of a merged table: the DTO plus which cluster it came from. */
@@ -291,10 +300,10 @@ export function stripModel<T>(
       status,
       tone,
       label,
-      rows: answer.rows.length,
+      rows: rowCount(answer),
       // Whatever is on screen for a cluster that is not answering was read
       // before it stopped, whether or not the last read said so.
-      stale: quiet ? answer.rows.length > 0 : answer.stale,
+      stale: quiet ? rowCount(answer) > 0 : answer.stale,
       ageSeconds,
       title: quiet ? silentTitle(answer) : stripTitle(answer, ageSeconds),
     }
@@ -303,8 +312,9 @@ export function stripModel<T>(
 
 /** The sentence for a cluster nothing can reach, whatever its last read said. */
 function silentTitle<T>(answer: ClusterAnswer<T>): string {
-  const count = `${answer.rows.length} row${answer.rows.length === 1 ? '' : 's'}`
-  if (answer.rows.length === 0) return `${answer.cluster} — not answering`
+  const rows = rowCount(answer)
+  const count = `${rows} row${rows === 1 ? '' : 's'}`
+  if (rows === 0) return `${answer.cluster} — not answering`
   return `${answer.cluster} — not answering; showing ${count} read before it stopped`
 }
 
@@ -314,7 +324,8 @@ function silentTitle<T>(answer: ClusterAnswer<T>): string {
  * rows are older than the verdict, how much older.
  */
 function stripTitle<T>(answer: ClusterAnswer<T>, ageSeconds: number | null): string {
-  const count = `${answer.rows.length} row${answer.rows.length === 1 ? '' : 's'}`
+  const rows = rowCount(answer)
+  const count = `${rows} row${rows === 1 ? '' : 's'}`
   const shown = answer.stale ? `; showing ${count} from ${ageSeconds ?? 0}s ago` : ''
 
   switch (answer.status) {

@@ -94,7 +94,7 @@
 
     <button
       type="button"
-      onclick={() => session.selection.clear()}
+      onclick={() => session.clearSelection()}
       aria-label="Clear selection"
       title="Clear selection (Escape)"
       class="state-layer grid size-8 shrink-0 place-items-center rounded-full text-on-surface-variant

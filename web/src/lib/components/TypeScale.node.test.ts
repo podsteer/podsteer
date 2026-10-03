@@ -33,6 +33,8 @@ const OFF_SCALE_ALLOWED = new Set([
   // type scale — a token there would be a number that means something else at
   // every zoom level.
   'DependencyMap.svelte',
+  // The topology's boxes are the same diagram text, for the same reason.
+  'TopologyView.svelte',
   // THE SPLASH IS NOT THEMED AND NOT TOKENED, deliberately and for a reason
   // its own header gives: it is painted to match the window the Go side has
   // already drawn, so that there is no colour flip at launch. It uses literal

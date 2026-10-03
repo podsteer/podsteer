@@ -89,7 +89,7 @@
 
   function toggle(id: TimelineEntryKind): void {
     active = active.includes(id) ? active.filter((held) => held !== id) : [...active, id]
-    page = 0
+    page = 1
   }
 
   /** What is typed in the box. The matching itself is `matchesTimelineSearch`
@@ -98,7 +98,7 @@
 
   function setSearch(next: string): void {
     search = next
-    page = 0
+    page = 1
   }
 
   const byKind = $derived(
@@ -131,15 +131,17 @@
    * narrowing a result set from nine pages to one leaves the view on page nine,
    * which renders as empty and reads as "no results".
    */
-  let page = $state(0)
+  /** 1-based, as Pagination counts: its first-page button asks for 1 and it
+      prints this beside the page count. */
+  let page = $state(1)
 
   const pageCount = $derived(
     paged ? Math.max(1, Math.ceil(groups.length / preferences.pageSize)) : 1,
   )
   /** Clamped rather than assigned, so a page size raised from 100 to 25 while
       on the last page cannot leave `page` pointing past the end. */
-  const currentPage = $derived(Math.min(page, pageCount - 1))
-  const pageStart = $derived(paged ? currentPage * preferences.pageSize : 0)
+  const currentPage = $derived(Math.max(1, Math.min(page, pageCount)))
+  const pageStart = $derived(paged ? (currentPage - 1) * preferences.pageSize : 0)
   const visible = $derived(
     paged ? groups.slice(pageStart, pageStart + preferences.pageSize) : groups,
   )

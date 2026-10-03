@@ -28,13 +28,13 @@
     current: ViewState
     /** The current kind's title, for the line under each name. */
     kindTitle: (kindId: string) => string
-    /** The all-namespaces sentinel, so the summary can name it in words. */
-    allNamespaces: string
+    /** Names a view's namespace set in words; $lib/savedViews' own rule when absent. */
+    namespaceLabel?: (namespaces: string[]) => string
     /** Opens a view. */
     onapply: (view: SavedView) => void
   }
 
-  let { current, kindTitle, allNamespaces, onapply }: Props = $props()
+  let { current, kindTitle, namespaceLabel, onapply }: Props = $props()
 
   let open = $state(false)
   let name = $state('')
@@ -199,7 +199,7 @@
                   <!-- What it selects, so a name nobody remembers writing is
                        still readable without applying it. -->
                   <span class="block truncate text-body-small text-on-surface-variant/70">
-                    {describeView(view, kindTitle(view.kindId), allNamespaces)}
+                    {describeView(view, kindTitle(view.kindId), namespaceLabel)}
                   </span>
                 </span>
               </button>

@@ -1,0 +1,208 @@
+{
+ "rate": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_workload": "frontend",
+      "source_workload_namespace": "storefront",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "destination_service": "cart.storefront.svc.cluster.local",
+      "destination_service_name": "cart",
+      "request_protocol": "http"
+     },
+     "value": [
+      1759400000.123,
+      "12.5"
+     ]
+    },
+    {
+     "metric": {
+      "source_workload": "frontend",
+      "source_workload_namespace": "storefront",
+      "destination_workload": "unknown",
+      "destination_workload_namespace": "unknown",
+      "destination_service": "httpbin.org",
+      "destination_service_name": "httpbin.org",
+      "request_protocol": "http"
+     },
+     "value": [
+      1759400000.123,
+      "0.4"
+     ]
+    },
+    {
+     "metric": {
+      "source_workload": "unknown",
+      "source_workload_namespace": "unknown",
+      "destination_workload": "frontend",
+      "destination_workload_namespace": "storefront",
+      "destination_service": "frontend.storefront.svc.cluster.local",
+      "destination_service_name": "frontend",
+      "request_protocol": "http"
+     },
+     "value": [
+      1759400000.123,
+      "3.0"
+     ]
+    }
+   ]
+  }
+ },
+ "errors": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_workload": "frontend",
+      "source_workload_namespace": "storefront",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "destination_service": "cart.storefront.svc.cluster.local",
+      "destination_service_name": "cart",
+      "request_protocol": "http"
+     },
+     "value": [
+      1759400000.123,
+      "0.25"
+     ]
+    }
+   ]
+  }
+ },
+ "bytes": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_workload": "cart",
+      "source_workload_namespace": "storefront",
+      "destination_workload": "redis",
+      "destination_workload_namespace": "storefront",
+      "destination_service": "redis.storefront.svc.cluster.local",
+      "destination_service_name": "redis",
+      "request_protocol": "tcp"
+     },
+     "value": [
+      1759400000.123,
+      "2048.0"
+     ]
+    }
+   ]
+  }
+ },
+ "connections": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_workload": "cart",
+      "source_workload_namespace": "storefront",
+      "destination_workload": "redis",
+      "destination_workload_namespace": "storefront",
+      "destination_service": "redis.storefront.svc.cluster.local",
+      "destination_service_name": "redis",
+      "request_protocol": "tcp"
+     },
+     "value": [
+      1759400000.123,
+      "0.5"
+     ]
+    }
+   ]
+  }
+ },
+ "p50": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_workload": "frontend",
+      "source_workload_namespace": "storefront",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "destination_service": "cart.storefront.svc.cluster.local",
+      "destination_service_name": "cart",
+      "request_protocol": "http"
+     },
+     "value": [
+      1759400000.123,
+      "4.2"
+     ]
+    },
+    {
+     "metric": {
+      "source_workload": "frontend",
+      "source_workload_namespace": "storefront",
+      "destination_workload": "unknown",
+      "destination_workload_namespace": "unknown",
+      "destination_service": "httpbin.org",
+      "destination_service_name": "httpbin.org",
+      "request_protocol": "http"
+     },
+     "value": [
+      1759400000.123,
+      "NaN"
+     ]
+    }
+   ]
+  }
+ },
+ "p95": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_workload": "frontend",
+      "source_workload_namespace": "storefront",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "destination_service": "cart.storefront.svc.cluster.local",
+      "destination_service_name": "cart",
+      "request_protocol": "http"
+     },
+     "value": [
+      1759400000.123,
+      "18.0"
+     ]
+    }
+   ]
+  }
+ },
+ "p99": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "source_workload": "frontend",
+      "source_workload_namespace": "storefront",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "destination_service": "cart.storefront.svc.cluster.local",
+      "destination_service_name": "cart",
+      "request_protocol": "http"
+     },
+     "value": [
+      1759400000.123,
+      "42.5"
+     ]
+    }
+   ]
+  }
+ }
+}

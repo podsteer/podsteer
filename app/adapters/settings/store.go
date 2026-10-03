@@ -26,14 +26,21 @@
 // handle the operator's own kubeconfig already gives them, on exactly the
 // terms the history file names already carry one.
 //
-// THE OBJECT-NAME RULE HAS EXACTLY ONE EXCEPTION, and it is named rather than
-// implied: a preferred monitoring backend (ADR 7) records a NAMESPACE and a
+// THE OBJECT-NAME RULE HAS EXACTLY TWO EXCEPTIONS, and they are named rather
+// than implied. The second is below; the first: a preferred monitoring backend (ADR 7) records a NAMESPACE and a
 // SERVICE NAME under clusters.<context>.metricsQuery. It is written only when
 // the operator picks a backend other than the one discovery ranks first, it
 // reveals that a monitoring stack is installed and where, and it says nothing
 // about any workload. SECURITY.md, the readme header this package writes into
 // the file, and domain.PreferredBackend each carry the same disclosure, and
 // store_test.go asserts that an ordinary file contains no such name.
+//
+// The second: a port-forward the operator switched "Keep across restarts" on
+// for is written under clusters.<context>.keptForwards as a namespace, a pod
+// or Service name and two port numbers, so it can be reopened. It is opt-in
+// per forward, removed when the forward is stopped or un-kept, and holds no
+// credential, selector or address beyond a loopback port; store_test.go
+// asserts an ordinary file carries none.
 //
 // SECURITY.md treats any OTHER object name reaching this file as in scope.
 package settings
@@ -101,10 +108,14 @@ var readme = []string{
 	"It is re-read when PodSteer starts, so an edit made by hand applies on the next launch.",
 	"It carries kubeconfig file and folder PATHS and kubeconfig context names — never the",
 	"contents of a kubeconfig and never a credential.",
-	"ONE EXCEPTION names something in a cluster: if you choose which monitoring backend a",
+	"TWO EXCEPTIONS name something in a cluster. FIRST: if you choose which monitoring backend a",
 	"cluster's charts read from, clusters.<context>.metricsQuery records that Service's",
 	"namespace and name. It reveals that a monitoring stack is installed and where, and",
 	"nothing about any workload. Leave the choice on the default and it is not written here.",
+	"SECOND: a port-forward you switch \"Keep across restarts\" on for is written to",
+	"clusters.<context>.keptForwards as its namespace, its pod or Service name and its two port",
+	"numbers, so it can be reopened. Nothing is written for a forward you did not keep, and",
+	"stopping or un-keeping one removes it. It holds no credential and no address but a local port.",
 	"Deleting it restores the defaults. PodSteer rewrites it whole whenever a setting changes.",
 }
 
@@ -359,6 +370,23 @@ type proxySection struct {
 type clusterSection struct {
 	NodeHistory  bool                `json:"nodeHistory,omitzero"`
 	MetricsQuery metricsQuerySection `json:"metricsQuery,omitzero"`
+	// KeptForwards is the SECOND named object-name exception: forwards the
+	// operator switched "Keep across restarts" on for. Absent unless one is
+	// kept, which omitzero makes literally true of the bytes. A definition
+	// only — see keptForwardEntry.
+	KeptForwards []keptForwardEntry `json:"keptForwards,omitzero"`
+}
+
+// keptForwardEntry is one forward to restore: where it points and which local
+// port it held. NO CREDENTIAL, NO SELECTOR, NOTHING THE CLUSTER RETURNED.
+type keptForwardEntry struct {
+	Namespace   string `json:"namespace"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	RemotePort  int    `json:"remotePort,omitzero"`
+	ServicePort string `json:"servicePort,omitzero"`
+	PortName    string `json:"portName,omitzero"`
+	LocalPort   int    `json:"localPort"`
 }
 
 // metricsQuerySection is ADR 7's per-cluster value: whether a discovered
@@ -477,8 +505,23 @@ func (d document) toDomain() domain.Settings {
 
 	value.Clusters = make(map[string]domain.ClusterSettings, len(d.Clusters))
 	for id, cluster := range d.Clusters {
+		kept := make([]domain.KeptForward, 0, len(cluster.KeptForwards))
+		for _, entry := range cluster.KeptForwards {
+			kept = append(kept, domain.KeptForward{
+				Namespace: domain.NamespaceName(entry.Namespace),
+				Target: domain.ForwardTarget{
+					Kind:        domain.ForwardTargetKind(entry.Kind),
+					Name:        entry.Name,
+					ServicePort: entry.ServicePort,
+					PortName:    entry.PortName,
+				},
+				RemotePort: entry.RemotePort,
+				LocalPort:  entry.LocalPort,
+			})
+		}
 		value.Clusters[id] = domain.ClusterSettings{
-			NodeHistory: cluster.NodeHistory,
+			KeptForwards: kept,
+			NodeHistory:  cluster.NodeHistory,
 			MetricsQuery: domain.MetricsQuerySettings{
 				Mode: domain.MetricsQueryMode(cluster.MetricsQuery.Mode),
 				Preferred: domain.PreferredBackend{
@@ -502,8 +545,21 @@ func toDocument(value domain.Settings, unknown map[string]jsontext.Value) docume
 
 	clusters := make(map[string]clusterSection, len(value.Clusters))
 	for id, cluster := range value.Clusters {
+		var kept []keptForwardEntry
+		for _, forward := range cluster.KeptForwards {
+			kept = append(kept, keptForwardEntry{
+				Namespace:   string(forward.Namespace),
+				Kind:        string(forward.Target.Kind),
+				Name:        forward.Target.Name,
+				RemotePort:  forward.RemotePort,
+				ServicePort: forward.Target.ServicePort,
+				PortName:    forward.Target.PortName,
+				LocalPort:   forward.LocalPort,
+			})
+		}
 		clusters[id] = clusterSection{
-			NodeHistory: cluster.NodeHistory,
+			KeptForwards: kept,
+			NodeHistory:  cluster.NodeHistory,
 			MetricsQuery: metricsQuerySection{
 				Mode: string(cluster.MetricsQuery.Mode),
 				// Written only when a choice was made: an empty

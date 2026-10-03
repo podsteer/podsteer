@@ -3,6 +3,8 @@ package wails
 import (
 	"errors"
 	"log/slog"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/podsteer/podsteer/app/domain"
@@ -14,6 +16,10 @@ type WorkloadAPI struct {
 	workloads ports.WorkloadService
 	app       *App
 	logger    *slog.Logger
+
+	// chooseSavePath is the save dialog behind ExportPodsCSV — a seam for
+	// the reason SystemAPI.chooseSavePath is one.
+	chooseSavePath func(suggestedName string) (string, error)
 }
 
 // NewWorkloadAPI returns the bound workload API.
@@ -29,11 +35,13 @@ func NewWorkloadAPI(workloads ports.WorkloadService, app *App, logger *slog.Logg
 		logger = slog.Default()
 	}
 
-	return &WorkloadAPI{
+	w := &WorkloadAPI{
 		workloads: workloads,
 		app:       app,
 		logger:    logger.With(slog.String("api", "workload")),
-	}, nil
+	}
+	w.chooseSavePath = func(suggestedName string) (string, error) { return showSaveDialog(app, suggestedName) }
+	return w, nil
 }
 
 // ListPods returns pods in the given namespace of a connected cluster.
@@ -66,6 +74,148 @@ func (w *WorkloadAPI) ListPods(clusterID, namespace string, annotationKeys []str
 	// A single reference time for the whole list, so ages stay consistent
 	// across rows instead of drifting by the microseconds the loop takes.
 	return toPods(pods, time.Now()), nil
+}
+
+// QueryPods returns one page of the pod table — what its search box, status
+// chips, sort and pager say — and the counts around it, rather than the whole
+// list. See domain.QueryPods, and CLAUDE.md, "The pod table is paged in Go".
+//
+// annotationKeys and expressions are the list's projection, exactly as
+// ListPods takes them; query.Columns are the same custom columns as specs,
+// for what they add to the searchable text.
+func (w *WorkloadAPI) QueryPods(clusterID, namespace string, annotationKeys []string, expressions []CustomExpression, query PodQuery) (PodPage, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, name, err := podListArgs(clusterID, namespace)
+	if err != nil {
+		return PodPage{}, apiError(w.logger, "QueryPods", err)
+	}
+
+	page, err := w.workloads.QueryPods(ctx, id, name, projectionFor(annotationKeys, expressions), query.toDomain())
+	if err != nil {
+		return PodPage{}, apiError(w.logger, "QueryPods", err)
+	}
+
+	return toPodPage(page, time.Now()), nil
+}
+
+// ListPodKeys names every pod the query matches, across every page — what
+// "select all matching" ticks. The page in the query is ignored.
+func (w *WorkloadAPI) ListPodKeys(clusterID, namespace string, annotationKeys []string, expressions []CustomExpression, query PodQuery) ([]PodKey, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, name, err := podListArgs(clusterID, namespace)
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodKeys", err)
+	}
+
+	keys, err := w.workloads.ListPodKeys(ctx, id, name, projectionFor(annotationKeys, expressions), query.toDomain())
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodKeys", err)
+	}
+
+	return toPodKeys(keys), nil
+}
+
+// ExportPodsCSV writes every pod the query matches — every page, in the
+// table's order — as CSV to wherever the operator chooses, and returns the
+// path, or "" when they cancelled the dialog.
+//
+// RENDERED AND WRITTEN HERE because the rows are: the webview holds one page
+// now, and shipping the whole list across the bridge to turn it into a file
+// would be the payload paging exists to avoid. The cells are the table's
+// own text (see podCSVCell) and the file is web/src/lib/csv.ts's format,
+// formula guard included. columns are the visible columns, in order.
+func (w *WorkloadAPI) ExportPodsCSV(clusterID, namespace string, annotationKeys []string, expressions []CustomExpression, query PodQuery, columns []CSVColumn, suggestedName string) (string, error) {
+	id, name, err := podListArgs(clusterID, namespace)
+	if err != nil {
+		return "", apiError(w.logger, "ExportPodsCSV", err)
+	}
+
+	// Read first, then ask where to put it: a refusal should arrive before
+	// the dialog rather than after the operator has chosen a place.
+	ctx, cancel := w.app.requestContext()
+	pods, err := w.workloads.MatchingPods(ctx, id, name, projectionFor(annotationKeys, expressions), query.toDomain())
+	cancel()
+	if err != nil {
+		return "", apiError(w.logger, "ExportPodsCSV", err)
+	}
+
+	path, err := writeCSVExport(w.chooseSavePath, suggestedName, renderPodCSV(columns, toPods(pods, time.Now())))
+	if err != nil {
+		return "", apiError(w.logger, "ExportPodsCSV", err)
+	}
+	return path, nil
+}
+
+// writeCSVExport asks where to save an export and writes it there — the
+// same dialog, permissions and cancel convention as SaveTextFile.
+func writeCSVExport(choose func(string) (string, error), suggestedName, content string) (string, error) {
+	if strings.TrimSpace(suggestedName) == "" {
+		return "", errEmptySuggestedName
+	}
+	path, err := choose(suggestedName)
+	if err != nil || path == "" {
+		return "", err
+	}
+	// 0o600, as SaveTextFile writes: the export holds whatever the cluster
+	// returned.
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// podListArgs validates the cluster and namespace every pod list call takes.
+func podListArgs(clusterID, namespace string) (domain.ClusterID, domain.NamespaceName, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", "", err
+	}
+	name, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return "", "", err
+	}
+	return id, name, nil
+}
+
+// UsagePoint is one measurement of a pod's usage.
+type UsagePoint struct {
+	// At is when it was read, in milliseconds since the epoch.
+	At int64 `json:"at"`
+	// CPUCores and MemoryBytes are what was measured.
+	CPUCores    float64 `json:"cpuCores"`
+	MemoryBytes int64   `json:"memoryBytes"`
+}
+
+// PodUsageHistory returns one pod's recent usage, kept in Go's memory from
+// every pod list read — so the drawer has a chart for a pod that was never
+// on a page the webview held. Empty when nothing has measured it yet.
+func (w *WorkloadAPI) PodUsageHistory(clusterID, namespace, name string) ([]UsagePoint, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, ns, err := podListArgs(clusterID, namespace)
+	if err != nil {
+		return nil, apiError(w.logger, "PodUsageHistory", err)
+	}
+
+	points, err := w.workloads.PodUsageHistory(ctx, id, ns, name)
+	if err != nil {
+		return nil, apiError(w.logger, "PodUsageHistory", err)
+	}
+
+	out := make([]UsagePoint, 0, len(points))
+	for _, point := range points {
+		out = append(out, UsagePoint{
+			At:          point.At.UnixMilli(),
+			CPUCores:    float64(point.CPUMilli) / 1000,
+			MemoryBytes: point.MemoryBytes,
+		})
+	}
+	return out, nil
 }
 
 // WorkloadUsage sums what a controller's pods are consuming.
@@ -232,6 +382,54 @@ func (w *WorkloadAPI) WorkloadGraph(clusterID, namespace, kind, name string) (Po
 	return toPodGraph(graph), nil
 }
 
+// ApplicationGraph returns the map of one application: the objects labelled
+// app.kubernetes.io/instance=<instance> in a namespace, and what they own.
+func (w *WorkloadAPI) ApplicationGraph(clusterID, namespace, instance string) (PodGraph, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return PodGraph{}, apiError(w.logger, "ApplicationGraph", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return PodGraph{}, apiError(w.logger, "ApplicationGraph", err)
+	}
+
+	graph, err := w.workloads.ApplicationGraph(ctx, id, ns, instance)
+	if err != nil {
+		return PodGraph{}, apiError(w.logger, "ApplicationGraph", err)
+	}
+
+	return toPodGraph(graph), nil
+}
+
+// ListApplicationPods returns the pods of one application, by the same rule
+// its map draws them with.
+func (w *WorkloadAPI) ListApplicationPods(clusterID, namespace, instance string) ([]Pod, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return nil, apiError(w.logger, "ListApplicationPods", err)
+	}
+
+	ns, err := domain.NewNamespaceName(namespace)
+	if err != nil {
+		return nil, apiError(w.logger, "ListApplicationPods", err)
+	}
+
+	pods, err := w.workloads.ListApplicationPods(ctx, id, ns, instance)
+	if err != nil {
+		return nil, apiError(w.logger, "ListApplicationPods", err)
+	}
+
+	return toPods(pods, time.Now()), nil
+}
+
 // ListPodsOnNode returns the pods running on one node, across every namespace.
 func (w *WorkloadAPI) ListPodsOnNode(clusterID, nodeName string) ([]Pod, error) {
 	ctx, cancel := w.app.requestContext()
@@ -296,4 +494,147 @@ func (w *WorkloadAPI) ListPodsForWorkload(clusterID, namespace, kind, name strin
 	}
 
 	return toPods(pods, time.Now()), nil
+}
+
+// podScopeArgs validates the cluster and namespace set every scoped pod list
+// call takes. An empty set is every namespace.
+func podScopeArgs(clusterID string, namespaces []string) (domain.ClusterID, domain.NamespaceScope, error) {
+	id, err := domain.NewClusterID(clusterID)
+	if err != nil {
+		return "", domain.NamespaceScope{}, err
+	}
+	scope, err := domain.NewNamespaceScope(namespaces)
+	if err != nil {
+		return "", domain.NamespaceScope{}, err
+	}
+	return id, scope, nil
+}
+
+// ListPodsIn is ListPods over a set of namespaces; empty means every one.
+func (w *WorkloadAPI) ListPodsIn(clusterID string, namespaces []string, annotationKeys []string, expressions []CustomExpression) ([]Pod, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodsIn", err)
+	}
+
+	pods, err := w.workloads.ListPodsIn(ctx, id, scope, projectionFor(annotationKeys, expressions))
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodsIn", err)
+	}
+	return toPods(pods, time.Now()), nil
+}
+
+// QueryPodsIn is QueryPods over a set of namespaces; the page is cut from
+// the merged list.
+func (w *WorkloadAPI) QueryPodsIn(clusterID string, namespaces []string, annotationKeys []string, expressions []CustomExpression, query PodQuery) (PodPage, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return PodPage{}, apiError(w.logger, "QueryPodsIn", err)
+	}
+
+	page, err := w.workloads.QueryPodsIn(ctx, id, scope, projectionFor(annotationKeys, expressions), query.toDomain())
+	if err != nil {
+		return PodPage{}, apiError(w.logger, "QueryPodsIn", err)
+	}
+	return toPodPage(page, time.Now()), nil
+}
+
+// ListPodKeysIn is ListPodKeys over a set of namespaces.
+func (w *WorkloadAPI) ListPodKeysIn(clusterID string, namespaces []string, annotationKeys []string, expressions []CustomExpression, query PodQuery) ([]PodKey, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodKeysIn", err)
+	}
+
+	keys, err := w.workloads.ListPodKeysIn(ctx, id, scope, projectionFor(annotationKeys, expressions), query.toDomain())
+	if err != nil {
+		return nil, apiError(w.logger, "ListPodKeysIn", err)
+	}
+	return toPodKeys(keys), nil
+}
+
+// ExportPodsCSVIn is ExportPodsCSV over a set of namespaces.
+func (w *WorkloadAPI) ExportPodsCSVIn(clusterID string, namespaces []string, annotationKeys []string, expressions []CustomExpression, query PodQuery, columns []CSVColumn, suggestedName string) (string, error) {
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return "", apiError(w.logger, "ExportPodsCSVIn", err)
+	}
+
+	ctx, cancel := w.app.requestContext()
+	pods, err := w.workloads.MatchingPodsIn(ctx, id, scope, projectionFor(annotationKeys, expressions), query.toDomain())
+	cancel()
+	if err != nil {
+		return "", apiError(w.logger, "ExportPodsCSVIn", err)
+	}
+
+	path, err := writeCSVExport(w.chooseSavePath, suggestedName, renderPodCSV(columns, toPods(pods, time.Now())))
+	if err != nil {
+		return "", apiError(w.logger, "ExportPodsCSVIn", err)
+	}
+	return path, nil
+}
+
+// ListApplicationsIn is ListApplications over a set of namespaces.
+func (w *WorkloadAPI) ListApplicationsIn(clusterID string, namespaces []string) (ApplicationInventory, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return ApplicationInventory{}, apiError(w.logger, "ListApplicationsIn", err)
+	}
+
+	inventory, err := w.workloads.ListApplicationsIn(ctx, id, scope)
+	if err != nil {
+		return ApplicationInventory{}, apiError(w.logger, "ListApplicationsIn", err)
+	}
+	return toApplicationInventory(inventory), nil
+}
+
+// WorkloadConsumptionIn is WorkloadConsumption over a set of namespaces.
+func (w *WorkloadAPI) WorkloadConsumptionIn(clusterID, kind string, namespaces []string) (map[string]Consumption, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return nil, apiError(w.logger, "WorkloadConsumptionIn", err)
+	}
+
+	usage, err := w.workloads.WorkloadConsumptionIn(ctx, id, domain.WorkloadKind(kind), scope)
+	if err != nil {
+		return nil, apiError(w.logger, "WorkloadConsumptionIn", err)
+	}
+
+	out := make(map[string]Consumption, len(usage))
+	for key, one := range usage {
+		out[key] = toConsumption(one)
+	}
+	return out, nil
+}
+
+// ListWorkloadsIn is ListWorkloads over a set of namespaces.
+func (w *WorkloadAPI) ListWorkloadsIn(clusterID, kind string, namespaces []string, annotationKeys []string, expressions []CustomExpression) ([]Workload, error) {
+	ctx, cancel := w.app.requestContext()
+	defer cancel()
+
+	id, scope, err := podScopeArgs(clusterID, namespaces)
+	if err != nil {
+		return nil, apiError(w.logger, "ListWorkloadsIn", err)
+	}
+
+	workloads, err := w.workloads.ListWorkloadsIn(ctx, id, domain.WorkloadKind(kind), scope, projectionFor(annotationKeys, expressions))
+	if err != nil {
+		return nil, apiError(w.logger, "ListWorkloadsIn", err)
+	}
+	return toWorkloads(workloads, time.Now()), nil
 }

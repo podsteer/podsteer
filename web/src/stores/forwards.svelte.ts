@@ -13,15 +13,22 @@
  */
 
 import {
+  forgetPausedPortForward,
+  listPausedPortForwards,
   listPortForwards,
+  reconnectPortForward,
+  resumePausedPortForward,
+  setPortForwardKept,
   startPortForward,
   startServicePortForward,
   stopPortForward,
   stopAllPortForwards,
+  type PausedPortForward,
   type PortForward,
 } from '$lib/api/client'
 import { toApiError } from '$lib/api/errors'
 import { serviceForwardKey } from '$lib/servicePorts'
+import { notices } from './notices.svelte'
 import { preferences } from './preferences.svelte'
 
 /**
@@ -42,6 +49,22 @@ function forwardKey(cluster: string, namespace: string, pod: string, remotePort:
 class Forwards {
   /** Everything forwarded right now, across every cluster. */
   active = $state.raw<PortForward[]>([])
+
+  /**
+   * Forwards the operator chose to keep across restarts that are NOT running:
+   * their cluster is not connected yet, their restore is under way, or it
+   * failed and says why. Never connected on the operator's behalf — opening
+   * the cluster is what restores them.
+   *
+   * Like `active`, a view of what the backend reports and never an invented
+   * entry.
+   */
+  paused = $state.raw<PausedPortForward[]>([])
+
+  /** Forwards whose reconnect window ran out and are still looking. */
+  get lost(): PortForward[] {
+    return this.active.filter((forward) => forward.lost)
+  }
 
   /** The last failure, for the surface that asked. Cleared by the next attempt. */
   error = $state<string>('')
@@ -84,7 +107,7 @@ class Forwards {
    */
   watch(): () => void {
     const timer = setInterval(() => {
-      if (this.active.length > 0) void this.refresh()
+      if (this.active.length > 0 || this.paused.length > 0) void this.refresh()
     }, 3000)
     return () => clearInterval(timer)
   }
@@ -178,8 +201,16 @@ class Forwards {
 
   async refresh(): Promise<void> {
     try {
-      this.active = await listPortForwards()
+      const next = await listPortForwards()
+      this.#announceLost(this.active, next)
+      this.active = next
       this.#pruneServices()
+      try {
+        this.paused = await listPausedPortForwards()
+      } catch {
+        // The paused list is the lesser half: a failure to read it leaves the
+        // last one rather than hiding forwards that are running.
+      }
     } catch {
       // A failure to LIST forwards is not worth a banner: the list is a
       // convenience over state the backend owns, and the next change refreshes
@@ -205,6 +236,8 @@ class Forwards {
      * make every existing call site type a zero it does not mean anything.
      */
     localPort = 0,
+    /** Keep it across restarts. Off unless asked: nothing is saved by default. */
+    keep = false,
   ): Promise<void> {
     const key = forwardKey(clusterId, namespace, pod, remotePort)
     this.#setBusy(key, true)
@@ -228,6 +261,7 @@ class Forwards {
       // operator typed it or the operating system chose it: both are worth
       // proposing next time.
       preferences.rememberLocalPort(remotePort, portName, forward.localPort)
+      if (keep) await this.#keep(forward.id)
       await this.refresh()
     } catch (cause) {
       this.error = toApiError(cause).message
@@ -252,6 +286,8 @@ class Forwards {
     servicePort: string,
     port: number,
     localPort = 0,
+    /** Keep it across restarts. Off unless asked. */
+    keep = false,
   ): Promise<void> {
     const key = forwardKey(clusterId, namespace, `service/${service}`, port)
     this.#setBusy(key, true)
@@ -280,11 +316,91 @@ class Forwards {
         ...this.#byService,
         [serviceForwardKey(clusterId, namespace, service, port)]: forward.id,
       }
+      if (keep) await this.#keep(forward.id)
       await this.refresh()
     } catch (cause) {
       this.error = toApiError(cause).message
     } finally {
       this.#setBusy(key, false)
+    }
+  }
+
+  /**
+   * Saves a forward for next time. A failure here is reported but does not
+   * undo the forward, which is running either way.
+   */
+  async #keep(forwardId: string): Promise<void> {
+    try {
+      await setPortForwardKept(forwardId, true)
+    } catch (cause) {
+      this.error = toApiError(cause).message
+    }
+  }
+
+  /** Turns "keep across restarts" on or off for a running forward. */
+  async setKept(forward: PortForward, keep: boolean): Promise<void> {
+    this.error = ''
+    try {
+      await setPortForwardKept(forward.id, keep)
+      await this.refresh()
+    } catch (cause) {
+      this.error = toApiError(cause).message
+    }
+  }
+
+  /** Asks a lost forward to start looking again now. */
+  async reconnect(forward: PortForward): Promise<void> {
+    this.error = ''
+    try {
+      await reconnectPortForward(forward.id)
+      await this.refresh()
+    } catch (cause) {
+      this.error = toApiError(cause).message
+    }
+  }
+
+  /** Retries a kept forward whose restore failed. */
+  async resume(paused: PausedPortForward): Promise<void> {
+    this.error = ''
+    try {
+      await resumePausedPortForward(paused.clusterId, paused.localPort)
+    } catch (cause) {
+      this.error = toApiError(cause).message
+    }
+    await this.refresh()
+  }
+
+  /** Removes a kept forward that is not running. */
+  async forget(paused: PausedPortForward): Promise<void> {
+    this.error = ''
+    try {
+      await forgetPausedPortForward(paused.clusterId, paused.localPort)
+    } catch (cause) {
+      this.error = toApiError(cause).message
+    }
+    await this.refresh()
+  }
+
+  /**
+   * Says so, once, when a forward newly turns lost.
+   *
+   * THE FORWARD USED TO VANISH. After two minutes of an outage the backend
+   * deleted it and nothing on screen said it had gone, so whatever was pointed
+   * at the local port simply started refusing connections. The row now stays;
+   * this is the non-blocking notice that tells somebody who is looking at a
+   * different tab. Compared against the previous list so a forward that stays
+   * lost does not announce itself on every tick.
+   */
+  #announceLost(previous: PortForward[], next: PortForward[]): void {
+    for (const forward of next) {
+      if (!forward.lost) continue
+      const before = previous.find((entry) => entry.id === forward.id)
+      if (before && before.lost) continue
+      const name = forward.targetName || forward.pod
+      notices.post(
+        `Port-forward to ${name} (${forward.clusterId}) was lost. Open Port forwards in the status bar to reconnect.`,
+        15000,
+      )
     }
   }
 

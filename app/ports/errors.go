@@ -165,6 +165,14 @@ var (
 	// credentials — the two look identical as a bare "denied" otherwise.
 	ErrDisruptionBudget = errors.New("disruption budget refused eviction")
 
+	// ErrThrottled means the API server (or the priority-and-fairness layer in
+	// front of it) answered 429 to an ordinary request: the account is being
+	// rate limited. NOT ErrDisruptionBudget — that is the eviction path's own
+	// 429 and the only one that means a budget refused something. A throttled
+	// read is waited out, not worked around, and the server's Retry-After is
+	// carried in the wrapped message.
+	ErrThrottled = errors.New("request throttled by the API server")
+
 	// ErrDrainRefused means PlanDrain found at least one pod DrainNode may
 	// not evict as the caller asked. Mirrors kubectl's own behaviour:
 	// draining stops before anything is evicted rather than doing part of a
@@ -220,6 +228,12 @@ var (
 	// an operator to look for a pod that is right there. The adapter reads the
 	// pod after the failure to tell the two apart.
 	ErrResizeUnsupported = errors.New("this cluster does not support resizing a running pod")
+
+	// ErrSidecarResizeUnsupported means the API server answered 200 to a
+	// sidecar resize and returned the pod UNCHANGED. Where sidecar resize is
+	// not enabled the resize strategy silently drops initContainers resources
+	// before validation, so success is only visible by reading the response.
+	ErrSidecarResizeUnsupported = errors.New("this cluster accepted the sidecar resize but did not apply it")
 
 	// ErrManifestRejected means the API server accepted the REQUEST but
 	// declined the OBJECT (HTTP 422/Invalid) — a schema validation failure,

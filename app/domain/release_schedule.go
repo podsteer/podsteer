@@ -16,14 +16,15 @@ import "time"
 // implying it is current. A build from a year ago knows nothing about releases
 // made since it, and the difference between "not in the table" and "does not
 // exist" is the whole reason an unknown version is reported as unknown.
-var scheduleCompiledAt = time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)
+var scheduleCompiledAt = time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
 
 // endOfLife maps a Kubernetes minor version to the day its patches stop.
 var endOfLife = map[string]time.Time{
+	"1.37": time.Date(2027, 10, 28, 0, 0, 0, 0, time.UTC),
 	"1.36": time.Date(2027, 6, 28, 0, 0, 0, 0, time.UTC),
 	"1.35": time.Date(2027, 2, 28, 0, 0, 0, 0, time.UTC),
 	"1.34": time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC),
-	"1.33": time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC),
+	"1.33": time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC),  // final patch 1.33.13
 	"1.32": time.Date(2026, 2, 28, 0, 0, 0, 0, time.UTC),  // final patch 1.32.13
 	"1.31": time.Date(2025, 11, 11, 0, 0, 0, 0, time.UTC), // final patch 1.31.14
 	"1.30": time.Date(2025, 7, 15, 0, 0, 0, 0, time.UTC),  // final patch 1.30.14

@@ -5,6 +5,11 @@ const startPortForward = vi.fn()
 const stopPortForward = vi.fn()
 const stopAllPortForwards = vi.fn()
 const startServicePortForward = vi.fn()
+const listPausedPortForwards = vi.fn()
+const setPortForwardKept = vi.fn()
+const resumePausedPortForward = vi.fn()
+const forgetPausedPortForward = vi.fn()
+const reconnectPortForward = vi.fn()
 
 vi.mock('$lib/api/client', () => ({
   listPortForwards: (...args: unknown[]) => listPortForwards(...args),
@@ -12,10 +17,16 @@ vi.mock('$lib/api/client', () => ({
   startServicePortForward: (...args: unknown[]) => startServicePortForward(...args),
   stopPortForward: (...args: unknown[]) => stopPortForward(...args),
   stopAllPortForwards: (...args: unknown[]) => stopAllPortForwards(...args),
+  listPausedPortForwards: (...args: unknown[]) => listPausedPortForwards(...args),
+  setPortForwardKept: (...args: unknown[]) => setPortForwardKept(...args),
+  resumePausedPortForward: (...args: unknown[]) => resumePausedPortForward(...args),
+  forgetPausedPortForward: (...args: unknown[]) => forgetPausedPortForward(...args),
+  reconnectPortForward: (...args: unknown[]) => reconnectPortForward(...args),
 }))
 
 import { forwards } from './forwards.svelte'
 import { preferences } from './preferences.svelte'
+import { notices } from './notices.svelte'
 import type { PortForward } from '$lib/api/client'
 
 function fixtureForward(overrides: Partial<PortForward> = {}): PortForward {
@@ -29,6 +40,10 @@ function fixtureForward(overrides: Partial<PortForward> = {}): PortForward {
     address: 'http://localhost:15432',
     scheme: 'http',
     reconnecting: false,
+    lost: false,
+    kept: false,
+    targetKind: 'pod',
+    targetName: 'postgres-0',
     ...overrides,
   }
 }
@@ -39,6 +54,13 @@ beforeEach(() => {
   stopPortForward.mockReset()
   stopAllPortForwards.mockReset()
   startServicePortForward.mockReset()
+  listPausedPortForwards.mockReset().mockResolvedValue([])
+  setPortForwardKept.mockReset().mockResolvedValue(undefined)
+  resumePausedPortForward.mockReset().mockResolvedValue(undefined)
+  forgetPausedPortForward.mockReset().mockResolvedValue(undefined)
+  reconnectPortForward.mockReset().mockResolvedValue(undefined)
+  notices.clear()
+  forwards.paused = []
   forwards.active = []
   forwards.error = ''
 })
@@ -170,5 +192,79 @@ describe('which forward belongs to which Service', () => {
     await forwards.start('dev', 'web', 'postgres-0', 'uid-1', 5432, 'postgres', 'TCP', {}, 15432)
 
     expect(forwards.serviceOf('3')).toBeNull()
+  })
+})
+
+describe('keeping a forward across restarts', () => {
+  it('saves nothing unless asked, and saves the started forward when asked', async () => {
+    startPortForward.mockResolvedValue(fixtureForward({ id: '7' }))
+
+    await forwards.start('dev', 'web', 'postgres-0', 'uid-1', 5432, 'postgres', 'TCP', {}, 0)
+    expect(setPortForwardKept).not.toHaveBeenCalled()
+
+    await forwards.start('dev', 'web', 'postgres-0', 'uid-1', 5432, 'postgres', 'TCP', {}, 0, true)
+    expect(setPortForwardKept).toHaveBeenCalledExactlyOnceWith('7', true)
+  })
+
+  it('keeps a Service forward through the same switch', async () => {
+    startServicePortForward.mockResolvedValue(fixtureForward({ id: '9', targetKind: 'service' }))
+
+    await forwards.startService('dev', 'web', 'pg', 'postgres', 5432, 0, true)
+
+    expect(setPortForwardKept).toHaveBeenCalledExactlyOnceWith('9', true)
+  })
+
+  it('a failed save is reported without undoing the forward', async () => {
+    startPortForward.mockResolvedValue(fixtureForward({ id: '7' }))
+    setPortForwardKept.mockRejectedValue(new Error('[settings_read_only] settings are read-only'))
+
+    await forwards.start('dev', 'web', 'postgres-0', 'uid-1', 5432, 'postgres', 'TCP', {}, 0, true)
+
+    expect(forwards.error).not.toBe('')
+    expect(listPortForwards).toHaveBeenCalled()
+  })
+
+  it('lists what the backend reports as paused, never anything of its own', async () => {
+    listPausedPortForwards.mockResolvedValue([
+      { clusterId: 'prod', namespace: 'data', targetKind: 'service', targetName: 'pg', port: 'postgres', localPort: 15432, state: 'paused', reason: '' },
+    ])
+
+    await forwards.refresh()
+
+    expect(forwards.paused).toHaveLength(1)
+    expect(forwards.paused[0]?.state).toBe('paused')
+  })
+
+  it('forgets and resumes through the backend and re-reads', async () => {
+    const paused = { clusterId: 'prod', namespace: 'data', targetKind: 'service', targetName: 'pg', port: 'postgres', localPort: 15432, state: 'failed', reason: 'in use' }
+
+    await forwards.resume(paused)
+    await forwards.forget(paused)
+
+    expect(resumePausedPortForward).toHaveBeenCalledWith('prod', 15432)
+    expect(forgetPausedPortForward).toHaveBeenCalledWith('prod', 15432)
+    expect(listPausedPortForwards).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('a forward that was lost', () => {
+  it('says so once when it turns lost, and not on every tick after', async () => {
+    listPortForwards.mockResolvedValue([fixtureForward({ id: '1' })])
+    await forwards.refresh()
+    expect(notices.items).toHaveLength(0)
+
+    listPortForwards.mockResolvedValue([fixtureForward({ id: '1', lost: true })])
+    await forwards.refresh()
+    await forwards.refresh()
+
+    expect(notices.items).toHaveLength(1)
+    expect(notices.items[0]?.message).toContain('was lost')
+    expect(forwards.lost).toHaveLength(1)
+  })
+
+  it('asks the backend to reconnect it', async () => {
+    const lost = fixtureForward({ id: '1', lost: true })
+    await forwards.reconnect(lost)
+    expect(reconnectPortForward).toHaveBeenCalledWith('1')
   })
 })

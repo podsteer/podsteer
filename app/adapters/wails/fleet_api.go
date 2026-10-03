@@ -20,6 +20,10 @@ type FleetAPI struct {
 	fleet  ports.FleetService
 	app    *App
 	logger *slog.Logger
+
+	// chooseSavePath is the save dialog behind ExportPodsCSV — a seam for
+	// the reason SystemAPI.chooseSavePath is one.
+	chooseSavePath func(suggestedName string) (string, error)
 }
 
 // NewFleetAPI returns the bound fleet API.
@@ -36,9 +40,10 @@ func NewFleetAPI(fleet ports.FleetService, app *App, logger *slog.Logger) (*Flee
 	}
 
 	return &FleetAPI{
-		fleet:  fleet,
-		app:    app,
-		logger: logger.With(slog.String("api", "fleet")),
+		fleet:          fleet,
+		app:            app,
+		logger:         logger.With(slog.String("api", "fleet")),
+		chooseSavePath: func(suggestedName string) (string, error) { return showSaveDialog(app, suggestedName) },
 	}, nil
 }
 
@@ -62,6 +67,52 @@ func (f *FleetAPI) ListPods(clusterIDs []string, namespace string) ([]ClusterPod
 	}
 
 	return toClusterPods(reads, time.Now()), nil
+}
+
+// QueryPods returns one page of the merged pod list — the search, chips,
+// cluster selection, sort and page the frontend's table says — and every
+// cluster's verdict for the status strip. See FleetService.QueryPods.
+//
+// No projection: custom columns are per kind and the merged list is not a
+// kind, exactly as ListPods reads it.
+func (f *FleetAPI) QueryPods(clusterIDs []string, namespace string, query PodQuery) (FleetPodPage, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, ns, err := fleetArgs(clusterIDs, namespace)
+	if err != nil {
+		return FleetPodPage{}, apiError(f.logger, "QueryPods", err)
+	}
+
+	page, err := f.fleet.QueryPods(ctx, ids, ns, query.toDomain())
+	if err != nil {
+		return FleetPodPage{}, apiError(f.logger, "QueryPods", err)
+	}
+
+	return toFleetPodPage(page, time.Now()), nil
+}
+
+// ExportPodsCSV writes every pod of the merged list the query matches, as
+// CSV, to wherever the operator chooses — see WorkloadAPI.ExportPodsCSV for
+// why this is written in Go. Returns "" when the dialog was cancelled.
+func (f *FleetAPI) ExportPodsCSV(clusterIDs []string, namespace string, query PodQuery, columns []CSVColumn, suggestedName string) (string, error) {
+	ids, ns, err := fleetArgs(clusterIDs, namespace)
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSV", err)
+	}
+
+	ctx, cancel := f.app.requestContext()
+	pods, err := f.fleet.MatchingPods(ctx, ids, ns, query.toDomain())
+	cancel()
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSV", err)
+	}
+
+	path, err := writeCSVExport(f.chooseSavePath, suggestedName, renderPodCSV(columns, toPods(pods, time.Now())))
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSV", err)
+	}
+	return path, nil
 }
 
 // ListWorkloads lists every fleet workload kind in the given namespace of
@@ -144,4 +195,131 @@ func fleetArgs(clusterIDs []string, namespace string) ([]domain.ClusterID, domai
 		return nil, "", err
 	}
 	return ids, ns, nil
+}
+
+// fleetScopeArgs is fleetArgs for a set of namespaces; empty means every one.
+func fleetScopeArgs(clusterIDs []string, namespaces []string) ([]domain.ClusterID, domain.NamespaceScope, error) {
+	ids := make([]domain.ClusterID, 0, len(clusterIDs))
+	for _, raw := range clusterIDs {
+		id, err := domain.NewClusterID(raw)
+		if err != nil {
+			return nil, domain.NamespaceScope{}, err
+		}
+		ids = append(ids, id)
+	}
+
+	scope, err := domain.NewNamespaceScope(namespaces)
+	if err != nil {
+		return nil, domain.NamespaceScope{}, err
+	}
+	return ids, scope, nil
+}
+
+// ListPodsIn is ListPods over a set of namespaces.
+func (f *FleetAPI) ListPodsIn(clusterIDs []string, namespaces []string) ([]ClusterPods, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return nil, apiError(f.logger, "ListPodsIn", err)
+	}
+
+	reads, err := f.fleet.ListPodsIn(ctx, ids, scope)
+	if err != nil {
+		return nil, apiError(f.logger, "ListPodsIn", err)
+	}
+	return toClusterPods(reads, time.Now()), nil
+}
+
+// QueryPodsIn is QueryPods over a set of namespaces.
+func (f *FleetAPI) QueryPodsIn(clusterIDs []string, namespaces []string, query PodQuery) (FleetPodPage, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return FleetPodPage{}, apiError(f.logger, "QueryPodsIn", err)
+	}
+
+	page, err := f.fleet.QueryPodsIn(ctx, ids, scope, query.toDomain())
+	if err != nil {
+		return FleetPodPage{}, apiError(f.logger, "QueryPodsIn", err)
+	}
+	return toFleetPodPage(page, time.Now()), nil
+}
+
+// ExportPodsCSVIn is ExportPodsCSV over a set of namespaces.
+func (f *FleetAPI) ExportPodsCSVIn(clusterIDs []string, namespaces []string, query PodQuery, columns []CSVColumn, suggestedName string) (string, error) {
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSVIn", err)
+	}
+
+	ctx, cancel := f.app.requestContext()
+	pods, err := f.fleet.MatchingPodsIn(ctx, ids, scope, query.toDomain())
+	cancel()
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSVIn", err)
+	}
+
+	path, err := writeCSVExport(f.chooseSavePath, suggestedName, renderPodCSV(columns, toPods(pods, time.Now())))
+	if err != nil {
+		return "", apiError(f.logger, "ExportPodsCSVIn", err)
+	}
+	return path, nil
+}
+
+// ListWorkloadsIn is ListWorkloads over a set of namespaces.
+func (f *FleetAPI) ListWorkloadsIn(clusterIDs []string, namespaces []string) ([]ClusterWorkloads, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return nil, apiError(f.logger, "ListWorkloadsIn", err)
+	}
+
+	reads, err := f.fleet.ListWorkloadsIn(ctx, ids, scope)
+	if err != nil {
+		return nil, apiError(f.logger, "ListWorkloadsIn", err)
+	}
+	return toClusterWorkloads(reads, time.Now()), nil
+}
+
+// ListEventsIn is ListEvents over a set of namespaces.
+func (f *FleetAPI) ListEventsIn(clusterIDs []string, namespaces []string) ([]ClusterEvents, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return nil, apiError(f.logger, "ListEventsIn", err)
+	}
+
+	reads, err := f.fleet.ListEventsIn(ctx, ids, scope)
+	if err != nil {
+		return nil, apiError(f.logger, "ListEventsIn", err)
+	}
+	return toClusterEvents(reads, time.Now()), nil
+}
+
+// ListTableIn is ListTable over a set of namespaces.
+func (f *FleetAPI) ListTableIn(clusterIDs []string, group, resource string, namespaces []string) ([]ClusterTable, error) {
+	ctx, cancel := f.app.requestContext()
+	defer cancel()
+
+	ids, scope, err := fleetScopeArgs(clusterIDs, namespaces)
+	if err != nil {
+		return nil, apiError(f.logger, "ListTableIn", err)
+	}
+	if strings.TrimSpace(resource) == "" {
+		return nil, apiError(f.logger, "ListTableIn", fmt.Errorf("%w: no resource named", domain.ErrInvalidResourceKind))
+	}
+
+	reads, err := f.fleet.ListTableIn(ctx, ids, group, resource, scope)
+	if err != nil {
+		return nil, apiError(f.logger, "ListTableIn", err)
+	}
+	return toClusterTables(reads), nil
 }

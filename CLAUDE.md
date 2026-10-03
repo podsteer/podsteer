@@ -12,6 +12,14 @@ beta renames things between releases, and `@latest` in CI would break a build
 nobody changed. Read every release note between the pin and the target before
 moving it; Dependabot proposes a version, not a migration.
 
+**Release packaging** beyond the zips: `build/package-linux.sh` (nfpm + appimagetool;
+config in `build/linux/`) makes the AppImage/.deb/.rpm for amd64 and arm64,
+`build/windows/installer.nsi` makes the per-user Windows installer, both from
+`ci-cd.yaml`'s `package` job and neither testable outside CI. winget/Scoop
+templates live in `packaging/` (never auto-submitted). The About pane
+(`AboutPane.svelte`, `SystemAPI.DebugInfo`) builds the bug-report block from an
+allow-list of versions only; keep cluster, host and path names out of it.
+
 **macOS builds carry `-tags private_mac_apis`, and must.** From beta.19 the
 undocumented WebKit calls compile only under that tag and are no-ops without
 it — including the webview background colour that paints the window in the
@@ -44,6 +52,7 @@ app/
 │   ├── wails/      bound SERVICES and DTOs; the frontend API contract
 │   ├── mcp/        read-only tools for a coding agent, over stdio
 │   └── assets/     embeds the built frontend
+├── safego/         panic containment for goroutines — stdlib only, any layer may import it
 └── config/         environment-driven configuration
 ```
 
@@ -210,6 +219,14 @@ Three things to know before touching it:
   is invalidated FIRST and the watch forgotten second; reversing that opens a
   window in which a racing read ensures a set against the stale client and the
   reconnect keeps it.
+- **Only Forbidden condemns a store; Unauthorized is transient.** A 403 is a
+  decision about the account and ends the store's watching for the life of the
+  connection. A 401 is a credential that lapsed (a token boundary, a laptop
+  waking up): it says nothing about what the account may do and ends when the
+  credential does, so it demotes like any other transient error
+  (`kindWatch.onWatchError`) and `supervise` promotes the store back. Condemning
+  it left a cluster doing full network lists every tick, silently, for as long
+  as the tab stayed open.
 - **A transient error demotes a store, and a supervisor promotes it back.**
   There is no "the watch recovered" callback in client-go, so recovery is
   detected from the reflector's last synced resource version moving past the
@@ -314,13 +331,156 @@ Three rules it holds to, each with a test:
   the cancellation is not: how long an answer is worth waiting for is as true
   for the second caller as the first. Waiters leave on their own context, so
   a wedged fetch cannot pin them.
+- **A panic in the fetch is an error, and is never cached.** The fetch includes
+  mapping, and mapping includes the operator's own custom-column expressions.
+  `guardedFetch` turns a panic into an error and `finish` releases waiters in
+  every case; before, a panic left the entry "in flight" and every later
+  caller waited out its whole timeout.
 - **Every write drops the cluster's cached reads** (`forgetReads`, deferred on
-  entry in each `ManagementPort` method). Deleting a pod and then being handed
+  entry in each `ManagementPort` method) and tells the topology's change sink. Deleting a pod and then being handed
   the list that still contains it reads as the application ignoring what it
   was told.
 
 Narrowed reads — one object, one node's pods, one workload's pods — go
 straight through. Nothing on-demand is cached.
+
+## The pod table is paged in Go
+
+Every pod row carries live usage, so the whole list changes on every tick, and
+it used to cross the bridge whole every tick to be filtered and cut to fifty
+rows in the webview: **11.4 MB at 5,000 pods, 22.9 MB at 10,000**
+(`TestPodListPayloadSize`). Now `WorkloadAPI.QueryPods` answers one page and
+the counts around it (~118 KB for 50 rows, held to 160 KB by
+`TestPodPayloadBudget`). Hashes and resourceVersion deltas were rejected:
+usage moves every tick, and the watch store is not always serving.
+
+- **The rules are the frontend's, ported, and held together by one fixture.**
+  `domain.QueryPods` (`app/domain/podquery.go`) runs `$lib/query`'s language
+  (`textquery.go`), `$lib/podStatusFilters`' chips, `$lib/customColumns`' search
+  text and `$lib/sort`'s collation. `web/src/lib/filter.fixtures.json` is run
+  by BOTH `filter.node.test.ts` (the TypeScript pipeline as the session ran
+  it) and `app/domain/podquery_test.go`. Change a rule in both and regenerate
+  the fixture from TypeScript (`UPDATE_POD_FIXTURE=1`), never the reverse.
+- **Collation is `Intl.Collator({numeric, sensitivity: 'base'})`, rebuilt.**
+  The domain may import only the standard library, so `textorder.go` splits
+  text into decimal-digit runs (any script: "٣" is 3) and the runs between,
+  and `app/adapters/collation` supplies each between-run's variable-length
+  primary key from `golang.org/x/text` — whole runs, so ligatures and Hangul
+  expand as the collation says. Not x/text's own `Numeric` option: it
+  mis-orders lone-zero digit runs, i.e. IP addresses. 26,000 random pairs
+  against Intl.Collator, none differing.
+  Memory sorts by the DISPLAYED figure (`domain.DisplayedBytes`, cross-checked
+  against `formatBytes`), so two rows reading `256.0MiB` stay a stable tie.
+- **One known divergence: the regex dialect.** RE2 has no lookaround or
+  backreferences; such a pattern is invalid in Go, matches nothing, and
+  `PodPage.queryError` is what the search field shows.
+- **Inputs:** search (settled, 150 ms debounce), chips, sort, page, page size,
+  custom columns form `session.podQuery`; a change of `pageQueryKey` re-asks
+  from `PodsView`/`FleetView` via `requeryPods`, on the same `#request`
+  counter `refresh()` uses, so the last one ASKED lands.
+- **Whole-match reads happen on a gesture, never a tick.** "Select all N
+  matching" fetches keys only (`ListPodKeys`: namespace, name, UID,
+  controller); the CSV export is rendered (`podCSVCell`, csv.ts's format and
+  formula guard) and written by Go (`ExportPodsCSV`, the shared save dialog);
+  `CSVExport` may be a writer instead of rows. Bulk plans read each ticked
+  pod's facts as last shown (`#podFacts`), so ticks survive paging.
+- **All clusters too.** `FleetService.QueryPods` fans out exactly as `ListPods`
+  does, then applies the frontend's old `mergeFleet` rules per cluster in Go
+  (`podMemo`: slow/unreachable keep their last rows marked stale, a refusal
+  drops them), then pages the merged list; the strip's cluster selection
+  narrows rows, not reads. Workloads/events/any-kind are still merged in the
+  webview.
+
+**The drawer is not limited to the page.** `PodQuery.pinned` names the open
+pod and `PodPage.pinned` returns it from the whole list, so its figures keep
+refreshing off-page — and when it is in neither place the drawer says "This pod
+no longer exists" (`selectedGone`) instead of freezing it as current. The
+merged All-clusters table pins nothing (`fleetPodQuery.pinned` is empty) and
+needs to: a row there opens in its cluster's own tab via `openObject`, whose
+pod list pins it; and `WorkloadService` keeps every listed pod's usage in
+an in-memory ring (`podUsageRing`, 200 points / one hour per pod, keyed by
+cluster — about 8 KB per pod at steady state, so ~80 MB on a 10k-pod cluster
+read whole; pods nothing measures for an hour are swept every five minutes;
+dropped on disconnect and reconnect, with a generation so a read in flight
+across one cannot file the old cluster's pods; **never written anywhere** — object names stay
+off disk, see SECURITY.md), which `PodUsageHistory` serves to seed the drawer's
+chart for a pod no page ever held.
+
+**Not done yet:** generalising this to every list (`TableQuery` — nodes,
+workloads, events, generic tables are still filtered in the webview), and a
+CI job running a kwokctl cluster of 100 fake nodes / 10k pods against budgets.
+Both are steps 7–8 of the scale plan.
+
+**What only sees the page now, and is a known loss:** the command palette's pod
+search; pod findings filed on the session timeline; the column picker's key
+suggestions; the webview's own usageHistory for pods (superseded for the drawer
+by the Go ring). `ListPods` itself is unchanged for every
+other caller (node/workload pods, MCP).
+
+## Lists take a namespace set
+
+The selector is multi-namespace, so every namespaced list has an `In` twin that
+takes a `domain.NamespaceScope` (All, or a sorted, distinct set of names) in
+place of one `NamespaceName`: `ListPodsIn`, `QueryPodsIn`, `MatchingPodsIn`,
+`ListPodKeysIn`, `ListWorkloadsIn`, `ListApplicationsIn`,
+`WorkloadConsumptionIn`, `ListEventsIn`, `ListTableIn`,
+`VulnerabilitySummariesIn`, `ListReleasesIn`, and the fleet's own. The old
+methods are one-line wrappers over `domain.ScopeOf(ns)`; the Wails `…In`
+methods take `namespaces []string` where the old ones took `namespace string`
+(empty slice = All) and the old Wails methods stay. `TopologyScope` is an alias
+of `NamespaceScope`.
+
+`application.readScoped` is the one rule, and it is the topology rule
+(`ListsClusterWide`, `NamespaceListCap` = 3) applied to lists: All or more than
+three names is ONE cluster-wide list filtered to the scope; three or fewer is
+one list per namespace. A cluster-wide list REFUSED (`ports.ErrForbidden`) for a
+named scope falls back to per-namespace lists, because an account bound to a few
+namespaces cannot list across the cluster; for All the refusal is the answer. A
+per-namespace failure FAILS THE LIST naming the namespace (`listing in "b"`) —
+a list never silently narrows. Pod usage follows the same shape and counts as
+measured only if every read answered. The read cache and the watch mirror are
+untouched: keys stay per namespace, the mirror stays cluster-wide.
+
+Merges: tables take their columns from the first answered namespace, append
+rows in scope order and are truncated if any read was; Helm listings keep the
+worst status and the oldest `ListedAt`; vulnerability summaries carry their namespace
+(grouped by namespace and Kind/name, filtered by scope on a wide read; a
+Forbidden status, which the adapter reports instead of an error, sends a
+named scope to per-namespace reads) and keep the least complete status. The
+zero `NamespaceScope` reads as All. The fleet keys late answers and the pod memo by
+`NamespaceScope.Key()`. Single by nature, not scoped: `SubjectRules`,
+`NamespaceInventory`, `FindClusterShells`.
+
+**The frontend holds the set in one place.** `ClusterSession.selectedNamespaces`
+(sorted, distinct, `[]` = All) replaced `session.namespace`, which was deleted
+so the type checker found every reader; derive from `scope`, `scopeKey` ('' for
+All — what in-flight guards and per-scope caches compare), `isAllNamespaces`,
+`singleNamespace` ('' unless exactly one), `inScope(ns)` and `namespaceLabel`.
+Change it only through `selectNamespaces(names)` — one reload however many
+changed, persisted per cluster; `selectNamespace(ns)` and `toggleNamespace(ns)`
+wrap it. `openObject` ADDS an object's namespace to a named set rather than
+replacing it. `$lib/namespaceScope` has the type, normalisation and the label
+rule (All / `shop` / `keda +2` with every name in the title / `N namespaces`);
+`NamespacePicker.svelte` is the one picker (All + filter + the shared
+Checkbox; no Apply or Cancel — a tick applies after a ~375 ms debounce, latest
+wins, flushed when the menu closes however it closes; All applies at once and
+unticking the last namespace is All; a remembered name the cluster no longer
+lists kept as "not found"). Rapid ticks cannot land a stale list: each
+applied set is a `refresh()`, whose request counter drops older answers. The navigator's picker stays enabled on
+cluster-scoped kinds (its tooltip says the filter does not apply there), and on
+All clusters it offers the union of the open clusters' namespaces, naming the
+clusters that hold one when not all do ($lib/navigatorNamespaces). Every list goes through the client's
+`…In` wrappers; the topology draws `session.scope` too. Persistence migrates
+and never writes the old shape: `preferences.namespacesByCluster` (from
+`namespaceByCluster`: '' → [], name → [name]) and `SavedView.namespaces` (from
+`namespace`, compared as a set). Single by nature, and the UI says so: the
+RBAC page reviews ONE namespace picked from the set (the first of a set; on
+All, '' — the backend's own default — until somebody picks one), captioned
+"Permissions are reviewed per namespace"; the create dialog and the cluster shell default to
+`singleNamespace` and ask when it is ''; vulnerability marks match on
+namespace + Kind/name. kubectl strings use `kubectl.scopeFlags`: `-A` for All,
+`-n x` for one, one command per namespace for a set; export filenames say
+`all`, the name, or `N-namespaces`.
 
 ## Custom columns quote metadata, and annotations travel by projection
 
@@ -679,7 +839,24 @@ about before adding a fourth:
   server's node proxy. It needs the `nodes/proxy` permission, which plenty of
   clusters do not grant, so it degrades into `Unavailable` under its own name
   rather than under "metrics". It is one request per node, hence bounded
-  concurrency and a one-minute cache; a partial answer is a success.
+  concurrency and a one-minute cache; a partial answer is a success. **The
+  cache is fronted by a singleflight** (`filesystemCache.do`): the cache is
+  written when a sweep FINISHES, so without it every assessment arriving while
+  a sweep was still running (overview, background assessment, a second tab,
+  the sampler) started its own sweep of every kubelet. The first caller leads
+  on a context detached from its cancellation (`detach`, as `readcache.go`
+  does), the rest wait on their own; a sweep overtaken by a disconnect is not
+  stored. Not routed through `cachedRead`: that cache never reuses a failure,
+  this one holds a refusal for the minute. Cached / follower / leader is ONE
+  decision under one lock (`claim`), or a sweep finishing between a cache
+  read and a claim lets a redundant one start. **Above `filesystemSweepCap`
+  (128) nodes the sweep rolls**: each asks the `filesystemBatch` (64) nodes
+  whose answers are oldest, never-asked first, every `filesystemBatchSpacing`
+  (15 s), keeping every node's last answer until it is asked again
+  (`batchFor`/`mergeSweep`). The figure is then the fullest of what has
+  answered, possibly minutes old, so `domain.DiskCoverage` (asked, answered,
+  oldest age, rolling) rides `DiskSummary` and the Overview says it on the
+  Fullest disk row — never the stronger claim when the weaker is the true one.
 - **Kubernetes support windows are a hand-compiled table** in
   `app/domain/release.go`. It goes stale by construction, so a release it does
   not cover is reported as `SupportUnknown` and produces nothing. Never make an
@@ -726,7 +903,8 @@ about before adding a fourth:
   silent drop nothing tests.
 - **A monitoring stack already in the cluster is discovered, and is queried
   only when somebody asks** — `app/adapters/k8s/prometheus.go` lists Services by
-  two label selectors and produces a RANKED CANDIDATE LIST rather than one
+  three label selectors (the standard app label, the older `app=prometheus`,
+  and linkerd-viz's `linkerd.io/extension=viz,component=prometheus`) and produces a RANKED CANDIDATE LIST rather than one
   guess, because a kube-prometheus-stack install returns several and only one
   answers PromQL. `DiscoverMetricsBackend` is the head of that list — which is
   what every caller wanted — and `ListMetricsBackends` hands over the whole of
@@ -916,6 +1094,86 @@ about before adding a fourth:
   Per-object usage is still not written to disk — the recorded cluster history
   deliberately carries no object names, and a file of per-pod series would
   reverse that — and no value a backend returned is recorded anywhere.
+- **Observed traffic is a layer, not an edge** — `app/domain/traffic.go`,
+  `app/application/traffic.go`, `TrafficAPI`. It reads Istio, Linkerd,
+  Beyla/OBI, Caretta or Hubble METRICS from the backend the metrics-query
+  feature chose, through `MetricsQueryService`'s own gate (setting, chosen
+  backend, node-set check), with `QueryInstant` on the same service proxy. A
+  fleet backend is refused outright: traffic groups by workload, not node, so
+  it cannot be narrowed. Five `count()` probes are cached 30 min per cluster
+  and dropped on Invalidate; more than 5000 edges is `too-large`; nothing is
+  installed and Hubble Relay's gRPC is never used.
+
+  **Every row of a source groups by exactly the edge's key labels** (plus
+  `le`, plus a branch's own identity label such as Linkerd's `authority` or
+  Istio's `destination_service` for destinations outside the mesh). A
+  percentile grouped by a label the edge does not carry is several
+  percentiles for one edge; `TestQuantilesGroupByExactlyTheEdgeKey` holds it.
+  A percentile in the `+Inf` bucket stays -1 with `latencyBeyondBuckets` set.
+
+  **Known double counts, deliberately not "fixed":** Istio counts a request
+  twice when the source proxy lacks the destination's peer metadata — it
+  reports `destination_workload="unknown"` (external branch) while the
+  destination proxy reports the meshed pair, and `or` cannot dedupe different
+  label sets (the same limitation Kiali has). Hubble's `connections` is flow
+  EVENTS per second, seen by both nodes' agents for a cross-node flow; no
+  documented subtype filter counts each flow once.
+
+  **Checked live on 2026-10-02** (kind demo: Istio 1.30.5 with Prometheus
+  3.10, Linkerd edge-26.9.3 with linkerd-viz's Prometheus 2.55; the real
+  answers are `app/domain/testdata/prom/*-live.json`). Linkerd: the scrape
+  config DOES rename the pod's Job label to `k8s_job`; outbound
+  `request_total`/`response_total` carry `dst_namespace`, `dst_deployment`,
+  `dst_service` and `authority`; and `request_total` is still emitted beside
+  the newer `outbound_http_route_*`. A zero-traffic pair's NaN percentiles are
+  dropped and the pair is not an edge. What the live run changed:
+  - **Never rate() a name alternation.** rate() drops `__name__`, so
+    `rate({__name__=~"sent|received"})` collides and Prometheus answers 422
+    "vector cannot contain metrics with the same labelset". Istio's sent and
+    received bytes (and Beyla's/OBI's two names) are separate rows of one
+    role that MapTraffic adds; `TestNoExpressionRatesANameAlternation`.
+  - **linkerd-viz's Prometheus is discovered** by its own labels
+    (`linkerd.io/extension=viz,component=prometheus`, port `admin`), ranked
+    LAST because it holds no kubelet series, and marked `LinkerdViz`. It is
+    never switched to: when Linkerd's metrics are missing from the chosen
+    backend, the empty state names it and says to choose it in Settings
+    (`MetricsQueryAPI.Backends` lists the candidates for that picker;
+    `SettingsAPI.SetMetricsQuery` pins one).
+  - **A node is NAMED by `node` or `kubernetes_io_hostname`; an `instance`
+    address never verifies.** Istio's sample Prometheus labels cAdvisor
+    series with the kubelet's node labels, not `node`, so the probe groups by
+    `node, kubernetes_io_hostname, instance` and `domain.ReadNodeProbe` /
+    `VerifyNodeProbe` decide. Addresses are read only when no series named a
+    node, and an address-only answer is UNVERIFIABLE with its own sentence:
+    two kind clusters on one machine share 172.18.0.x. A fleet whose series
+    carry no `node` label is refused rather than narrowed (narrowing filters
+    on `node` and would draw an empty chart).
+  - **Traffic accepts "unverifiable" and checks the answer instead**
+    (`checkWorkloadEvidence`): every namespace it names must be one of this
+    cluster's AND at least one of its workloads must be on the map. Both
+    checks must RUN — namespaces not listable or the topology not readable
+    is a refusal naming the check. Fleet and mismatch are refused before
+    anything is asked.
+  - **A backend's own 403 to the API server's proxy falls back to an
+    ephemeral port-forward** (`promforward.go`). linkerd-viz's Prometheus sits
+    behind Linkerd's `prometheus-admin` policy (only metrics-api may call it);
+    the API server passes the proxy's bare 403 on with no body. The forward
+    reaches the container over the pod's loopback, which the mesh does not
+    intercept. `TrafficQueryPort.BeginQueryBatch` makes ONE internal forward
+    serve a whole gesture (node check, probes, expressions), stopped by the
+    batch's end on every path; `forwardRoutes` remembers the refusal per
+    (cluster, backend, generation) for 5 min so later queries skip the 403.
+    Internal forwards are hidden from `ListPortForwards` and immune to
+    `StopAllPortForwards`; Invalidate still stops them. A Kubernetes Status 403 (the ACCOUNT refused) is never
+    routed around; pods/portforward refused is said as that permission.
+  - **Monitoring scrapes are not traffic, and are told apart by SOURCE.**
+    linkerd-viz's meshed Prometheus scraping every proxy shows up as outbound
+    requests with `dst_*` but no `dst_service` — exactly like a request to a
+    headless Service (a StatefulSet's database), so the destination cannot be
+    the test. `TrafficService` names every discovered backend (namespace +
+    Service, which for linkerd-viz is also the Deployment) and `MapTraffic`
+    drops what they sent. The outside-the-mesh branch still requires an
+    `authority`: without one a series names no destination.
 - **kube-state-metrics is discovered the same way, and is a SEPARATE
   question** — `app/adapters/k8s/kubestate.go`, beside `prometheus.go` and
   following it in every particular: two label selectors
@@ -984,15 +1242,17 @@ Three rules there have subtleties worth not re-deriving:
 - **A correctly configured pod produces no findings**, and a test asserts it. A
   panel that always has something to say is one people stop reading.
 
-## The dependency map is three shapes, not one
+## The dependency map is five shapes, not one
 
-`app/domain/graph.go` builds two of them and `app/domain/object_graph.go` the
-third, and they are separate functions because the SUBJECT decides the
-structure: a pod's map is a chain with the pod in the middle, a workload's is a
-fan — one controller over however many pods it currently has — and any other
-object's is a neighbourhood. Pretending they are one shape would mean a pod
-field that is sometimes a list, and edges that mean different things depending
-on which it was.
+`app/domain/graph.go` builds two of them, `app/domain/object_graph.go` the
+third, `app/domain/application_graph.go` the fourth and
+`app/domain/topology.go` the fifth, and they are separate functions because
+the SUBJECT decides the structure: a pod's map is a chain with the pod in the
+middle, a workload's is a fan — one controller over however many pods it
+currently has — any other object's is a neighbourhood, an application's is a
+set, and a namespace's topology has no subject at all. Pretending they are one
+shape would mean a pod field that is sometimes a list, and edges that mean
+different things depending on which it was.
 
 **EVERY EDGE IS A RELATIONSHIP KUBERNETES ACTUALLY HAS.** That rule is worth
 stating on its own, because breaking it is always the convenient thing to do
@@ -1147,6 +1407,226 @@ Nothing on this path runs on a refresh tick — `BrowseAPI.ObjectGraph` is calle
 when the pane opens and not again — because a neighbourhood changes when
 somebody changes it, and redrawing a map under a reader is worse than it being
 a few seconds stale.
+
+### The fourth shape is an application: membership is a label, edges are not
+
+An application is `app.kubernetes.io/instance=<value>` in one namespace, and
+`NewApplicationGraph` draws it from `DependencyMap`'s `instance` prop (not a
+kind — Argo's "Application" kind already goes through `ObjectGraph`).
+
+**Membership: the label seeds, controller ownership extends.** A labelled
+top-level object is a member, and so is anything controller-owned by a member,
+one hop, decided in the domain. A CronJob's Jobs are usually unlabelled (the
+label sits on the CronJob, not the `jobTemplate`), yet under the ownership rule
+above their pods ARE the application's. `ApplicationPods` applies the same
+rule, so Map and Logs cannot disagree.
+
+**There is no root node, deliberately.** An edge from "the application" would
+assert a label as a relationship, which is exactly what the GitOps bullet
+rejects. Every line drawn is a real one — ownerReference, Service selector,
+Ingress backend, template attachment — and the honesty is a caption in the
+pane. `graphLayout.ts` does not need a subject. A pod-only application is
+floating boxes with no edges, and the caption says why. Owned ReplicaSets and
+Jobs carry `Group` = their owner, pods `Group` = their parent, so old
+generations fold. No container nodes: the pod's own map has them.
+
+**Nine reads, in parallel, and it never fails**
+(`Adapter.ApplicationGraphSources`): four label-selected typed LISTs
+(Deployments, StatefulSets, DaemonSets, CronJobs), namespace-wide
+ReplicaSets and Jobs (the owned-but-unlabelled members cannot be found by
+label), Services, Ingresses, and pods from the CACHED list the inventory
+already counts from. Each refusal lands in `Unreadable`, never an error. Logs
+use `ApplicationPodSources`, the same membership reads without Services,
+Ingresses or template parsing — seven reads, because membership needs nothing
+else. `instance` is validated as a label value before anything is read.
+
+**Logs load lazily.** `DetailDrawer` calls `listApplicationPods` the first time
+the Logs tab is active for an application, not on open, with its own request
+counter. Terminal, Events, Timeline and YAML stay off: an application is not an
+object.
+
+**Known gaps**, accepted rather than fixed:
+
+- The Overview's member and pod counts (`NewApplicationInventory`) are
+  label-only, so a CronJob application can show more pods on Map and Logs than
+  on Overview.
+- Owners are matched by kind and name, not UID (`domain.OwnerReference` has
+  none). A Deployment deleted with orphan cascade and recreated under the same
+  name adopts the orphaned ReplicaSet and its pods on this map.
+- The Deployment controller copies pod-template labels onto every ReplicaSet.
+  A chart that labels the template but not the Deployment's own metadata makes
+  each old ReplicaSet a TOP-LEVEL member, so "an old ReplicaSet declares
+  nothing" stops holding and they do not fold under a Deployment that is not
+  on the map.
+
+### The fifth shape is a namespace, and above a cap the backend folds
+
+`NewTopologyGraph` (`app/domain/topology.go`) draws a SCOPE — one or more
+namespaces, or all of them — with every object in it and every relationship
+Kubernetes has between them. Its own types (`TopologyGraph`, `TopologyNode`,
+`TopologyEdge`), not a widened `PodGraph`: there is no subject and no tier,
+edges carry a `Kind` (`owns`, `selects`, `routes`, `scales`, `protects`,
+`policy-selects`, `attaches`, `runs-as`) so the page can toggle a relationship
+off, and nodes carry a tri-state `State` where **`neutral` means nothing was
+checked**, not that it is fine (Ingresses, ServiceAccounts, NetworkPolicies,
+template names, unresolved names). Labels ride on TOP-LEVEL objects only, for
+group-by; a pod's labels times its replica count is payload nobody groups on.
+
+Every rule above still holds, and four more are specific to it:
+
+- **A NetworkPolicy SELECTS; it never allows or blocks.** Its podSelector is
+  drawn as `policy-selects` with the label "selects". Whether traffic is
+  allowed depends on every policy in the namespace and the CNI enforcing them,
+  and a line would answer that wrongly. Its empty podSelector selects EVERY
+  pod in the namespace — the opposite of a Service's, which selects none. A
+  PodDisruptionBudget's nil selector selects nothing; its empty one, everything.
+- **Owners come from `ownerReferences`, never a GET.** A CRD owner (a Rollout
+  over a ReplicaSet) is a neutral `object` box by kind and name; a mirror pod's
+  Node owner is cluster-scoped. An owner whose kind name the topology lists
+  but whose API group differs (an Istio `Gateway`) gets a group-qualified id,
+  never the listed object's box. Unread names are drawn and never counted.
+- **ConfigMaps, Secrets and claims are NAMES from templates**, and `Bounded`
+  says so. A StatefulSet's claim is drawn per pod as `<template>-<pod>`, which
+  is the PVC's real name.
+- **Above `TopologyPodCap` (3000) pods fold IN GO** into `fold/<group>/pod`
+  nodes carrying `PodSummary{Total, Ready, Unhealthy}`, the same id and
+  semantics `graphFold.ts` uses; Service, budget and policy edges re-point to
+  the fold and dedupe; a StatefulSet's claims fold too, into one
+  `<template>-<set>-*` box per fold; `Summarised` is set; `Counts` stay complete. The
+  one place "the backend emits every pod" bends, and the graph says it did.
+
+**Reads** (`Adapter.TopologySources`, about a dozen in parallel): FULL
+Deployments, StatefulSets, DaemonSets, CronJobs, ReplicaSets and Jobs (the
+watch store strips RS/Job templates to images, and a pod's names come from
+its own controller's template), pods from the cached `ListPods`, Services,
+Ingresses, HPAs (autoscaling/v2), PDBs (policy/v1), NetworkPolicies,
+ServiceAccount names, and Gateway/HTTPRoute/GRPCRoute/TCPRoute/TLSRoute via
+the dynamic client ONLY when discovery serves `gateway.networking.k8s.io` —
+decided by one `ServerGroups` call cached on the client set, so a Live redraw
+never asks again.
+One cluster-wide list per kind when the scope is All or more than three
+namespaces, else one per namespace; a cluster-wide 403 for a named scope falls
+back to per-namespace lists. Every refusal is `Unreadable` ("services in
+shop"), never an error. **Secrets are never listed**
+(`TestTopologySourcesNeverListsSecrets`). Nothing runs on a tick. Budgets:
+`BenchmarkNewTopologyGraph10kPods` (~20 ms here, thanks to a label index —
+selector-by-pod matching was 140 ms) and `TestTopologyPayloadBudget` (5000
+nodes, 10000 edges under 2.5 MB; edge labels that repeat the kind are empty
+for that reason).
+
+**The wire shape is `web/src/lib/topology/contract.ts`**, hand-written so the
+frontend could be built beside the backend. The generated bindings are NOT
+re-exported from it: in interface mode the generator types every slice and map
+`| null` and a string type with Go constants as a TypeScript enum, neither of
+which a union-typed contract accepts. So the DTOs (`dto_topology.go`) keep the
+JSON names exactly, `NodeState`/`TopologyEdgeKind` have no Go constants (they
+generate as `string`), the generated pod summary is `TopologyPodSummary`
+(`PodSummary` is taken by the overview), and the API wrapper casts.
+`TestTopologyDTOMatchesTheContract` pins the names.
+
+### The map says "Changed" instead of redrawing
+
+A topology is drawn when the page opens and when the operator asks — never on
+a tick. What keeps it honest is an announcement, not a redraw: the watch
+stores (every add, update and delete after the initial list) and every write
+(`forgetReads`) call a `ports.ChangeSink` the composition root sets on the
+adapter (`SetChangeSink`, an atomic pointer; nil is a no-op).
+`application.TopologyService` is that sink, and its `ChangeFeed`:
+
+- **never blocks** — it runs on a reflector's delivery goroutine and the write
+  path, so it takes one short lock and returns;
+- **drops what nobody asked about**: no subscriber, a cluster nobody drew, a
+  namespace outside the drawn scope, a scope drawn more than an hour ago
+  (`DefaultTopologyInterest`), a cluster since closed, or one the page
+  `Release`d;
+- **coalesces** into one announcement per cluster per second, on a timer it
+  owns; `Close` (in `OnShutdown`, after `StopAllWatches`) stops the timers and
+  waits for any already firing.
+
+`TopologyAPI.ServiceStartup` subscribes and emits `topology:changed`
+`{clusterId, namespaces}` — namespaces empty only for an All scope told
+"somewhere" (a write names no namespace; a named scope gets its own list).
+The page shows "Changed — Refresh", or redraws when Live is on.
+
+### The topology page draws the fifth shape, and holds still
+
+`web/src/pages/TopologyView.svelte` (navigator pseudo-entry `TOPOLOGY_KIND_ID`,
+scope is the sidebar's namespace set, `session.scope` — it has no picker of
+its own; "Open topology" on a namespace's row and drawer selects that set) is its own page, not a wider
+`DependencyMap`. Its pipeline is one tested module per step: kind toggles →
+`graphFold` → `graphGroup` (namespace / app / label frames; a collapsed group
+is one box with complete counts, worst state, re-pointed and deduplicated
+lines) → `layoutClient` (dagre in `graphLayout.worker.ts`, latest request
+wins by terminating the busy worker) → `graphPositions` → `graphCull` → draw.
+
+- **`layoutCompound` is not one dagre call.** One call on 5k boxes / 8k lines
+  took 10–20 s; the graph is split by group, then into connected pieces (a
+  box with >24 lines is a hub and joins only the piece it has most lines
+  into), each piece is dagre'd alone and shelf-packed. Lines between pieces
+  are elbows. `graphLayoutScale.test.ts` checks correctness at that size in
+  `npm test`; the 3 s budget (≈1.1 s measured) is `graphLayout.bench.test.ts` (the `.test.` suffix is what the licence scanner accepts as test code), run
+  by `npm run bench:layout` (vitest.bench.config.ts) and never by `npm test` —
+  a wall-clock assertion there flaked under a loaded full run. Run it after
+  touching the layout.
+- **The map never redraws on a tick and never re-fits on a redraw.** The
+  backend's `topology:changed` shows "Changed — Refresh"; opt-in Live redraws
+  after 1/2/5/15 s at <500/<2000/<5000/more boxes, coalesced not reset. Same
+  drawn shape → every box keeps its position; otherwise the box nearest the
+  pane's centre stays where it was on screen.
+- **Generated types are narrowed once.** `$lib/topology/api.ts`
+  (`normaliseGraph`) and `trafficApi.ts` turn the generated, wider types
+  (string unions, `| null` slices) into `contract.ts`'s; an unknown state is
+  drawn neutral and an unknown edge kind is dropped. The page calls
+  `TopologyAPI.Release` when it unmounts. Dev builds take
+  `?topology-fixture=<boxes>` for a synthetic graph.
+- **A box opens its drawer OVER the map.** `session.openDetailOver` sets
+  `detailKindId`; the drawer reads `drawerKindId`/`drawerKind`, never
+  `selectedKindId`, so the topology stays on screen with its viewport, and a
+  reference followed from that drawer opens over the map too.
+- **Traffic is a layer, not an edge.** The page mounts TrafficPanel and draws
+  `buildOverlay`'s lines and synthetic boxes over the map. Endpoint `nodeId`s
+  come from the topology service (it is the traffic service's
+  `TrafficNodeReader`) and are re-pointed to the fold or collapsed group
+  drawing them before the overlay is built, so only a kind switched off
+  leaves traffic off the map. Findings on backend-summarised pods reach the
+  summary box by MEMBERSHIP: the summary node carries its pods' names
+  (`podSummary.members`, sorted; ~0.6 MB for 20k pods, inside the 2.5 MB
+  budget), never a guess from how pods are named.
+- **The page explains in Help, not under the map.** Notices (Bounded,
+  Unreadable, Summarised, hidden applications) and every traffic status
+  (not enabled, no Prometheus, no source and what each needs, unverified,
+  installs nothing) are Help sections: the standing text is the `topology`
+  topic in `$lib/help.ts`; what is true of THIS drawing the page hands to
+  `help.provide('topology', …)` and HelpPanel shows above it. The (?) on the
+  toolbar carries a dot (`HelpButton`'s `notice`) for an unreadable kind, a
+  summarised scope or a traffic layer that cannot draw — Bounded marks
+  nothing, it is true of every drawing. The footer stats line stays.
+- **Observed traffic is a toolbar toggle** (`ToolbarButton` `pressed`), its
+  source / window / filters / PromQL in a popover beside it; TrafficPanel is
+  driven by a bound `on` and hands its explanations up through `onhelp`.
+- **Group by application can untick applications** (`hideGroups`, ids in
+  `session.topologyHiddenApps`); kind counts stay complete and the footer and
+  Help say how many objects are hidden.
+- **Lines move like the dependency map's** (`.flow`, dashes source → target);
+  traffic lines move faster the busier they are, and the hot path stays a
+  solid line with a lighter dash travelling inside it. Never under
+  prefers-reduced-motion (checked in JS, and a CSS guard), and never when the
+  LAID-OUT drawing has more than 200 lines — every dependency line in the
+  layout plus every traffic line, not just those on screen, so panning or
+  zooming never switches the motion on and off.
+- **The controls live in the workspace header row**, like every list page's:
+  the page hands `header({count, controls, focusSearch})` to ClusterWorkspace,
+  which renders them after the title (and routes ⌘K to the search). Search
+  is the list pages' `SearchField` (`onsubmit`: Enter / Shift+Enter step
+  through matches; `kind:` and `ns:` are typed text; nothing suggests). The
+  row never wraps: `$lib/topologyHeader` folds zoom, orientation, collapse
+  all, fit, export, refresh and Live — in that order — into a "⋯" menu when
+  the header is too narrow, never squeezing the search under 12rem (⌘K hint
+  included; its CSS minimum is the same). "Changed · Refresh" takes its
+  label only if that fits without folding more; otherwise it is a 32px icon,
+  and its arrival folds at most one more control. Collapse all refits under
+  the grouping rule (`refitsOnLayout`: only while nobody has moved the view).
+  Without a header host the page draws the same controls in a row of its own.
 
 ## Secrets are read on request, never on render
 
@@ -1427,12 +1907,14 @@ when the session's own poll fires with the fleet view selected, and a session
 polls only while its tab is in front; select another kind, or another tab,
 and the fan-out simply stops. The command palette reads the merged rows the
 way it reads any view's own: only while that view is on screen, never by
-fetching across clusters for a keystroke.
+fetching across clusters for a keystroke — and for pods that is the current
+page, because the merged pod table is paged in Go (see "The pod table is
+paged in Go"; Go also keeps a slow cluster's stale pod rows now).
 
-**So is its namespace.** `fleet.namespace` (default All namespaces) scopes the
-fan-out for the whole window; `session.scopeNamespace` is what the navigator
-picker, saved views and the CSV filename read, and `selectNamespace` routes to
-`fleet.chooseNamespace` on this view without touching the tab's remembered
+**So is its namespace set.** `fleet.namespaces` (default [] = All) scopes the
+fan-out for the whole window; `session.scopeNamespaces` is what the navigator
+picker, saved views and the CSV filename read, and `selectNamespaces` routes to
+`fleet.chooseNamespaces` on this view without touching the tab's remembered
 filter. It used to be each tab's own namespace over one shared set of rows,
 so two tabs on different namespaces (a new tab starts on `default`) wiped each
 other's answer — the "works on the first tab only, or shows then vanishes" bug.
@@ -1849,6 +2331,19 @@ That makes the coverage the window the app was open, which is weaker than a
 monitoring stack and **must be presented as such** — `SeriesResult.spanSeconds`
 exists so the UI can say "the last 40 minutes" instead of implying more.
 
+- **Only the cluster somebody is looking at is sampled every interval.** A
+  sample is a whole assessment; with a dozen tabs open the sampler used to read
+  every cluster every tick. `HistoryService.due` (one `continue` ahead of the
+  per-cluster `safego` wrapper) samples a cluster whose assessment was
+  DEMANDED within the last two intervals — `OverviewService.LastDemanded`,
+  stamped by `Overview`/`OverviewForTarget`, which only a tab on screen calls,
+  never by `OverviewWithin`, the sampler's own door — on every tick, and the
+  rest every `domain.BackgroundSamplingInterval` (ten intervals, at least five
+  minutes), measured from the last SUCCESSFUL sample so a failing cluster is
+  retried next tick. `SeriesResult.sampledEverySeconds`/`backgroundEverySeconds` carry
+  the cadence and the Trend panel states it, so a sparse stretch is never read
+  as an outage. An assessment without `LastDemanded` (tests) samples every tick.
+
 - **The sampler has one owner and one way to stop** (`Close`), and it waits for
   the write in flight before returning. It is started from the
   `events.Common.ApplicationStarted` hook — v3's shape of what v2 called
@@ -1927,6 +2422,17 @@ Five things about it are load-bearing:
   byte-identical. That is what keeps SECURITY.md's "nothing is written
   anywhere" literally true rather than a thing everybody has to remember.
 
+**It holds two object-name exceptions, both disclosed (SECURITY.md, the readme
+header the store writes, the domain comments):** the preferred monitoring
+Service, and `clusters.<context>.keptForwards` — forwards the operator switched
+"Keep across restarts" on for. Both are new members of the `clusters` section,
+written only when chosen (`omitzero`), and added WITHOUT a version bump for the
+reason `clusterSection` gives: an unknown field in a known section is not
+rescued by the unknown-section round-trip, but an added one reads as absent
+in an older build, which then drops it on its next write — acceptable for an
+opt-in list that costs one re-tick. Note `ClusterSettings` is no longer
+comparable with `==` (it holds a slice): compare with `reflect.DeepEqual`.
+
 Consumers take narrow interfaces at the consumer: `HistoryService` takes a
 two-method `HistorySettingsStore`, not `ports.SettingsPort`, because the
 sampler has no business being able to name the kubeconfig sources or the proxy.
@@ -1951,7 +2457,7 @@ cancels anything.** The framework's runtime context is never cancelled —
 `ctx.Done()` at exit would park forever. Teardown is therefore explicit and
 enumerated in `OnShutdown`: `StopAllPortForwards`, `StopAllNodeShells`,
 `StopAllClusterShells`, `StopAllLocalShells`, `StopAllWatches`,
-`historyService.Close()`. There is no
+`topologyService.Close()`, `historyService.Close()`. There is no
 ambient cancellation to fall back on; a new owner that needs stopping needs a
 line there.
 
@@ -1963,6 +2469,17 @@ nothing cancels that wait. So `nodeShells`, `clusterShells`, the local-shell
 `Manager` and `watchManager` each carry a `closed` flag their sweep sets: a
 start finding it set deletes its pod (or kills its process) and returns an
 error rather than registering into a map nobody will read again.
+
+**A panic in any of them is contained, never re-raised.** Wails recovers a panic
+in a BOUND METHOD and nothing else, so every goroutine started here is outside
+that net and one nil dereference used to end the process — and every
+port-forward and shell with it. `app/safego` (`Recover`, `Run`, `Error`: log
+with the stack, end the goroutine or the iteration) is on the sampler (per
+cluster), the reflector transform and supervisors, the port-forward supervisor
+and dial, the terminal pumps, file copy, the fleet reads and the kubeconfig
+watch. Where somebody is WAITING on the goroutine (a pipe, a channel) the panic
+becomes an error that still answers them. `recover()` works only in the
+deferred function itself, so register `defer safego.Recover(...)` directly.
 
 **A port-forward goes with its connection, not just with the process.**
 `Adapter.Invalidate` stops that cluster's forwards and waits for them, FIRST,
@@ -1982,6 +2499,46 @@ started it: through the exported `ListPods`, a search already in flight when
 the stop landed would outlive its own cancellation and could rebuild the
 client behind `Invalidate`'s back. The coalescing given up is worth nothing
 here — the search runs once every three seconds, longer than `readTTL`.
+
+**A forward whose window runs out is LOST, not deleted.** After
+`reconnectWindow` (two minutes) with no replacement the row stays, marked
+`Lost`, with its local port released; the supervisor keeps looking every
+`lostRetryEvery` (30s) and comes back by itself, `ReconnectPortForward` starts a
+full window at once, and Stop dismisses it. The UI notices the transition on its
+poll and posts a notice. Deleting it silently was the failure every other client
+has.
+
+**Forwards kept across a restart are definitions, restored only by the operator
+opening the cluster.** `application.ForwardKeeper` persists the opted-in
+forwards (namespace, pod or Service name, the port, the local port — nothing
+else) under `clusters.<context>.keptForwards`, a new member of an existing
+section so no version bump (see the settings section). Opt-in per forward; Stop
+and Forget remove the record, quitting does not. **Nothing connects a cluster to
+restore one**: at launch they are listed as paused, and `ClusterService.Connect`
+tells the keeper (`OnConnected`) after a successful connect, which restores that
+cluster's forwards on a goroutine the keeper owns (`Close` waits; it is first in
+`OnShutdown`). A restore that cannot proceed — port taken, pod gone — stays
+listed with the reason. A Service forward is the durable kind; a pod name changes
+with every rollout.
+
+**Credentials rewritten under an open tab are noticed.** The client is cached
+per context and frozen at the first request, so `oc login`, Teleport or
+`az aks get-credentials --overwrite` left an open tab on 401 until it was
+closed. `authFingerprint` (`credentials.go`) digests only what AUTHENTICATES —
+token, basic auth, client cert and key including file CONTENTS, exec command,
+args and env, auth-provider config, impersonation; never the server or CA — when
+the client is built. The kubeconfig watcher, on a change, asks the adapter
+whether any open cluster's differs and drops that cluster's client
+(`RefreshClient`: `Invalidate` WITHOUT the forward sweep, because the cluster
+stays open and a supervisor that rebuilds its client does so with the new
+credentials). Retry after an `unauthenticated` banner does the same
+unconditionally (`ClusterService.RefreshCredentials`, `session.retry`). A touched
+file that changes no credential disturbs nothing.
+
+**The frontend has a net under every `void fn()`.** `$lib/globalErrors` installs
+`unhandledrejection` and `error` handlers (in `main.ts`): they log with the
+stack and post a non-blocking notice (`$stores/notices`, drawn by `NoticeHost`),
+ignoring cancellations, `AbortError` and the ResizeObserver complaint.
 
 **Three things are deliberately NOT swept at shutdown, and die with the
 process**: terminal sessions (exec, attach, debug), log streams, and file
@@ -2012,7 +2569,7 @@ no-object-names commitment SECURITY.md makes.** The export is an ALLOWLIST
 built field by field in each store's `exportable()`, never a spread of the
 persisted shape — a spread would carry whatever the shape grows next, and two
 things it has already grown hold object names: `snoozes`, whose keys are a
-finding id, a NAMESPACE and an OBJECT NAME, and `namespaceByCluster`. Both are
+finding id, a NAMESPACE and an OBJECT NAME, and `namespacesByCluster`. Both are
 held back, along with the update check's machine state. No credential,
 kubeconfig or cluster address is in either store, so none can reach the file.
 
@@ -2103,9 +2660,12 @@ Three things about that crossing are load-bearing:
   reads it, and it is worth dropping because `Event` crosses only while
   somebody is on the Events page whereas this crosses on EVERY tick on EVERY
   view. Order of 280–400 KB per tick at the adapter's 1000-event cap, roughly
-  40% less than the full row would be, against the 6–13 MB a tick already
-  costs on a 5,000-pod cluster. That is the price of the fix, and it is paid
-  on every view rather than on one.
+  40% less than the full row would be. (It was measured against the 6–13 MB
+  the pod table's tick cost on a 5,000-pod cluster when it shipped the whole
+  list; since the table is paged in Go that tick is ~120 KB, which makes this
+  the largest thing crossing on every tick rather than a rounding error —
+  see "The pod table is paged in Go".) That is the price of the fix, and it
+  is paid on every view rather than on one.
 - **Nothing is capped on the bridge, deliberately.** The only bound is
   `eventListLimit` in `app/adapters/k8s/workload.go`, which the Events page and
   the event findings are already subject to. A tighter cap here would be an
@@ -2716,7 +3276,11 @@ the paste, refuses a collision and backs the file up first.
   subresource specifically because it is the one request a PodDisruptionBudget
   can refuse — `DeleteResource` simply removes the pod, budget or no budget.
   A refusal is HTTP 429, mapped to its own sentinel (`ports.ErrDisruptionBudget`)
-  rather than folded into `ErrForbidden`: RBAC allowed the request and the
+  rather than folded into `ErrForbidden` — **by `classifyEviction` only**. On
+  any other call a 429 is API Priority and Fairness (or a gateway) rate
+  limiting the account and is `ports.ErrThrottled` (code `throttled`, with the
+  server's Retry-After quoted), because calling it a budget refusal sent
+  operators off to read PodDisruptionBudgets for a problem that was load: RBAC allowed the request and the
   object's own policy declined it, which calls for waiting and retrying, not
   for different credentials. It is the only error `DrainNode` ever retries —
   every other failure during a drain is recorded as a `DrainFailure` and the
@@ -2771,7 +3335,10 @@ the paste, refuses a collision and backs the file up first.
   it acts on, costs the one GET the drawer already makes, and reads no
   Secret. The panel is selected by group AND kind ("Application" exists in
   three API groups), and it complements the bottom-up `gitops.ts` badge
-  rather than replacing it. A Flux inventory id is
+  rather than replacing it. (The Applications page IS label-defined and says
+  so in its pane; that is a declared definition, not a claim about what a
+  controller manages, which is why it can coexist with this rule.) A Flux
+  inventory id is
   `<namespace>_<name>_<group>_<kind>` as `sigs.k8s.io/cli-utils`'s
   `ObjMetadata` writes it: a core kind has an EMPTY group segment
   (`shop_web__Service`), a cluster-scoped object an empty namespace
@@ -2986,6 +3553,17 @@ direction it exists for: the suffix rule hides a group on the grounds that
 every cluster has it, and both of these are behind feature gates most clusters
 do not turn on. A catalog entry was the wrong mechanism precisely because it
 pins ONE version, which is the thing `resource.k8s.io` will not hold still on.
+
+**Gang scheduling (`scheduling.k8s.io` `Workload` and `PodGroup`, beta in 1.37)
+is the fourth group here**, in `standardapis/scheduling.ts`. The group is
+adopted (`adoptedGroups`) for the same reason as the other two; PriorityClass
+shares it and is therefore listed too, with no panel. Read from the v1beta1
+reference only: a gang policy is `schedulingPolicy.gang.minCount`, a PodGroup's
+`spec.workloadRef` is `{name, namespace}` (no template-name field is documented,
+so none is read), and the scheduler's verdict is the `PodGroupInitiallyScheduled`
+condition. The ONE pod link is `spec.schedulingGroup.podGroupName`, shown as a
+"Pod group" row in the pod's Scheduling section; nothing is inferred from
+labels. `CompositePodGroup` (alpha) is counted on a Workload, not rendered.
 
 ## A node shell is a pod PodSteer owns, and must be deleted like one
 
@@ -3361,6 +3939,19 @@ a convenience. Line-delimited reading rather than a streaming decoder is what
 makes a malformed message survivable: a decoder left mid-value cannot
 resynchronise, whereas a bad line is answered with a parse error and the next
 one is read normally. One request is handled at a time, deliberately.
+
+**`cluster_findings` is the Overview's finding list on its own**, ranked as the
+domain ranks it (the tool never re-sorts), each with severity, title, summary,
+advice, the true `count` and its subjects as evidence. `assess_cluster` returns
+the same findings buried among node and pod summaries; this exists for "what is
+wrong" without the rest. Filters: `severity` is a FLOOR (warning returns warning
+and critical), `namespace` keeps findings naming an object there and narrows the
+listed subjects to it — but never the `count`, so a narrowed finding does not
+look smaller than it is. The domain caps a finding at 25 subjects, so a capped
+finding that lists nothing in the namespace may still affect it: it is not
+shown, and `note` counts how many were withheld for that reason.
+`subjectsTruncated` marks a capped finding. Same reader as `assess_cluster`
+(`OverviewReader`), so no new port.
 
 Two smaller decisions worth not re-deriving: the process runs with
 `LiveWatch: false`, because a mirror pays for itself under a UI re-reading the

@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"reflect"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	"k8s.io/client-go/tools/cache"
 
 	"github.com/podsteer/podsteer/app/domain"
 )
@@ -699,5 +701,93 @@ func TestAStalledStoreNeverPublishesAnOlderVersion(t *testing.T) {
 	if caught != 0 {
 		t.Fatalf("a starting store published the version from before its own stall in %d of %d rounds — "+
 			"supervise would promote it while it is still behind", caught, rounds)
+	}
+}
+
+func TestWatchErrorPolicy(t *testing.T) {
+	// Forbidden is a decision about the account and is terminal. Unauthorized
+	// is a credential that lapsed: it must demote the store and leave a way
+	// back, not condemn it for the life of the connection.
+	gr := schema.GroupResource{Resource: "pods"}
+	tests := []struct {
+		name         string
+		err          error
+		wantDegraded bool
+	}{
+		{"forbidden condemns", apierrors.NewForbidden(gr, "", nil), true},
+		{"unauthorized is transient", apierrors.NewUnauthorized("token expired"), false},
+		{"server timeout is transient", apierrors.NewServerTimeout(gr, "watch", 1), false},
+		{"plain error is transient", errors.New("connection reset"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &kindWatch{}
+			store.set(watchServing)
+
+			condemned := store.onWatchError(tt.err, func() string { return "42" })
+
+			if condemned != tt.wantDegraded {
+				t.Fatalf("onWatchError() = %v, want %v", condemned, tt.wantDegraded)
+			}
+			if got := store.get() == watchDegraded; got != tt.wantDegraded {
+				t.Fatalf("degraded = %v, want %v (state %v)", got, tt.wantDegraded, store.get())
+			}
+			if !tt.wantDegraded {
+				if store.get() != watchStarting {
+					t.Fatalf("a transient error left the store %v, want it demoted", store.get())
+				}
+				if v := store.stalled.Load(); v == nil || *v != "42" {
+					t.Fatalf("stalled version = %v, want 42 recorded", v)
+				}
+			}
+		})
+	}
+}
+
+func TestAnUnauthorizedStoreIsPromotedWhenTheReflectorMoves(t *testing.T) {
+	// After a 401 the supervisor must bring the store back once the version
+	// advances, which is what a re-authenticated reflector does on relist.
+	manager := newWatchManager(true, slog.New(slog.DiscardHandler), idleAfter, sweepEvery, time.Millisecond)
+	defer manager.stopAll()
+
+	store := &kindWatch{}
+	store.set(watchServing)
+	var version atomic.Value
+	version.Store("100")
+	store.onWatchError(apierrors.NewUnauthorized("expired"), func() string { return version.Load().(string) })
+
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		manager.supervise(ctx, "dev", store, watchPods, func() string { return version.Load().(string) })
+	}()
+
+	version.Store("101")
+	waitFor(t, func() bool { return store.get() == watchServing })
+	cancel()
+	<-done
+}
+
+func TestGuardTransformTurnsAPanicIntoAnError(t *testing.T) {
+	tests := []struct {
+		name      string
+		transform cache.TransformFunc
+		wantErr   bool
+	}{
+		{"panics", func(any) (any, error) { var p *corev1.Pod; return p.Name, nil }, true},
+		{"errors", func(any) (any, error) { return nil, errors.New("no") }, true},
+		{"passes through", func(o any) (any, error) { return o, nil }, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := guardTransform(tt.transform)(&corev1.Pod{})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+			if !tt.wantErr && got == nil {
+				t.Fatal("a clean transform lost its object")
+			}
+		})
 	}
 }

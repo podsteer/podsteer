@@ -187,7 +187,7 @@
 
   <!-- Global: a forward is not scoped to the active tab, so this shows
        whether or not a session is even selected right now. -->
-  {#if forwards.active.length > 0}
+  {#if forwards.active.length > 0 || forwards.paused.length > 0}
     {@render sep()}
     <PortForwardsPanel />
   {/if}

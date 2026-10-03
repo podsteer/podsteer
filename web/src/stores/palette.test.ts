@@ -10,20 +10,20 @@ vi.mock('$lib/api/client', async () => {
   return {
     ...actual,
     getManifest: vi.fn().mockRejectedValue(new Error('no cluster in a test')),
-    listTable: (...args: unknown[]) => listTable(...args),
+    listTableIn: (...args: unknown[]) => listTable(...args),
   }
 })
 
-import { ClusterSession, RICH_KIND_IDS } from './session.svelte'
+import { ClusterSession, FLEET_KIND_ID, RICH_KIND_IDS } from './session.svelte'
 import { palette } from './palette.svelte'
-import type { Cluster, Node, Pod, ResourceKind, ResourceTable } from '$lib/api/client'
+import type { Cluster, Namespace, Node, Pod, ResourceKind, ResourceTable } from '$lib/api/client'
 
 const cluster = { id: 'dev', name: 'dev', defaultNamespace: 'default' } as unknown as Cluster
 
 // Written out locally rather than imported from `$lib/api/client`, so the
 // on-demand search tests' expectations are independent of the module under
 // test's own constant.
-const ALL_NAMESPACES_FOR_TEST = ''
+const ALL_NAMESPACES_FOR_TEST: string[] = []
 
 const podsKind = {
   id: RICH_KIND_IDS.pods,
@@ -49,7 +49,7 @@ function makeSession(): ClusterSession {
   // `preferences` (a real, persistent singleton) — the on-demand search
   // tests below assert exactly which namespace a ListTable call was made
   // with, and that has to be deterministic regardless of test order.
-  session.namespace = ALL_NAMESPACES_FOR_TEST
+  session.selectedNamespaces = ALL_NAMESPACES_FOR_TEST
   session.kinds = [podsKind, deploymentsKind]
   session.selectedKindId = RICH_KIND_IDS.pods
   session.pods = [
@@ -384,5 +384,37 @@ describe('the Clusters group', () => {
 
     await clusters!.entries[0].run()
     expect(focusCluster).toHaveBeenCalledWith('staging')
+  })
+})
+
+describe('namespace commands on All clusters', () => {
+  it('reads and changes the WINDOW’s set there, so "Add namespace" never removes one', async () => {
+    const { fleet } = await import('./fleet.svelte')
+    const session = makeSession()
+    session.selectedKindId = FLEET_KIND_ID
+    session.selectedNamespaces = ['x']
+    session.namespaces = [{ name: 'x' }] as Namespace[]
+    // The names offered are every open cluster's, not this tab's.
+    const before = fleet.clusterNamespaces
+    fleet.clusterNamespaces = () => ({ dev: ['x'], staging: ['b', 'c'] })
+    fleet.chooseNamespaces(['a', 'b'])
+    const toggle = vi.spyOn(session, 'toggleNamespace').mockResolvedValue()
+
+    palette.sync(session, [{ id: 'dev' }], vi.fn())
+    palette.show()
+    palette.setQuery('namespace')
+    const titles = palette.groups.find((g) => g.name === 'Namespaces')?.entries.map((e) => e.title) ?? []
+
+    // b is in the window's set already; c is not.
+    expect(titles).not.toContain('Add namespace b')
+    expect(titles).toContain('Add namespace c')
+    await palette.groups
+      .find((g) => g.name === 'Namespaces')
+      ?.entries.find((e) => e.title === 'Add namespace c')
+      ?.run()
+    expect(toggle).toHaveBeenCalledWith('c')
+
+    fleet.chooseNamespaces([])
+    fleet.clusterNamespaces = before
   })
 })

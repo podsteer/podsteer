@@ -1,0 +1,741 @@
+{
+ "rate": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "destination_service_name": "cart",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.073,
+      "4.442074090708135"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.073,
+      "4.442074090708135"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "checkout",
+      "destination_workload": "checkout",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.073,
+      "4.442074090708135"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "storefront-web",
+      "destination_workload": "storefront-web",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.073,
+      "4.442074090708135"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "payments-api",
+      "destination_workload": "payments-api",
+      "destination_workload_namespace": "payments",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.073,
+      "4.442074090708135"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "cart",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.073,
+      "1.8912280701754385"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.073,
+      "1.8912280701754385"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "checkout",
+      "destination_workload": "checkout",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.073,
+      "1.8912280701754385"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "storefront-web",
+      "destination_workload": "storefront-web",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.073,
+      "1.8912280701754385"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "cache-warmer",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.073,
+      "0"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service": "recommendations.storefront.svc.cluster.local",
+      "destination_service_name": "recommendations",
+      "destination_workload": "unknown",
+      "destination_workload_namespace": "unknown",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.073,
+      "1.8912280701754385"
+     ]
+    }
+   ]
+  }
+ },
+ "errors": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "destination_service_name": "cart",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.078,
+      "0"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "checkout",
+      "destination_workload": "checkout",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.078,
+      "0"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "checkout",
+      "destination_workload": "checkout",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.078,
+      "0"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service": "recommendations.storefront.svc.cluster.local",
+      "destination_service_name": "recommendations",
+      "destination_workload": "unknown",
+      "destination_workload_namespace": "unknown",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.078,
+      "1.8912280701754385"
+     ]
+    }
+   ]
+  }
+ },
+ "connections": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "destination_service_name": "orders-db",
+      "destination_workload": "orders-db",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "tcp",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.086,
+      "0.02807017543859649"
+     ]
+    }
+   ]
+  }
+ },
+ "p50": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "destination_service_name": "checkout",
+      "destination_workload": "checkout",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.09,
+      "0.4741766467065868"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.09,
+      "0.38319088319088324"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "checkout",
+      "destination_workload": "checkout",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.09,
+      "0.47027972027972037"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "cache-warmer",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.09,
+      "NaN"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service": "recommendations.storefront.svc.cluster.local",
+      "destination_service_name": "recommendations",
+      "destination_workload": "unknown",
+      "destination_workload_namespace": "unknown",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.09,
+      "0.2504655493482309"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "cart",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.09,
+      "0.41243489583333337"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "storefront-web",
+      "destination_workload": "storefront-web",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.09,
+      "0.3834745762711865"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "payments-api",
+      "destination_workload": "payments-api",
+      "destination_workload_namespace": "payments",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.09,
+      "0.3302919708029197"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "cart",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.09,
+      "0.3746518105849582"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "storefront-web",
+      "destination_workload": "storefront-web",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.09,
+      "0.3799435028248588"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.09,
+      "0.39643304130162704"
+     ]
+    }
+   ]
+  }
+ },
+ "p95": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "destination_service_name": "checkout",
+      "destination_workload": "checkout",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.098,
+      "4.038709677419356"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "storefront-web",
+      "destination_workload": "storefront-web",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.098,
+      "3.4206896551724126"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "cart",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.098,
+      "3.711764705882353"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.098,
+      "3.3755102040816314"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "cache-warmer",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.098,
+      "NaN"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service": "recommendations.storefront.svc.cluster.local",
+      "destination_service_name": "recommendations",
+      "destination_workload": "unknown",
+      "destination_workload_namespace": "unknown",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.098,
+      "0.47588454376163875"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "cart",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.098,
+      "3.775949367088608"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.098,
+      "3.7124999999999986"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "checkout",
+      "destination_workload": "checkout",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.098,
+      "3.91625"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "storefront-web",
+      "destination_workload": "storefront-web",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.098,
+      "3.504285714285713"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "payments-api",
+      "destination_workload": "payments-api",
+      "destination_workload_namespace": "payments",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.098,
+      "2.630588235294117"
+     ]
+    }
+   ]
+  }
+ },
+ "p99": {
+  "status": "success",
+  "data": {
+   "resultType": "vector",
+   "result": [
+    {
+     "metric": {
+      "destination_service_name": "cart",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.108,
+      "6.456250000000066"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "checkout",
+      "destination_workload": "checkout",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.108,
+      "7.0361111111111105"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "storefront-web",
+      "destination_workload": "storefront-web",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.108,
+      "4.952285714285714"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.108,
+      "6.35000000000001"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "checkout",
+      "destination_workload": "checkout",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.108,
+      "9.137500000000008"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "storefront-web",
+      "destination_workload": "storefront-web",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.108,
+      "4.904827586206897"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.108,
+      "6.665384615384636"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "payments-api",
+      "destination_workload": "payments-api",
+      "destination_workload_namespace": "payments",
+      "request_protocol": "http",
+      "source_workload": "traffic-sim",
+      "source_workload_namespace": "platform"
+     },
+     "value": [
+      1790966050.108,
+      "5.164999999999959"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "cart",
+      "destination_workload": "cart",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.108,
+      "4.97764705882353"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service_name": "catalog",
+      "destination_workload": "catalog",
+      "destination_workload_namespace": "storefront",
+      "request_protocol": "http",
+      "source_workload": "cache-warmer",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.108,
+      "NaN"
+     ]
+    },
+    {
+     "metric": {
+      "destination_service": "recommendations.storefront.svc.cluster.local",
+      "destination_service_name": "recommendations",
+      "destination_workload": "unknown",
+      "destination_workload_namespace": "unknown",
+      "request_protocol": "http",
+      "source_workload": "shopper",
+      "source_workload_namespace": "storefront"
+     },
+     "value": [
+      1790966050.108,
+      "0.49592178770949724"
+     ]
+    }
+   ]
+  }
+ }
+}

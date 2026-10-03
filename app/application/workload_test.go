@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/podsteer/podsteer/app/application"
 	"github.com/podsteer/podsteer/app/domain"
@@ -280,4 +281,69 @@ func TestWorkloadConsumptionReadsWithoutAProjection(t *testing.T) {
 			t.Fatalf("a consumption read carried projection %q, want none", projection)
 		}
 	}
+}
+
+func TestApplicationGraphRequiresAConnectedCluster(t *testing.T) {
+	t.Parallel()
+
+	service := newWorkloadService(t, &fakeKubernetes{}, false)
+
+	if _, err := service.ApplicationGraph(context.Background(), "dev", "shop", "shop"); !errors.Is(err, domain.ErrClusterNotConnected) {
+		t.Errorf("ApplicationGraph() error = %v, want %v", err, domain.ErrClusterNotConnected)
+	}
+	if _, err := service.ListApplicationPods(context.Background(), "dev", "shop", "shop"); !errors.Is(err, domain.ErrClusterNotConnected) {
+		t.Errorf("ListApplicationPods() error = %v, want %v", err, domain.ErrClusterNotConnected)
+	}
+}
+
+func TestApplicationGraphWrapsTheSourceError(t *testing.T) {
+	t.Parallel()
+
+	service := newWorkloadService(t, &fakeKubernetes{appInputErr: ports.ErrForbidden}, true)
+
+	_, err := service.ApplicationGraph(context.Background(), "dev", "shop", "shop")
+	if !errors.Is(err, ports.ErrForbidden) {
+		t.Fatalf("ApplicationGraph() error = %v, want it to wrap %v", err, ports.ErrForbidden)
+	}
+
+	if _, err := service.ListApplicationPods(context.Background(), "dev", "shop", "shop"); !errors.Is(err, ports.ErrForbidden) {
+		t.Errorf("ListApplicationPods() error = %v, want it to wrap %v", err, ports.ErrForbidden)
+	}
+}
+
+func TestListApplicationPodsAppliesTheMembershipRule(t *testing.T) {
+	t.Parallel()
+
+	mine := namedPod(t, "mine", map[string]string{domain.LabelInstance: "shop"})
+	theirs := namedPod(t, "theirs", map[string]string{domain.LabelInstance: "other"})
+	service := newWorkloadService(t, &fakeKubernetes{pods: []domain.Pod{theirs, mine}}, true)
+
+	pods, err := service.ListApplicationPods(context.Background(), "dev", "shop", "shop")
+	if err != nil {
+		t.Fatalf("ListApplicationPods() error = %v", err)
+	}
+	if len(pods) != 1 || pods[0].Name() != "mine" {
+		t.Fatalf("pods = %v, want only the one labelled for the application", pods)
+	}
+
+	graph, err := service.ApplicationGraph(context.Background(), "dev", "shop", "shop")
+	if err != nil {
+		t.Fatalf("ApplicationGraph() error = %v", err)
+	}
+	if len(graph.Nodes) != 1 || graph.Nodes[0].ID != "pod/mine" {
+		t.Errorf("graph nodes = %+v, want the one member pod", graph.Nodes)
+	}
+}
+
+func namedPod(t *testing.T, name string, labels map[string]string) domain.Pod {
+	t.Helper()
+
+	pod, err := domain.NewPod(domain.PodSpec{
+		Name: name, Namespace: "shop", ClusterID: "dev",
+		Phase: domain.PodPhaseRunning, Labels: labels, CreatedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("building pod %q: %v", name, err)
+	}
+	return pod
 }

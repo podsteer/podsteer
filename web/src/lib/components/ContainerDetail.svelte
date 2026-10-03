@@ -590,7 +590,7 @@
                   remotePort={port.containerPort}
                   portName={port.name ?? ''}
                   {busy}
-                  onstart={(localPort) =>
+                  onstart={(localPort, keep) =>
                     void forwards.start(
                       clusterId,
                       namespace,
@@ -601,6 +601,7 @@
                       port.protocol ?? 'TCP',
                       labels,
                       localPort,
+                      keep,
                     )}
                 />
               {/if}

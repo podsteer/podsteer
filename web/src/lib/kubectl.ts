@@ -250,6 +250,31 @@ function byNamespace(targets: BulkTarget[]): [string | undefined, string[]][] {
 }
 
 /**
+ * The namespace flags for a list over the namespace filter's set, ONE ENTRY
+ * PER COMMAND: `-A` for every namespace, `-n x` for one, and for a set one
+ * `-n` per namespace — kubectl takes one `-n` per invocation, the same rule
+ * byNamespace applies to a bulk selection. An empty list of names is All.
+ */
+export function scopeFlags(scope: { namespaces: readonly string[]; all: boolean }): string[] {
+  if (scope.all || scope.namespaces.length === 0) return ['-A']
+  return scope.namespaces.map((ns) => `-n ${ns}`)
+}
+
+/**
+ * `kubectl --context c get <resource> -A`, or `-n x`, one line per namespace
+ * of a set — what the list on screen reads, as kubectl would read it.
+ */
+export function getList(
+  ctx: string,
+  resource: string,
+  scope: { namespaces: readonly string[]; all: boolean },
+): string {
+  return scopeFlags(scope)
+    .map((flags) => [...base(ctx), 'get', resource, flags].join(' '))
+    .join('\n')
+}
+
+/**
  * `kubectl --context c [-n ns] delete <resource> <a> <b> <c>` — one line per
  * namespace the selection spans. The equivalent of a bulk delete, which is
  * what the review dialog shows before running one.

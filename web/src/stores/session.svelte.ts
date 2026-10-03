@@ -13,16 +13,24 @@ import {
   getManifest,
   getOverview,
   getOverviewForTarget,
-  listEvents,
   listKinds,
   listNamespaces,
-  listApplications,
   listNamespaceSummaries,
-  workloadConsumption,
   listNodes,
-  listPods,
+  podUsageHistory,
+  queryPods,
   listTable,
   listWorkloads,
+  listEventsIn,
+  listApplicationsIn,
+  workloadConsumptionIn,
+  listPodKeysIn,
+  exportPodsCSVIn,
+  exportFleetPodsCSVIn,
+  queryPodsIn,
+  listTableIn,
+  listWorkloadsIn,
+  refreshCredentials,
   scaleWorkload,
   updateResource,
   validateResource,
@@ -39,6 +47,9 @@ import {
   type NodeLoad,
   type Overview,
   type Pod,
+  type PodPage,
+  type PodQuery,
+  type CSVColumn,
   type ResourceKind,
   type ResourceTable,
   type TableRow,
@@ -48,9 +59,16 @@ import { ApiError, toApiError } from '$lib/api/errors'
 import { findAutoscalers, foldKedaAutoscalers, type AutoscalerCheck } from '$lib/autoscalers'
 import { RowSelection } from '$lib/selection.svelte'
 import { nodeItem, podItem, rowKey, tableRowItem, workloadItem, type BulkItem } from '$lib/bulk'
-import { podStatusLabel } from '$lib/format'
-import { matchesPodStatusChips } from '$lib/podStatusFilters'
 import type { SavedView, ViewState } from '$lib/savedViews'
+import {
+  namespaceLabelOf,
+  normaliseNamespaces,
+  sameNamespaces,
+  scopeKeyOf,
+  scopeOf,
+  type NamespaceLabel,
+  type NamespaceScope,
+} from '$lib/namespaceScope'
 import {
   EVENT_CHIPS,
   WORKLOAD_CHIPS,
@@ -334,6 +352,25 @@ export const EVENTS_SOURCE = 'events'
 export const HELM_KIND_ID = 'podsteer/helm'
 
 /**
+ * The topology: every object in one or more namespaces and every relationship
+ * between them, drawn as one map — the dependency map's fifth shape.
+ *
+ * A PSEUDO-ENTRY for the reason the others are: there is nothing to GET
+ * called a topology. It is assembled in Go from a dozen lists, on open and on
+ * Refresh — NEVER on the tick. A namespace-wide read every ten seconds would
+ * be a dozen LISTs a tick for as long as the page sat open; the backend's
+ * change feed says "Changed" instead, and the page redraws when asked (or,
+ * opted in, when Live mode's debounce elapses). See TopologyView.svelte.
+ */
+export const TOPOLOGY_KIND_ID = 'podsteer/topology'
+
+export type { NamespaceScope } from '$lib/namespaceScope'
+
+/** What the topology draws: the namespace filter's set — the page has no
+    scope of its own, it follows the sidebar's picker like every list. */
+export type TopologyScope = NamespaceScope
+
+/**
  * The multi-kind view, the SEVENTH pinned pseudo-entry.
  *
  * NOT A KIND, and here for the plainest version of the reason: it is SEVERAL
@@ -409,9 +446,31 @@ export const RICH_KIND_IDS = {
  *
  * Long enough that a burst of typing is one pass rather than one per letter,
  * short enough to read as instant — the threshold where a delay starts being
- * felt is around a fifth of a second.
+ * felt is around a fifth of a second. On the pod table a settled term is a
+ * page query to Go rather than a filter in place, which is the other reason
+ * a word typed at speed must be one request and not one per letter.
  */
-const SEARCH_DEBOUNCE_MS = 120
+const SEARCH_DEBOUNCE_MS = 150
+
+/** What the pod table's last page said about the whole list. */
+export type PodPageCounts = Omit<PodPage, 'rows' | 'pinned'>
+
+/** The counts before any page has landed. */
+export const EMPTY_POD_PAGE: PodPageCounts = {
+  offset: 0,
+  matched: 0,
+  total: 0,
+  unhealthy: 0,
+  chipCounts: {},
+  queryError: '',
+}
+
+/** A pod's identity and controller — the facts a bulk plan reads. */
+interface PodFacts {
+  namespace: string
+  name: string
+  controlledBy: string
+}
 
 export const WORKLOAD_KIND_BY_ID: Record<string, string> = {
   'apps/v1/deployments': 'Deployment',
@@ -448,6 +507,7 @@ export type ViewMode =
   | 'rbac'
   | 'timeline'
   | 'helm'
+  | 'topology'
   | 'multi-kind'
   | 'security'
   | 'pods'
@@ -463,21 +523,6 @@ export type ViewMode =
  * with natural ordering; nulls (an unmeasured CPU, a CronJob that never ran)
  * always sort last.
  */
-const POD_SORT: SortAccessors<Pod> = {
-  status: (pod) => podStatusLabel(pod),
-  name: (pod) => pod.name,
-  namespace: (pod) => pod.namespace,
-  cpu: (pod) => parseQuantity(pod.cpu),
-  memory: (pod) => parseQuantity(pod.memory),
-  ready: (pod) => pod.readyContainers,
-  restarts: (pod) => pod.restarts,
-  controlledBy: (pod) => pod.controlledBy,
-  node: (pod) => pod.nodeName,
-  qos: (pod) => pod.qosClass,
-  ip: (pod) => pod.podIp,
-  age: (pod) => pod.ageSeconds,
-}
-
 const NODE_SORT: SortAccessors<Node> = {
   status: (node) => node.status,
   name: (node) => node.name,
@@ -550,15 +595,11 @@ const EVENT_SORT: SortAccessors<K8sEvent> = {
 
 /*
  * The merged tables sort by the same accessors as their single-cluster twins,
- * plus the columns they add. Spread rather than re-declared, so a column's
+ * plus the columns they add. (Pods are sorted in Go, merged table and all —
+ * see domain.QueryPods.) Spread rather than re-declared, so a column's
  * ordering rule cannot differ between "this cluster's pods" and "every
  * cluster's pods".
  */
-const FLEET_POD_SORT: SortAccessors<FleetRow<Pod>> = {
-  ...POD_SORT,
-  cluster: (pod) => pod.cluster,
-}
-
 const FLEET_WORKLOAD_SORT: SortAccessors<FleetRow<Workload>> = {
   ...WORKLOAD_SORT,
   cluster: (workload) => workload.cluster,
@@ -598,8 +639,42 @@ export class ClusterSession {
 
   /** The kind currently selected in the navigator. */
   selectedKindId = $state<string>(DEFAULT_KIND_ID)
-  /** The namespace filter. ALL_NAMESPACES means every namespace. */
-  namespace = $state<string>(ALL_NAMESPACES)
+
+  /**
+   * Applications left off the topology when it is grouped by application —
+   * group ids (`group/app:<namespace>/<name>`), so an app is one namespace's.
+   * Per tab and in memory, like the scope: it names objects of one cluster.
+   */
+  topologyHiddenApps = $state.raw<ReadonlySet<string>>(new Set())
+
+  /**
+   * The namespace filter: a SET, sorted and deduplicated, and EMPTY FOR ALL.
+   * Every list this tab shows is read over it — see $lib/namespaceScope and
+   * CLAUDE.md, "Lists take a namespace set". Changed only through
+   * selectNamespaces (and its wrappers), which persist it per cluster.
+   */
+  selectedNamespaces = $state.raw<string[]>([])
+
+  /** The filter as a scope: `{ namespaces, all }`. */
+  readonly scope = $derived<NamespaceScope>(scopeOf(this.selectedNamespaces))
+  /** A string per scope, '' for All — what in-flight guards and per-scope
+      caches compare. */
+  readonly scopeKey = $derived(scopeKeyOf(this.scope))
+  /** Whether the filter is on every namespace. */
+  readonly isAllNamespaces = $derived(this.scope.all)
+  /**
+   * The ONE namespace selected, or '' when the filter is All or several.
+   * What single-namespace defaults read — the create dialog, the cluster
+   * shell — which ask rather than guess when it is ''.
+   */
+  readonly singleNamespace = $derived(this.scope.namespaces.length === 1 ? this.scope.namespaces[0] : '')
+  /** How the filter is named on its trigger: "All namespaces", "shop",
+      "keda +2", "5 namespaces" — and a title listing every member. */
+  readonly namespaceLabel = $derived<NamespaceLabel>(namespaceLabelOf(this.scope))
+
+  /** Whether the filter includes this namespace. */
+  inScope = (namespace: string): boolean => this.scope.all || this.scope.namespaces.includes(namespace)
+
   /** The client-side search term. */
   /** The term the lists are filtered by. Trails `typedSearch` by a beat. */
   search = $state<string>('')
@@ -671,6 +746,61 @@ export class ClusterSession {
    * just returned. Deep proxying was paying for a capability nothing uses.
    */
   pods = $state.raw<Pod[]>([])
+
+  /**
+   * What the pod table's last page query said about the WHOLE list: how many
+   * rows matched (the pager's total), how many there are, how many are
+   * unhealthy, and what each status chip would select.
+   *
+   * THE POD TABLE IS PAGED IN GO. `pods` above holds one page — what the
+   * table draws — and never the list: on a five-thousand-pod cluster the
+   * list was eleven megabytes a tick. These counts are everything the
+   * webview used to derive from holding every row. See domain.QueryPods.
+   */
+  podPage = $state.raw<PodPageCounts>(EMPTY_POD_PAGE)
+
+  /**
+   * The bulk-planning facts of the TICKED pods — keyed like the selection —
+   * so a tick made on page 1 can still be planned while page 3 is on screen.
+   * See bulkItems.
+   *
+   * ONLY TICKED KEYS, AND ONLY UNTIL UNTICKED. Filed from the page as it is
+   * replaced and from "select all matching", pruned to the selection every
+   * time it is touched, and cleared wherever the selection is: a fact kept
+   * past its tick is a controller that may since have changed, served to a
+   * plan nobody asked to make about that pod.
+   */
+  #podFacts = new Map<string, PodFacts>()
+
+  /**
+   * What "select all matching" last ticked, and for which query — so the
+   * banner can say "all N matching are selected" only while that is true of
+   * the query on screen. See allMatchingSelected.
+   */
+  #allMatching = $state.raw<{ query: string; keys: readonly string[] } | null>(null)
+
+  /**
+   * The pod open in the drawer, as the last page query read it from the
+   * WHOLE list — null when none is open or it has gone.
+   *
+   * THE DRAWER'S POD IS OFTEN NOT ON THE PAGE: opened from page 1 and the
+   * operator paged on, or opened from a search that has since changed. It
+   * used to be re-found in the list on every tick, and with only a page held
+   * it froze — stale figures, and no usage recorded. Go returns it beside the
+   * page instead (PodQuery.pinned), so it refreshes like any row.
+   */
+  #pinnedPod: Pod | null = null
+
+  /**
+   * Whether the pod open in the drawer has gone from the cluster: a page
+   * query that pinned it found it neither on the page nor in the list.
+   *
+   * SAID, NOT FROZEN. The drawer keeps showing the pod as it was last seen —
+   * that is what somebody was reading — but says it no longer exists, rather
+   * than presenting figures that will never move again as current.
+   */
+  selectedGone = $state(false)
+
   nodes = $state.raw<Node[]>([])
   workloads = $state.raw<Workload[]>([])
   events = $state.raw<K8sEvent[]>([])
@@ -860,11 +990,25 @@ export class ClusterSession {
     // statement about which namespace matters to whoever is looking at
     // PodSteer, and reconnecting to a cluster that was left on "billing"
     // should not silently snap back to "default".
-    this.namespace = preferences.getClusterNamespace(cluster.id) ?? (cluster.defaultNamespace || ALL_NAMESPACES)
+    this.selectedNamespaces =
+      preferences.getClusterNamespaces(cluster.id) ?? normaliseNamespaces([cluster.defaultNamespace ?? ''])
   }
 
   /** The kind currently selected, or undefined before kinds have loaded. */
   readonly selectedKind = $derived(this.kinds.find((kind) => kind.id === this.selectedKindId))
+
+  /**
+   * The kind of the object open in the drawer, when it is not the list's.
+   *
+   * Set only by `openDetailOver` — the topology opening an object's drawer
+   * OVER itself, where the page on screen is not a list of that kind and must
+   * stay where it is. '' everywhere else, which makes the drawer's kind the
+   * selected one, as it always was. Cleared with the drawer.
+   */
+  detailKindId = $state<string>('')
+  /** The kind id the drawer reads: the override, or the selected kind. */
+  readonly drawerKindId = $derived(this.detailKindId || this.selectedKindId)
+  readonly drawerKind = $derived(this.kinds.find((kind) => kind.id === this.drawerKindId))
 
   /** What the content pane should render. */
   readonly viewMode = $derived.by<ViewMode>(() => {
@@ -875,6 +1019,7 @@ export class ClusterSession {
     if (id === RBAC_KIND_ID) return 'rbac'
     if (id === TIMELINE_KIND_ID) return 'timeline'
     if (id === HELM_KIND_ID) return 'helm'
+    if (id === TOPOLOGY_KIND_ID) return 'topology'
     if (id === MULTI_KIND_ID) return 'multi-kind'
     if (id === SECURITY_KIND_ID || id === VULNERABILITIES_KIND_ID) return 'security'
     if (id === RICH_KIND_IDS.pods) return 'pods'
@@ -886,10 +1031,12 @@ export class ClusterSession {
   })
 
   /**
-   * The namespace the view on screen is scoped to: the window-wide one on
-   * All clusters (see fleet.namespace), this tab's own everywhere else.
+   * The namespaces the view on screen is scoped to: the window-wide set on
+   * All clusters (see fleet.namespaces), this tab's own everywhere else.
    */
-  readonly scopeNamespace = $derived(this.viewMode === 'fleet' ? fleet.namespace : this.namespace)
+  readonly scopeNamespaces = $derived(this.viewMode === 'fleet' ? fleet.namespaces : this.selectedNamespaces)
+  /** scopeNamespaces as a scope — what the navigator's picker shows. */
+  readonly scopeOnScreen = $derived<NamespaceScope>(scopeOf(this.scopeNamespaces))
 
   /** Whether the selected kind carries namespaces. */
   readonly isNamespaced = $derived(
@@ -923,6 +1070,7 @@ export class ClusterSession {
       this.viewMode !== 'rbac' &&
       this.viewMode !== 'timeline' &&
       this.viewMode !== 'helm' &&
+      this.viewMode !== 'topology' &&
       this.viewMode !== 'security',
   )
 
@@ -979,7 +1127,15 @@ export class ClusterSession {
   /** The invalid-regex message for `typedQuery`, or undefined when it parses
       cleanly. Drives the search field's error styling and accessible
       description. */
-  readonly searchError = $derived(this.typedQuery.error)
+  readonly searchError = $derived(
+    this.typedQuery.error ??
+      // A pattern this webview accepts and Go's regex dialect does not
+      // (lookaround, backreferences) — the pod table is filtered in Go, so
+      // that is the parser whose verdict the empty table is.
+      (this.viewMode === 'pods' && this.typedSearch === this.search && this.podPage.queryError
+        ? this.podPage.queryError
+        : undefined),
+  )
 
   /** A one-line summary of the syntax currently in the box, for the field's
       tooltip — see `describeQuery`. */
@@ -1012,35 +1168,6 @@ export class ClusterSession {
    */
   readonly columnExpressions = $derived(expressionsOf(this.customColumns))
 
-  /**
-   * Pods after the search filter alone, BEFORE the status quick-filter chips.
-   *
-   * Kept separate from `visiblePods` so the chip row can count how many of
-   * what a search already narrowed down each chip would ADD — including a
-   * chip that is not currently selected. Counting against the
-   * already-chip-filtered list would make every unselected chip's count
-   * collapse towards zero the moment any chip was active.
-   */
-  readonly searchedPods = $derived(
-    filterRows(
-      this.pods,
-      this.query,
-      (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase, ...this.#customText(pod)],
-      (pod) => pod.labels,
-      () => this.cluster.id,
-    ),
-  )
-
-  /**
-   * Rows after the search filter, for whichever view is active.
-   *
-   * Pods additionally pass through the status quick-filter chips — ANDed
-   * with the text query, since a search term and a chip both narrow the
-   * same list rather than answering different questions.
-   */
-  readonly visiblePods = $derived(
-    this.searchedPods.filter((pod) => matchesPodStatusChips(pod, this.podStatusFilters)),
-  )
   // Every kind's rows carry labels now, so `label:key` and `key=value` in
   // the search box mean the same thing on the node list as on the pod list
   // — and a custom column's value is searchable the way a built-in one's is.
@@ -1184,18 +1311,6 @@ export class ClusterSession {
     return rows.filter((row) => includesCluster(selected, row.cluster))
   }
 
-  readonly searchedFleetPods = $derived(
-    filterRows(
-      this.#onSelectedClusters(fleet.podRows),
-      this.query,
-      (pod) => [pod.name, pod.namespace, pod.nodeName, pod.phase],
-      (pod) => pod.labels,
-      (pod) => pod.cluster,
-    ),
-  )
-  readonly visibleFleetPods = $derived(
-    this.searchedFleetPods.filter((pod) => matchesPodStatusChips(pod, this.fleetChips.pods)),
-  )
   readonly searchedFleetWorkloads = $derived(
     filterRows(
       this.#onSelectedClusters(fleet.workloadRows),
@@ -1248,7 +1363,8 @@ export class ClusterSession {
   readonly visibleFleetCount = $derived.by(() => {
     switch (fleet.tab) {
       case 'pods':
-        return this.visibleFleetPods.length
+        // Filtered in Go — see fleet.podCounts.
+        return fleet.podCounts.matched
       case 'workloads':
         return this.visibleFleetWorkloads.length
       case 'events':
@@ -1272,9 +1388,11 @@ export class ClusterSession {
         return this.standaloneCount
       case 'overview':
       case 'timeline':
+      case 'topology':
         return 0
       case 'pods':
-        return this.visiblePods.length
+        // Filtered in Go: the page is all the webview holds.
+        return this.podPage.matched
       case 'nodes':
         return this.visibleNodes.length
       case 'workloads':
@@ -1320,8 +1438,66 @@ export class ClusterSession {
   /** The sort applied to the current kind, or null for server order. */
   readonly sort = $derived(this.sorts[this.sortKey] ?? null)
 
-  /** Filtered rows after sorting, per view. */
-  readonly sortedPods = $derived(sortRows(this.visiblePods, this.sort, this.#accessors(POD_SORT)))
+  /**
+   * The pod table's page query: its search, chips, sort, custom columns and
+   * page, as Go takes them. See domain.PodQuery.
+   *
+   * The SETTLED search, not the typed one: a page query per keystroke is the
+   * cost the debounce exists to avoid.
+   */
+  readonly podQuery = $derived<PodQuery>({
+    // The pod open in the drawer, returned beside the page whatever the
+    // page — see pinnedPod. Not part of pageQueryKey: opening a drawer is
+    // not a new page, and the next tick carries it.
+    pinned:
+      this.viewMode === 'pods' && this.selectedName
+        ? { namespace: this.selectedNamespace, name: this.selectedName }
+        : { namespace: '', name: '' },
+    text: this.search,
+    chips: this.podStatusFilters,
+    sortColumn: this.sort?.columnId ?? '',
+    descending: this.sort?.direction === 'desc',
+    columns: this.customColumns.map(({ source, key }) => ({ source, key })),
+    clusters: [],
+    offset: (Math.max(1, this.page) - 1) * preferences.pageSize,
+    limit: preferences.pageSize,
+  })
+
+  /**
+   * The merged pod table's page query: the same, with the strip's cluster
+   * selection and the merged table's own chips, and no custom columns —
+   * those are per kind, and the merged table is not one.
+   */
+  readonly fleetPodQuery = $derived<PodQuery>({
+    pinned: { namespace: '', name: '' },
+    text: this.search,
+    chips: this.fleetChips.pods,
+    sortColumn: this.sort?.columnId ?? '',
+    descending: this.sort?.direction === 'desc',
+    columns: [],
+    clusters: this.selectedFleetClusters,
+    offset: (Math.max(1, this.page) - 1) * preferences.pageSize,
+    limit: preferences.pageSize,
+  })
+
+  /**
+   * The page query the view on screen depends on, as one comparable string,
+   * or '' for a view whose rows are filtered here. A change of it is a new
+   * page to ask Go for — see requeryPods and the effect in PodsView and
+   * FleetView that calls it. The namespace is not in it: changing one
+   * already reloads the view, and a second request for the same page would
+   * only race the first.
+   */
+  readonly pageQueryKey = $derived(
+    this.viewMode === 'pods'
+      ? `pods:${JSON.stringify({ ...this.podQuery, pinned: undefined })}`
+      : this.viewMode === 'fleet' && fleet.tab === 'pods'
+        ? `fleet:${JSON.stringify(this.fleetPodQuery)}`
+        : '',
+  )
+
+
+  /** Filtered rows after sorting, per view. (Pods are sorted in Go.) */
   readonly sortedNodes = $derived(sortRows(this.visibleNodes, this.sort, this.#accessors(NODE_SORT)))
   readonly sortedWorkloads = $derived(
     sortRows(this.visibleWorkloads, this.sort, this.#accessors(WORKLOAD_SORT)),
@@ -1459,14 +1635,14 @@ export class ClusterSession {
   multiKindTitle = (kindId: string): string => this.#multiKindLabel(kindId)
 
   /** Rows of the current page, per view. */
-  readonly pagedPods = $derived(this.#slice(this.sortedPods))
+  /** The pod table's page — already cut in Go, so nothing to slice. */
+  readonly pagedPods = $derived(this.pods)
   readonly pagedNodes = $derived(this.#slice(this.sortedNodes))
   readonly pagedWorkloads = $derived(this.#slice(this.sortedWorkloads))
   readonly pagedEvents = $derived(this.#slice(this.sortedEvents))
   readonly pagedNamespaces = $derived(this.#slice(this.sortedNamespaces))
 
   /** The merged tables, sorted and paged like any other. */
-  readonly sortedFleetPods = $derived(sortRows(this.visibleFleetPods, this.sort, FLEET_POD_SORT))
   readonly sortedFleetWorkloads = $derived(
     sortRows(this.visibleFleetWorkloads, this.sort, FLEET_WORKLOAD_SORT),
   )
@@ -1506,7 +1682,8 @@ export class ClusterSession {
   })
 
   readonly pagedFleetTableRows = $derived(this.#slice(this.sortedFleetTableRows))
-  readonly pagedFleetPods = $derived(this.#slice(this.sortedFleetPods))
+  /** The merged pod table's page, cut in Go like the single-cluster one. */
+  readonly pagedFleetPods = $derived(fleet.podRows)
   readonly pagedFleetWorkloads = $derived(this.#slice(this.sortedFleetWorkloads))
   readonly pagedFleetEvents = $derived(this.#slice(this.sortedFleetEvents))
   readonly sortedApplications = $derived(
@@ -1593,11 +1770,11 @@ export class ClusterSession {
     return 'healthy'
   })
 
-  /** Counts for the header summary, meaningful only for pod views. */
+  /** Counts for the header summary, meaningful only for pod views — over
+      the whole list, as Go counted it, not over the page. */
   readonly podSummary = $derived({
-    total: this.pods.length,
-    unhealthy: this.pods.filter((pod) => !pod.isHealthy).length,
-    restarts: this.pods.reduce((sum, pod) => sum + pod.restarts, 0),
+    total: this.podPage.total,
+    unhealthy: this.podPage.unhealthy,
   })
 
   /**
@@ -1618,9 +1795,16 @@ export class ClusterSession {
 
     switch (this.viewMode) {
       case 'pods':
-        return this.pods
-          .filter((pod) => keys.has(rowKey(pod.namespace, pod.name)))
-          .map((pod) => podItem(kind, pod))
+        // FROM THE FACTS, NOT THE ROWS: the webview holds one page, and a
+        // pod ticked on another page — or by "select all matching" — is
+        // planned from what was true of it when it was last shown. A pod
+        // deleted since is caught by the plan's own read, not here.
+        // The page's own row first — it is this tick's — then the facts.
+        return [...keys].flatMap((key) => {
+          const facts =
+            this.pods.find((pod) => rowKey(pod.namespace, pod.name) === key) ?? this.#podFacts.get(key)
+          return facts ? [podItem(kind, facts)] : []
+        })
       case 'workloads':
         return this.workloads
           .filter((workload) => keys.has(rowKey(workload.namespace, workload.name)))
@@ -1701,8 +1885,55 @@ export class ClusterSession {
     this.selectedKindId = kindId
     this.page = 1
     this.closeDetail()
-    this.selection.clear()
+    this.clearSelection()
     await this.refresh()
+  }
+
+  /** The topology's scope: the namespace filter's, as every list's is. */
+  readonly topologyScopeNow = $derived<TopologyScope>(this.scope)
+
+  /**
+   * Opens the topology on a scope — "Open topology" on a namespace's row and
+   * drawer selects that scope as the filter — or on the filter as it stands.
+   */
+  openTopology = async (scope?: TopologyScope): Promise<void> => {
+    if (scope && this.#setNamespaces(scope.all ? [] : scope.namespaces)) {
+      this.clearSelection()
+      if (this.selectedKindId === TOPOLOGY_KIND_ID) {
+        await this.refresh()
+        return
+      }
+    }
+    await this.selectKind(TOPOLOGY_KIND_ID)
+  }
+
+  /**
+   * Opens the overview on one finding: what a findings badge on the topology
+   * leads to. The overview is where findings are read, snoozed and acted on;
+   * the badge only says that one names a box.
+   */
+  openFinding = async (findingId: string): Promise<void> => {
+    // The cards exist only while the overview's details are shown, and they
+    // are hidden by default: following a badge to a collapsed list showed the
+    // verdict and no finding. Opened first, so the card is there to find.
+    if (!preferences.findingsExpanded) preferences.toggleFindings()
+    await this.selectKind(OVERVIEW_KIND_ID)
+    if (typeof document === 'undefined') return
+    // The overview renders over the next frames (the assessment may still be
+    // arriving); look for the card for a short while, then give up quietly.
+    const selector = `[data-finding-id="${CSS.escape(findingId)}"]`
+    for (let frame = 0; frame < 30; frame++) {
+      const card = document.querySelector(selector)
+      if (card) {
+        card.scrollIntoView?.({
+          block: 'center',
+          behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+        })
+        if (card instanceof HTMLElement) card.focus({ preventScroll: true })
+        return
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => resolve(null)))
+    }
   }
 
   /**
@@ -1712,7 +1943,11 @@ export class ClusterSession {
    */
   #findPod(name: string, namespace: string): Pod | null {
     if (this.viewMode !== 'pods') return null
-    return this.pods.find((pod) => pod.name === name && pod.namespace === namespace) ?? null
+    const pinned = this.#pinnedPod
+    return (
+      this.pods.find((pod) => pod.name === name && pod.namespace === namespace) ??
+      (pinned && pinned.name === name && pinned.namespace === namespace ? pinned : null)
+    )
   }
 
   #findNamespace(name: string): NamespaceSummary | null {
@@ -1754,21 +1989,20 @@ export class ClusterSession {
     namespace: string,
     namespaced: boolean,
   ): Promise<void> => {
-    const needsNamespace =
-      namespaced &&
-      namespace !== '' &&
-      this.namespace !== ALL_NAMESPACES &&
-      this.namespace !== namespace
+    // On the topology a followed reference opens over the map, which stays.
+    if (this.viewMode === 'topology') return this.openDetailOver(kindId, name, namespace)
+
+    // A namespace the filter leaves out is ADDED to it, never swapped in:
+    // somebody reading three namespaces who follows a reference into a
+    // fourth still wants the three.
+    const needsNamespace = namespaced && namespace !== '' && !this.inScope(namespace)
 
     if (kindId !== this.selectedKindId || needsNamespace) {
       this.selectedKindId = kindId
-      if (needsNamespace) {
-        this.namespace = namespace
-        preferences.setClusterNamespace(this.cluster.id, namespace)
-      }
+      if (needsNamespace) this.#setNamespaces([...this.selectedNamespaces, namespace])
       this.page = 1
       this.closeDetail()
-      this.selection.clear()
+      this.clearSelection()
       await this.refresh()
     }
 
@@ -1808,38 +2042,68 @@ export class ClusterSession {
    * the wrong list, and on a large cluster an expensive one.
    */
   browseKind = async (kindId: string, namespace: string): Promise<void> => {
-    const changed = kindId !== this.selectedKindId || namespace !== this.namespace
-
+    const kindChanged = kindId !== this.selectedKindId
     this.selectedKindId = kindId
-    this.namespace = namespace
-    preferences.setClusterNamespace(this.cluster.id, namespace)
+    const changed = this.#setNamespaces(namespace === ALL_NAMESPACES ? [] : [namespace]) || kindChanged
     this.page = 1
     // Closed either way: the drawer is open on the namespace that was just
     // navigated away from, and leaving it there over a list of something else
     // is a panel describing an object nothing on screen refers to.
     this.closeDetail()
-    if (changed) this.selection.clear()
+    if (changed) this.clearSelection()
 
     if (changed) await this.refresh()
   }
 
-  /** Changes the namespace filter, remembers it for this cluster, and reloads. */
-  selectNamespace = async (namespace: string): Promise<void> => {
+  /**
+   * Sets this tab's namespace set and remembers it for this cluster, without
+   * reloading. Whether it changed — callers that batch a kind change with it
+   * reload once.
+   */
+  #setNamespaces(names: readonly string[]): boolean {
+    const next = normaliseNamespaces(names)
+    if (sameNamespaces(next, this.selectedNamespaces)) return false
+    this.selectedNamespaces = next
+    preferences.setClusterNamespaces(this.cluster.id, next)
+    return true
+  }
+
+  /**
+   * Changes the namespace filter to a set ([] is All), remembers it for this
+   * cluster, and reloads — once, however many namespaces changed, which is
+   * why the picker applies a draft rather than every tick.
+   */
+  selectNamespaces = async (names: readonly string[]): Promise<void> => {
     if (this.viewMode === 'fleet') {
-      // All clusters has one namespace for the window, and choosing it must
-      // not rewrite this cluster's remembered filter.
-      if (namespace === fleet.namespace) return
-      fleet.chooseNamespace(namespace)
+      // All clusters has one set for the window, and choosing it must not
+      // rewrite this cluster's remembered filter.
+      const next = normaliseNamespaces(names)
+      if (sameNamespaces(next, fleet.namespaces)) return
+      fleet.chooseNamespaces(next)
       this.page = 1
       await this.refresh()
       return
     }
-    if (namespace === this.namespace) return
-    this.namespace = namespace
-    preferences.setClusterNamespace(this.cluster.id, namespace)
+    if (!this.#setNamespaces(names)) return
     this.page = 1
-    this.selection.clear()
+    this.clearSelection()
     await this.refresh()
+  }
+
+  /** Filters to exactly one namespace — or All, for ALL_NAMESPACES. What a
+      namespace's "Filter to" gestures call. */
+  selectNamespace = (namespace: string): Promise<void> =>
+    this.selectNamespaces(namespace === ALL_NAMESPACES ? [] : [namespace])
+
+  /**
+   * Adds a namespace to the filter, or takes it out. Taking out the last one
+   * leaves the empty set, which is All; adding one to All starts a set of one.
+   */
+  toggleNamespace = (namespace: string): Promise<void> => {
+    const current = this.viewMode === 'fleet' ? fleet.namespaces : this.selectedNamespaces
+    return this.selectNamespaces(
+      current.includes(namespace) ? current.filter((name) => name !== namespace) : [...current, namespace],
+    )
   }
 
   /**
@@ -1850,7 +2114,7 @@ export class ClusterSession {
    */
   readonly viewState = $derived<ViewState>({
     kindId: this.selectedKindId,
-    namespace: this.scopeNamespace,
+    namespaces: this.scopeNamespaces,
     search: this.typedSearch,
     statusFilters: this.podStatusFilters,
   })
@@ -1870,22 +2134,19 @@ export class ClusterSession {
    */
   applyView = async (view: SavedView): Promise<void> => {
     const fleetView = view.kindId === FLEET_KIND_ID
-    const changed =
-      view.kindId !== this.selectedKindId ||
-      view.namespace !== (fleetView ? fleet.namespace : this.namespace)
-
+    let changed = view.kindId !== this.selectedKindId
     this.selectedKindId = view.kindId
     if (fleetView) {
-      fleet.chooseNamespace(view.namespace)
+      changed ||= !sameNamespaces(view.namespaces, fleet.namespaces)
+      fleet.chooseNamespaces(view.namespaces)
     } else {
-      this.namespace = view.namespace
-      preferences.setClusterNamespace(this.cluster.id, view.namespace)
+      changed = this.#setNamespaces(view.namespaces) || changed
     }
     this.podStatusFilters = [...view.statusFilters]
     this.setSearch(view.search)
     this.page = 1
     this.closeDetail()
-    if (changed) this.selection.clear()
+    if (changed) this.clearSelection()
 
     if (changed) await this.refresh()
   }
@@ -2125,6 +2386,171 @@ export class ClusterSession {
     await this.refresh()
   }
 
+  /**
+   * What the banner's Retry does.
+   *
+   * AFTER AN `unauthenticated` FAILURE A PLAIN REFRESH CANNOT SUCCEED. The
+   * backend holds one client per cluster, built from the token or certificate
+   * the kubeconfig had at the first request, so a retry reuses the credential
+   * that was just refused — even when the operator has since logged in again
+   * in a terminal and the kubeconfig now holds a good one. So the client is
+   * dropped first, and the refresh builds a new one from the kubeconfig as it
+   * stands. Anything else retries as it always did.
+   *
+   * A failure of the refresh-credentials call itself is not worth a second
+   * banner over the one already showing: the refresh that follows reports
+   * whatever is still wrong.
+   */
+  retry = async (): Promise<void> => {
+    if (this.error?.code === 'unauthenticated') {
+      try {
+        await refreshCredentials(this.cluster.id)
+      } catch {
+        // Fall through to the refresh, which says what is still wrong.
+      }
+    }
+    await this.refresh()
+  }
+
+  /**
+   * Asks Go for the page the pod table's query now names — after a settled
+   * search, a chip, a sort, a page or a page size changed.
+   *
+   * THE ROWS ONLY, NOT A WHOLE REFRESH: the assessment and the kind list ride
+   * the tick, and a keystroke is not a tick. It takes a request number from
+   * the same counter refresh() does, so whichever was asked LAST lands — a
+   * tick that left before the chip was pressed cannot overwrite the page the
+   * chip asked for, and a slow page query cannot overwrite a later one.
+   */
+  requeryPods = async (): Promise<void> => {
+    if (this.pageQueryKey === '') return
+
+    const request = ++this.#request
+    this.#requestedAt = Date.now()
+    try {
+      const rows =
+        this.viewMode === 'fleet'
+          ? await fleet.refresh(fleet.namespaces, this.fleetPodQuery)
+          : await queryPodsIn(
+              this.cluster.id,
+              this.selectedNamespaces,
+              this.annotationKeys,
+              this.columnExpressions,
+              this.podQuery,
+            )
+      if (request !== this.#request) return
+      this.#assign(rows)
+      this.status = 'ready'
+      this.error = null
+    } catch (cause) {
+      if (request !== this.#request) return
+      this.status = 'error'
+      this.#fail(cause)
+    }
+  }
+
+  /**
+   * Files the bulk-planning facts of those of these pods that are ticked,
+   * and forgets every fact whose pod no longer is — see #podFacts.
+   */
+  #notePodFacts(pods: readonly { namespace: string; name: string; controlledBy: string }[]): void {
+    const ticked = this.selection.keys
+    for (const pod of pods) {
+      const key = rowKey(pod.namespace, pod.name)
+      if (!ticked.has(key)) continue
+      this.#podFacts.set(key, { namespace: pod.namespace, name: pod.name, controlledBy: pod.controlledBy })
+    }
+    for (const key of this.#podFacts.keys()) {
+      if (!ticked.has(key)) this.#podFacts.delete(key)
+    }
+  }
+
+  /** Drops every tick, and what the ticks were planned from. Every control
+      that clears the selection should come through here rather than
+      selection.clear(), or the facts outlive the ticks until the next tick
+      prunes them. */
+  clearSelection = (): void => {
+    this.selection.clear()
+    this.#podFacts.clear()
+    this.#allMatching = null
+  }
+
+  /**
+   * The pod query as "which pods match", page aside — what a "select all
+   * matching" is valid for.
+   */
+  readonly #matchingQuery = $derived(
+    JSON.stringify({ ...this.podQuery, offset: undefined, limit: undefined, pinned: undefined }),
+  )
+
+  /**
+   * Whether every pod the query on screen matches is ticked — by "select all
+   * matching" for THIS query, and none of them unticked since. Not a count
+   * comparison: N ticks on page 1 and N matches elsewhere are not the same
+   * N pods.
+   */
+  readonly allMatchingSelected = $derived.by(() => {
+    const all = this.#allMatching
+    if (!all || all.query !== this.#matchingQuery || all.keys.length === 0) return false
+    const ticked = this.selection.keys
+    return all.keys.every((key) => ticked.has(key))
+  })
+
+  /**
+   * Ticks every pod the search and chips match, on every page — "select all
+   * N matching", beside the header checkbox's "this page".
+   *
+   * ONE READ, ON THE GESTURE: the keys (namespace, name, UID and controller)
+   * of every match, never the rows. Ten thousand keys are about a megabyte
+   * once, where ten thousand rows were twenty-three every tick.
+   */
+  selectAllMatchingPods = async (): Promise<void> => {
+    if (this.viewMode !== 'pods') return
+    // GUARDED LIKE A PAGE QUERY: keys that arrive after the search, a chip,
+    // the namespace or the view changed are the answer to a question nobody
+    // is asking any more, and ticking them would select pods the table does
+    // not show.
+    const asked = this.#matchingQuery
+    const scopeKey = this.scopeKey
+    try {
+      const keys = await listPodKeysIn(
+        this.cluster.id,
+        this.selectedNamespaces,
+        this.annotationKeys,
+        this.columnExpressions,
+        this.podQuery,
+      )
+      if (this.viewMode !== 'pods' || this.#matchingQuery !== asked || this.scopeKey !== scopeKey) return
+      const ticked = keys.map((key) => rowKey(key.namespace, key.name))
+      this.selection.selectAll(ticked)
+      this.#notePodFacts(keys)
+      this.#allMatching = { query: asked, keys: ticked }
+    } catch (cause) {
+      this.#fail(cause)
+    }
+  }
+
+  /**
+   * Writes every pod the table's query matches — all pages, in its order —
+   * as CSV, rendered and saved by Go through the save dialog. Resolves to the
+   * path, or '' when the operator cancelled.
+   */
+  exportPodsCSV = (columns: CSVColumn[], filename: string): Promise<string> =>
+    exportPodsCSVIn(
+      this.cluster.id,
+      this.selectedNamespaces,
+      this.annotationKeys,
+      this.columnExpressions,
+      this.podQuery,
+      columns,
+      filename,
+    )
+
+  /** The merged pod table's export — exportPodsCSV across every open cluster,
+      with this tab's search, chips and cluster selection. */
+  exportFleetPodsCSV = (columns: CSVColumn[], filename: string): Promise<string> =>
+    exportFleetPodsCSVIn(fleet.openClusters(), fleet.namespaces, this.fleetPodQuery, columns, filename)
+
   /** Reloads whichever view is active. */
   refresh = async (): Promise<void> => {
     const request = ++this.#request
@@ -2351,7 +2777,7 @@ export class ClusterSession {
   /** Issues the call the active view needs. */
   async #fetch(): Promise<unknown> {
     const { id } = this.cluster
-    const namespace = this.isNamespaced ? this.namespace : ALL_NAMESPACES
+    const namespaces = this.isNamespaced ? this.selectedNamespaces : []
 
     // The assessment is refreshed whatever is on screen. It used to be
     // fetched only while the overview was open, which left two things wrong:
@@ -2391,8 +2817,9 @@ export class ClusterSession {
         // Every open cluster, one call, at this tab's cadence — and only
         // while this view is the one on screen, because this switch is the
         // only thing that ever calls it. See $stores/fleet.
-        // The WINDOW'S namespace, never this tab's — see fleet.namespace.
-        return fleet.refresh(fleet.namespace)
+        // The WINDOW'S namespaces, never this tab's — see fleet.namespaces —
+        // and THIS tab's page of the merged pods.
+        return fleet.refresh(fleet.namespaces, this.fleetPodQuery)
       case 'rbac':
         // NOTHING, DELIBERATELY. The RBAC explorer's reads are made by the
         // panel when somebody presses something, never by this tick: a
@@ -2421,7 +2848,7 @@ export class ClusterSession {
         if (kinds.length === 0) return Promise.resolve([])
         return Promise.all(
           kinds.map((kindId) =>
-            listTable(id, kindId, namespace, this.annotationKeys, this.columnExpressions),
+            listTableIn(id, kindId, namespaces, this.annotationKeys, this.columnExpressions),
           ),
         )
       }
@@ -2438,6 +2865,12 @@ export class ClusterSession {
         // without anything here asking. See decision 6 in
         // podsteer/business-docs.
         return Promise.resolve(null)
+      case 'topology':
+        // NOTHING. The topology is a dozen LISTs across a scope that can be
+        // the whole cluster; it reads when it opens and when somebody asks,
+        // and the backend's change feed is what says it is out of date. See
+        // TOPOLOGY_KIND_ID.
+        return Promise.resolve(null)
       case 'security':
         // NOTHING, and for both of the reasons above at once. The static
         // posture findings ride the assessment that runs under every view
@@ -2452,15 +2885,16 @@ export class ClusterSession {
       // its custom columns — and nothing else of the annotation map. See
       // $lib/customColumns and the client's listNamespaceSummaries note.
       case 'pods':
-        return listPods(id, namespace, this.annotationKeys, this.columnExpressions)
+        // ONE PAGE, NOT THE LIST — see podPage.
+        return queryPodsIn(id, namespaces, this.annotationKeys, this.columnExpressions, this.podQuery)
       case 'nodes':
         return listNodes(id, this.annotationKeys, this.columnExpressions)
       case 'events':
-        return listEvents(id, namespace, this.annotationKeys, this.columnExpressions)
+        return listEventsIn(id, namespaces, this.annotationKeys, this.columnExpressions)
       case 'namespaces':
         return listNamespaceSummaries(id, this.annotationKeys, this.columnExpressions)
       case 'applications':
-        return listApplications(id, namespace)
+        return listApplicationsIn(id, namespaces)
       case 'workloads': {
         const kind = WORKLOAD_KIND_BY_ID[this.selectedKindId]
         // Not awaited, so a slow pod list never delays the rows themselves.
@@ -2471,17 +2905,17 @@ export class ClusterSession {
         // with the older winning, and a failure clearing figures a later
         // success had already installed. One counter closes all three.
         const generation = ++this.#usageGeneration
-        void workloadConsumption(id, kind, namespace)
+        void workloadConsumptionIn(id, kind, namespaces)
           .then((usage) => {
             if (generation === this.#usageGeneration) this.workloadUsage = usage
           })
           .catch(() => {
             if (generation === this.#usageGeneration) this.workloadUsage = {}
           })
-        return listWorkloads(id, kind, namespace, this.annotationKeys, this.columnExpressions)
+        return listWorkloadsIn(id, kind, namespaces, this.annotationKeys, this.columnExpressions)
       }
       default:
-        return listTable(id, this.selectedKindId, namespace, this.annotationKeys, this.columnExpressions)
+        return listTableIn(id, this.selectedKindId, namespaces, this.annotationKeys, this.columnExpressions)
     }
   }
 
@@ -2497,7 +2931,9 @@ export class ClusterSession {
   metadataKeysOnScreen = (): MetadataKeys => {
     switch (this.viewMode) {
       case 'pods':
-        return keysOnScreen(this.visiblePods)
+        // The page: the rest of the list is in Go. The picker also takes
+        // free text, for a key no row on this page carries.
+        return keysOnScreen(this.pods)
       case 'nodes':
         return keysOnScreen(this.visibleNodes)
       case 'workloads':
@@ -2515,9 +2951,14 @@ export class ClusterSession {
 
   /** Stores a fetch result in the field its view reads. */
   #assign(rows: unknown): void {
+    // The page about to be replaced may hold the only copy of a ticked pod's
+    // facts — ticked a moment ago, never yet planned. File them first.
+    this.#notePodFacts(this.pods)
+
     // Clearing the others matters: a stale pod list left behind would flash
     // back into view for a frame when the operator returns to Pods.
     this.pods = []
+    this.podPage = EMPTY_POD_PAGE
     this.nodes = []
     this.workloads = []
     this.events = []
@@ -2558,6 +2999,9 @@ export class ClusterSession {
         // Nothing to hold, for the same reason as RBAC: the page owns the one
         // listing it asked for, and this tick never asked for anything.
         break
+      case 'topology':
+        // Nothing to hold: the page owns its graph, and this tick never asked.
+        break
       case 'multi-kind':
         this.multiKindTables = rows as ResourceTable[]
         break
@@ -2566,9 +3010,27 @@ export class ClusterSession {
         // overview's own case adopts, and the scanner read lives in
         // $stores/vulnerabilities where the page put it.
         break
-      case 'pods':
-        this.pods = rows as Pod[]
+      case 'pods': {
+        const page = rows as PodPage
+        this.pods = page.rows ?? []
+        this.#pinnedPod = page.pinned ?? null
+        // Asked for by name and in neither place: deleted, or evicted.
+        this.selectedGone =
+          !!this.selectedName &&
+          this.selectedApplication === null &&
+          !page.pinned &&
+          !this.pods.some((pod) => pod.name === this.selectedName && pod.namespace === this.selectedNamespace)
+        this.podPage = {
+          offset: page.offset,
+          matched: page.matched,
+          total: page.total,
+          unhealthy: page.unhealthy,
+          chipCounts: page.chipCounts ?? {},
+          queryError: page.queryError,
+        }
+        this.#notePodFacts(this.pods)
         break
+      }
       case 'nodes':
         this.nodes = rows as Node[]
         break
@@ -2749,6 +3211,13 @@ export class ClusterSession {
   #refreshSelection(): void {
     if (!this.selectedName) return
 
+    // A drawer over the topology has no list behind it to be refreshed from;
+    // it reads its own row instead.
+    if (this.detailKindId && this.viewMode === 'topology') {
+      void this.#refreshDetailOver()
+      return
+    }
+
     // An open application, refreshed from the list behind it and appended to
     // its chart. Without this the panel showed whatever had been recorded
     // when it opened and never moved again — the series is written by the
@@ -2772,10 +3241,14 @@ export class ClusterSession {
       return
     }
 
-    if (this.selectedPod) {
-      const fresh = this.pods.find(
-        (pod) => pod.name === this.selectedName && pod.namespace === this.selectedNamespace,
-      )
+    if (this.selectedPod || this.viewMode === 'pods') {
+      // The page first, then the pinned copy Go read from the whole list —
+      // see #pinnedPod. Also when the drawer opened on a pod no page held
+      // (a followed link): the pinned copy is its first row object.
+      const fresh =
+        this.pods.find(
+          (pod) => pod.name === this.selectedName && pod.namespace === this.selectedNamespace,
+        ) ?? this.#findPod(this.selectedName, this.selectedNamespace) ?? undefined
       if (fresh) {
         this.selectedPod = fresh
         this.#recordUsage(fresh)
@@ -2826,6 +3299,33 @@ export class ClusterSession {
       cpuCores: parseQuantity(node.cpu) ?? 0,
       memoryBytes: parseQuantity(node.memory) ?? 0,
     })
+  }
+
+  /**
+   * Fills the open pod's chart from the history Go kept, keeping whatever the
+   * webview recorded after Go's newest point. Dropped if another object was
+   * opened while it was in flight.
+   */
+  async #seedPodUsage(namespace: string, name: string): Promise<void> {
+    let points: Awaited<ReturnType<typeof podUsageHistory>>
+    try {
+      points = await podUsageHistory(this.cluster.id, namespace, name)
+    } catch {
+      return // The webview's own history stands; nothing to say about it.
+    }
+    if (this.selectedName !== name || this.selectedNamespace !== namespace || points.length === 0) return
+
+    const kept: UsageSample[] = points.map((point) => ({
+      at: point.at,
+      cpuCores: point.cpuCores,
+      memoryBytes: point.memoryBytes,
+    }))
+    const newest = kept[kept.length - 1].at
+    const merged = [...kept, ...this.usage.filter((sample) => sample.at > newest)]
+    // Only when Go's is the longer record — a pod the webview watched on its
+    // page all along already has the same points.
+    if (merged.length <= this.usage.length) return
+    this.usage = merged.slice(-MAX_USAGE_SAMPLES)
   }
 
   #recordUsage(pod: Pod): void {
@@ -2883,10 +3383,11 @@ export class ClusterSession {
     // openObject, which sets selectedKindId and then calls this) and a click
     // from the Recent section itself all count as "opened" the same way —
     // there is exactly one place an object becomes recently opened.
-    this.#recordRecent(this.selectedKindId, name, namespace)
+    this.#recordRecent(this.drawerKindId, name, namespace)
 
     this.selectedName = name
     this.selectedNamespace = namespace
+    this.selectedGone = false
     this.selectedPod = pod ?? this.#findPod(name, namespace)
     this.selectedNode = node ?? this.#findNode(name)
     this.selectedWorkload = workload ?? this.#findWorkload(name, namespace)
@@ -2909,12 +3410,96 @@ export class ClusterSession {
         : this.selectedNamespaceRow
           ? usageHistory.since(usageKey(this.cluster.id, 'namespace', '', name))
           : []
+    // A pod's history is ALSO kept in Go, from every pod list read — the
+    // whole namespace, where the webview now holds a page — so a pod that
+    // was never on a page still opens with its last half hour.
+    if (this.viewMode === 'pods' || this.drawerKindId === RICH_KIND_IDS.pods) void this.#seedPodUsage(namespace, name)
     // Every open starts hidden. A reveal is a decision about one object, and
     // carrying it to the next one is how Freelens ends up showing a value
     // somebody unmasked in private on the pod they open in a meeting.
     this.secretsRevealed = false
 
     await this.#loadManifest(name, namespace)
+  }
+
+  /**
+   * Opens an object's drawer OVER the page on screen, without moving to its
+   * list: what a box on the topology does. The map, its scope and its
+   * viewport stay exactly as they were; closing the drawer returns to them.
+   */
+  openDetailOver = async (kindId: string, name: string, namespace: string): Promise<void> => {
+    this.detailKindId = kindId === this.selectedKindId ? '' : kindId
+    // THE ROW, NOT ONLY THE MANIFEST. A pod's containers, a workload's
+    // replica figures — and with them Logs, Terminal, Scale and Restart — are
+    // read from the row object, which no list behind the topology holds. So
+    // the one row is read here, the way the pods page reads its pinned pod.
+    const row = await this.#readDetailRow(kindId, name, namespace)
+    await this.openDetail(name, namespace, row?.pod ?? undefined, row?.workload ?? undefined)
+    if (row === null) this.selectedGone = true
+  }
+
+  /**
+   * The single row a drawer over the topology reads its live sections from:
+   * the pod through the pod query's pinned slot (one pod, whatever the page),
+   * a workload from its kind's list. `null` when the object is not there any
+   * more; `undefined` when the read failed or the kind has no row — neither of
+   * which says the object is gone.
+   */
+  async #readDetailRow(
+    kindId: string,
+    name: string,
+    namespace: string,
+  ): Promise<{ pod?: Pod; workload?: Workload } | null | undefined> {
+    try {
+      if (kindId === RICH_KIND_IDS.pods) {
+        const page = await queryPods(this.cluster.id, namespace, [], [], {
+          pinned: { namespace, name },
+          text: '',
+          chips: [],
+          sortColumn: '',
+          descending: false,
+          columns: [],
+          clusters: [],
+          offset: 0,
+          limit: 1,
+        })
+        const pod =
+          page.pinned ?? (page.rows ?? []).find((row) => row.name === name && row.namespace === namespace) ?? null
+        return pod ? { pod } : null
+      }
+      const kind = WORKLOAD_KIND_BY_ID[kindId]
+      if (kind) {
+        const rows = await listWorkloads(this.cluster.id, kind, namespace)
+        const workload = rows.find((row) => row.name === name && row.namespace === namespace) ?? null
+        return workload ? { workload } : null
+      }
+    } catch {
+      // A failed read is not a deleted object: the drawer keeps what it has.
+    }
+    return undefined
+  }
+
+  /** Keeps a drawer over the topology current: its row, re-read on the tick. */
+  async #refreshDetailOver(): Promise<void> {
+    const kindId = this.detailKindId
+    const name = this.selectedName
+    const namespace = this.selectedNamespace
+    if (!name) return
+    const row = await this.#readDetailRow(kindId, name, namespace)
+    // Moved on while it was read: the answer is for another object.
+    if (this.detailKindId !== kindId || this.selectedName !== name || this.selectedNamespace !== namespace) return
+    if (row === undefined) return
+    if (row === null) {
+      // Kept on screen as last seen, as the pods page does.
+      this.selectedGone = true
+      return
+    }
+    this.selectedGone = false
+    if (row.pod) {
+      this.selectedPod = row.pod
+      this.#recordUsage(row.pod)
+    }
+    if (row.workload) this.selectedWorkload = row.workload
   }
 
   /**
@@ -3035,7 +3620,7 @@ export class ClusterSession {
     try {
       const manifest = await getManifest(
         this.cluster.id,
-        this.selectedKindId,
+        this.drawerKindId,
         namespace,
         name,
         revealed,
@@ -3055,8 +3640,10 @@ export class ClusterSession {
     // Any request that never reached the drawer goes with it, so it cannot
     // surface on whatever is opened next.
     this.detailIntent = null
+    this.detailKindId = ''
     this.selectedName = null
     this.selectedNamespace = ''
+    this.selectedGone = false
     this.selectedPod = null
     this.selectedNode = null
     this.selectedWorkload = null

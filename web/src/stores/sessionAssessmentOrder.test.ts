@@ -9,6 +9,7 @@ vi.mock('$lib/api/client', async () => {
   return {
     ...actual,
     listTable: (...args: unknown[]) => listTable(...args),
+    listTableIn: (...args: unknown[]) => listTable(...args),
     getOverview: (...args: unknown[]) => getOverview(...args),
     listKinds: vi.fn().mockRejectedValue(new Error('[unknown] no cluster in a test')),
   }

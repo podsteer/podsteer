@@ -36,7 +36,7 @@ import TimelineView from './TimelineView.svelte'
   import { shortcut } from '$stores/shortcuts.svelte'
   import { toCSV } from '$lib/csv'
   import { buildExportFilename } from '$lib/exportFilename'
-  import { ALL_NAMESPACES, saveTextFile } from '$lib/api/client'
+  import { saveTextFile } from '$lib/api/client'
   import { toApiError } from '$lib/api/errors'
   import { flash } from '$lib/flash.svelte'
   import { skeletonFor } from '$lib/manifestTemplates'
@@ -55,6 +55,8 @@ import TimelineView from './TimelineView.svelte'
   import FleetView from './FleetView.svelte'
   import RBACView from './RBACView.svelte'
   import HelmView from './HelmView.svelte'
+  import TopologyView from './TopologyView.svelte'
+  import type { TopologyHeaderContent } from '$lib/topologyHeader'
   import { fleet } from '$stores/fleet.svelte'
   import { PanelLeft, AlertTriangle, Download, Check, Plus, Laptop, ShieldQuestion, UserSearch } from '@lucide/svelte'
   import { onMount } from 'svelte'
@@ -74,6 +76,12 @@ import TimelineView from './TimelineView.svelte'
   let { session }: Props = $props()
 
   let searchField: { focus: () => void } | undefined = $state()
+  /**
+   * The topology's header content — its count and its controls, rendered in
+   * THIS header row so the page reads like every list page. Set by the page
+   * while it is mounted.
+   */
+  let topologyHeader = $state.raw<TopologyHeaderContent | null>(null)
 
   /**
    * Whether this platform can open a shell on the operator's own machine, and
@@ -135,13 +143,13 @@ import TimelineView from './TimelineView.svelte'
    *
    * The namespace is the tab's, so the two terminals and the rest of the
    * interface agree about where somebody is working — and it is '' when the
-   * tab is on every namespace, which the dialog reads as "ask" rather than as
-   * a licence to guess. See $lib/clusterShell.
+   * tab is on every namespace or on several, which the dialog reads as "ask"
+   * rather than as a licence to guess. See $lib/clusterShell.
    */
   function onOpenClusterShell(): void {
     sessionLauncher.requestClusterShell({
       clusterId: session.cluster.id,
-      namespace: clusterShellNamespaceFor(session.namespace),
+      namespace: clusterShellNamespaceFor(session.selectedNamespaces),
     })
   }
 
@@ -225,7 +233,7 @@ import TimelineView from './TimelineView.svelte'
    * never a draft somebody is midway through editing.
    */
   const newSkeleton = $derived(
-    session.selectedKind ? skeletonFor(session.selectedKind, session.namespace) : '',
+    session.selectedKind ? skeletonFor(session.selectedKind, session.singleNamespace) : '',
   )
 
   /** The namespace the kubectl hint shows a `-n` flag for — the same
@@ -233,8 +241,17 @@ import TimelineView from './TimelineView.svelte'
       `skeletonFor` itself applies to `metadata.namespace`, so the hint never
       claims a flag the manifest does not actually need. */
   const newNamespaceHint = $derived(
-    session.selectedKind?.namespaced && session.namespace !== ALL_NAMESPACES
-      ? session.namespace
+    session.selectedKind?.namespaced && session.singleNamespace ? session.singleNamespace : undefined,
+  )
+
+  /** When the kind is namespaced and the filter does not name exactly one
+      namespace, the dialog asks — over the selected set, or every namespace
+      on All. Undefined otherwise: the skeleton already names the one. */
+  const newNamespaceChoices = $derived(
+    session.selectedKind?.namespaced && !session.singleNamespace
+      ? session.isAllNamespaces
+        ? session.namespaces.map((namespace) => namespace.name)
+        : session.scope.namespaces
       : undefined,
   )
 
@@ -282,11 +299,16 @@ import TimelineView from './TimelineView.svelte'
     const filename = buildExportFilename(
       session.viewMode === 'fleet' ? 'all-clusters' : session.cluster.id,
       kind,
-      session.scopeNamespace,
+      session.scopeNamespaces,
     )
 
     try {
-      const path = await saveTextFile(filename, toCSV(data.columns, data.rows))
+      // The pod tables hand back a writer rather than rows: theirs are in
+      // Go, and so is the file — see CSVExport.
+      const path =
+        'save' in data
+          ? await data.save(filename)
+          : await saveTextFile(filename, toCSV(data.columns, data.rows))
       // An empty path means the operator cancelled the dialog, which is not
       // an error and says nothing — the same convention as readKubeconfigFile.
       if (path) {
@@ -328,7 +350,7 @@ import TimelineView from './TimelineView.svelte'
       if (!escapeUnclaimed() || session.selection.count === 0) return
       const target = event.target as HTMLElement | null
       if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
-      session.selection.clear()
+      session.clearSelection()
       return
     }
 
@@ -340,7 +362,8 @@ import TimelineView from './TimelineView.svelte'
       void session.requestRefresh()
     } else if (shortcut('focus-search').matches(event)) {
       event.preventDefault()
-      searchField?.focus()
+      if (session.viewMode === 'topology' && topologyHeader) topologyHeader.focusSearch()
+      else searchField?.focus()
     }
   }
 </script>
@@ -381,6 +404,8 @@ import TimelineView from './TimelineView.svelte'
                 ? 'Timeline'
                 : session.viewMode === 'helm'
                   ? 'Helm'
+                  : session.viewMode === 'topology'
+                    ? 'Topology'
                   : session.viewMode === 'multi-kind'
                     ? 'Multi-kind'
                     : session.viewMode === 'security'
@@ -398,6 +423,9 @@ import TimelineView from './TimelineView.svelte'
                          tabular-nums text-on-surface-variant">
               {session.visibleCount}
             </span>
+          {/if}
+          {#if session.viewMode === 'topology' && topologyHeader}
+            {@render topologyHeader.count()}
           {/if}
           {#if session.viewMode === 'pods' && session.podSummary.unhealthy > 0}
             <span class="flex items-center gap-1 rounded-full bg-warning-container px-2 py-0.5
@@ -456,7 +484,6 @@ import TimelineView from './TimelineView.svelte'
           <SavedViewsMenu
             current={session.viewState}
             kindTitle={(kindId) => session.kinds.find((entry) => entry.id === kindId)?.title ?? ''}
-            allNamespaces={ALL_NAMESPACES}
             onapply={(view) => void session.applyView(view)}
           />
         {/if}
@@ -529,6 +556,10 @@ import TimelineView from './TimelineView.svelte'
         {/if}
       {/if}
 
+      {#if session.viewMode === 'topology' && topologyHeader}
+        {@render topologyHeader.controls()}
+      {/if}
+
       <!-- The Permissions page's tools. Refresh re-asks the one question the
            page answers on arrival; the other two are questions of their own,
            each in a dialog, so the page stays the list it opens on. -->
@@ -595,7 +626,7 @@ import TimelineView from './TimelineView.svelte'
       <div class="px-4 pt-2">
         <ErrorBanner
           error={session.error}
-          onretry={session.refresh}
+          onretry={session.retry}
           onreconnect={() => void workspace.reconnect(session.cluster.id)}
           reconnecting={workspace.isConnecting(session.cluster.id)}
           ondismiss={() => (session.error = null)}
@@ -614,6 +645,8 @@ import TimelineView from './TimelineView.svelte'
       <TimelineView {session} />
     {:else if session.viewMode === 'helm'}
       <HelmView {session} />
+    {:else if session.viewMode === 'topology'}
+      <TopologyView {session} header={(content) => (topologyHeader = content)} />
     {:else if session.viewMode === 'multi-kind'}
       <MultiKindView {session} />
     {:else if session.viewMode === 'security'}
@@ -693,6 +726,7 @@ import TimelineView from './TimelineView.svelte'
     seed={newSkeleton}
     clusterId={session.cluster.id}
     namespace={newNamespaceHint}
+    namespaceChoices={newNamespaceChoices}
     {productionGroup}
     {isReadOnly}
     {readOnlyReason}

@@ -149,4 +149,16 @@ describe('RowSelection', () => {
     expect([...before]).toEqual(['ns/a'])
     expect(ticked(selection)).toEqual(['ns/a', 'ns/b'])
   })
+
+  it('selectAll ticks keys beyond the page and keeps what was ticked', () => {
+    // "Select all matching": the keys come from Go and name rows on pages
+    // that are not on screen, so the visible list cannot be what decides.
+    const selection = page()
+    selection.toggle('ns/a')
+    selection.selectAll(['ns/b', 'other/z', 'other/y'])
+
+    expect(ticked(selection)).toEqual(['ns/a', 'ns/b', 'other/y', 'other/z'])
+    // The page's header checkbox still describes the page alone.
+    expect(selection.allVisibleSelected).toBe(false)
+  })
 })

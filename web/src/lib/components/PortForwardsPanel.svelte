@@ -19,7 +19,7 @@
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import ForwardAddress from './ForwardAddress.svelte'
   import ForwardKubectl from './ForwardKubectl.svelte'
-  import { Plug, Loader, Unplug, X } from '@lucide/svelte'
+  import { Plug, Loader, RefreshCw, Unplug, X } from '@lucide/svelte'
 
   let open = $state(false)
 
@@ -55,7 +55,7 @@
 
 <svelte:window onpointerdown={onWindowPointerDown} onkeydown={onKeydown} />
 
-{#if forwards.active.length > 0}
+{#if forwards.active.length > 0 || forwards.paused.length > 0}
   <div class="relative" data-forwards-panel>
     <button
       type="button"
@@ -64,10 +64,14 @@
       aria-haspopup="dialog"
       title="Port forwards"
       class="state-layer flex cursor-pointer items-center gap-1 rounded-xs px-1 tabular-nums
-             opacity-70 transition-opacity duration-100 hover:opacity-100"
+             transition-opacity duration-100 hover:opacity-100
+             {forwards.lost.length > 0 ? 'text-gauge-warn-ink opacity-100' : 'opacity-70'}"
     >
       <Plug class="size-3" strokeWidth={2} />
-      {forwards.active.length}
+      {forwards.active.length + forwards.paused.length}
+      {#if forwards.lost.length > 0}
+        <span class="sr-only">, {forwards.lost.length} lost</span>
+      {/if}
     </button>
 
     {#if open}
@@ -84,7 +88,7 @@
 
           <button
             type="button"
-            disabled={forwards.stoppingAll}
+            disabled={forwards.stoppingAll || forwards.active.length === 0}
             onclick={() => void forwards.stopAll()}
             class="state-layer flex items-center gap-1 rounded-xs px-1.5 py-0.5 text-body-small
                    text-on-surface-variant transition-colors duration-100
@@ -122,7 +126,26 @@
               </div>
 
               <div class="flex min-w-0 items-center justify-between gap-2">
-                {#if forward.reconnecting}
+                {#if forward.lost}
+                  <!--
+                    THE FORWARD USED TO VANISH here. Nothing is bound and
+                    whatever was pointed at the port is being refused, so it
+                    is said in words and offered the way back; it also keeps
+                    looking by itself, slowly.
+                  -->
+                  <span class="flex min-w-0 items-center gap-1.5 text-body-small text-gauge-warn-ink">
+                    Lost — nothing is answering
+                    <button
+                      type="button"
+                      onclick={() => forwards.reconnect(forward)}
+                      class="state-layer inline-flex items-center gap-1 rounded-xs px-1 text-label-large
+                             text-on-surface hover:bg-surface-container-highest"
+                    >
+                      <RefreshCw class="size-3" strokeWidth={2} />
+                      Reconnect
+                    </button>
+                  </span>
+                {:else if forward.reconnecting}
                   <!--
                     Distinct from a live address on purpose: the local port
                     stays bound, but nothing should be told this is fine while
@@ -135,6 +158,20 @@
                 {:else}
                   <ForwardAddress {forward} />
                 {/if}
+
+                <!-- Opt-in, per forward. Saves the definition only. -->
+                <label
+                  class="flex shrink-0 cursor-pointer items-center gap-1 text-body-small text-on-surface-variant"
+                  title="Reopen this forward after PodSteer restarts, once its cluster is connected."
+                >
+                  <input
+                    type="checkbox"
+                    checked={forward.kept}
+                    onchange={(event) => forwards.setKept(forward, event.currentTarget.checked)}
+                    class="size-3.5 accent-primary"
+                  />
+                  Keep
+                </label>
 
                 <ForwardKubectl {forward} />
 
@@ -158,6 +195,68 @@
             </li>
           {/each}
         </ul>
+
+        {#if forwards.paused.length > 0}
+          <!--
+            KEPT FORWARDS THAT ARE NOT RUNNING. Nothing here connects a
+            cluster: opening the cluster is what brings its forwards back, and
+            until then they are listed as paused so they are not mistaken for
+            lost ones. A failed restore says why and can be retried.
+          -->
+          <p
+            class="border-t border-outline-variant/40 px-3 pt-2 pb-1 text-label-small font-semibold
+                   tracking-wider text-on-surface-variant/60 uppercase"
+          >
+            Kept, not running ({forwards.paused.length})
+          </p>
+          <ul class="divide-y divide-outline-variant/30 pb-1">
+            {#each forwards.paused as paused (paused.clusterId + ':' + paused.localPort)}
+              <li class="flex flex-col gap-1 px-3 py-2">
+                <div class="flex min-w-0 items-center gap-1.5 text-body-small text-on-surface-variant">
+                  <span class="truncate font-medium text-on-surface">{paused.targetName}</span>
+                  <span class="text-on-surface-variant/40" aria-hidden="true">·</span>
+                  <span class="truncate">{paused.namespace}</span>
+                  <span class="text-on-surface-variant/40" aria-hidden="true">·</span>
+                  <span class="truncate">{paused.clusterId}</span>
+                </div>
+                <div class="flex min-w-0 items-center justify-between gap-2 text-body-small">
+                  <span class="min-w-0 truncate {paused.state === 'failed' ? 'text-error' : 'text-on-surface-variant'}">
+                    {#if paused.state === 'paused'}
+                      Paused — reconnect {paused.clusterId} to resume · localhost:{paused.localPort}
+                    {:else if paused.state === 'restoring'}
+                      Restoring · localhost:{paused.localPort}
+                    {:else}
+                      Could not resume: {paused.reason}
+                    {/if}
+                  </span>
+                  <span class="flex shrink-0 items-center gap-1">
+                    {#if paused.state === 'failed'}
+                      <button
+                        type="button"
+                        onclick={() => forwards.resume(paused)}
+                        class="state-layer rounded-xs px-1.5 text-label-large text-on-surface
+                               hover:bg-surface-container-highest"
+                      >
+                        Retry
+                      </button>
+                    {/if}
+                    <button
+                      type="button"
+                      onclick={() => forwards.forget(paused)}
+                      aria-label="Forget the kept forward on localhost:{paused.localPort}"
+                      title="Forget — do not restore this forward"
+                      class="state-layer grid size-6 place-items-center rounded-xs
+                             text-on-surface-variant hover:bg-surface-container-highest
+                             hover:text-on-surface"
+                    >
+                      <X class="size-3.5" strokeWidth={1.8} />
+                    </button>
+                  </span>
+                </div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
       </div>
     {/if}
   </div>

@@ -241,7 +241,7 @@ func TestTheNodeProbeUsesTheMetricTheChartsUse(t *testing.T) {
 	if !strings.Contains(domain.NodeProbeExpression, "container_memory_working_set_bytes") {
 		t.Fatalf("the node probe does not use the charts' own metric: %s", domain.NodeProbeExpression)
 	}
-	if !strings.Contains(domain.NodeProbeExpression, "by ("+domain.NodeProbeLabel+")") {
+	if !strings.Contains(domain.NodeProbeExpression, "by ("+domain.NodeProbeLabel+",") {
 		t.Fatalf("the node probe does not group by %q: %s", domain.NodeProbeLabel, domain.NodeProbeExpression)
 	}
 
@@ -488,5 +488,42 @@ func TestNoExpressionGroupsByPod(t *testing.T) {
 				t.Errorf("%s/%s aggregates by pod: %s", metric, scope, entry.Template)
 			}
 		}
+	}
+}
+
+// Istio's sample Prometheus (1.30.5, live) names a cAdvisor series' node by
+// kubernetes_io_hostname and instance, never by node.
+func TestANodeIsNamedByNodeOrHostnameAndNeverByAddressAlone(t *testing.T) {
+	istio := domain.ReadNodeProbe([]map[string]string{
+		{"instance": "podsteer-demo-worker", "job": "kubernetes-nodes-cadvisor", "kubernetes_io_hostname": "podsteer-demo-worker"},
+		{"instance": "podsteer-demo-control-plane", "kubernetes_io_hostname": "podsteer-demo-control-plane"},
+	})
+	if len(istio.Names) != 2 || istio.NodeLabel || len(istio.Addresses) != 0 {
+		t.Fatalf("istio: %+v", istio)
+	}
+	if v, byAddress := domain.VerifyNodeProbe(istio, []string{"podsteer-demo-worker", "podsteer-demo-control-plane"}); v != domain.VerificationVerified || byAddress {
+		t.Errorf("istio: %s %v", v, byAddress)
+	}
+
+	withNode := domain.ReadNodeProbe([]map[string]string{{"node": "a", "instance": "10.0.0.1:10250"}, {"node": "b"}})
+	if !withNode.NodeLabel || len(withNode.Names) != 2 {
+		t.Errorf("node label: %+v", withNode)
+	}
+}
+
+// TWO KIND CLUSTERS ON ONE MACHINE share 172.18.0.x. A backend holding the
+// OTHER cluster, naming its nodes only by address, must not come out
+// verified for this one.
+func TestAnAddressMatchIsNeverVerified(t *testing.T) {
+	foreign := domain.ReadNodeProbe([]map[string]string{
+		{"instance": "172.18.0.2:10250"}, {"instance": "172.18.0.3:10250"}, {"instance": "172.18.0.4:10250"},
+	})
+	if len(foreign.Addresses) != 3 || len(foreign.Names) != 0 {
+		t.Fatalf("%+v", foreign)
+	}
+	// This cluster's nodes are named differently, but hold the same addresses.
+	v, byAddress := domain.VerifyNodeProbe(foreign, []string{"podsteer-demo-worker", "podsteer-demo-worker2", "podsteer-demo-control-plane"})
+	if v == domain.VerificationVerified || v != domain.VerificationUnverifiable || !byAddress {
+		t.Fatalf("an address-only answer came out %s (byAddress %v)", v, byAddress)
 	}
 }

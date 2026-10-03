@@ -6,19 +6,22 @@ import {
   clusterShellRequest,
   exitedShellsNote,
 } from './clusterShell'
-import { ALL_NAMESPACES } from './api/client'
 import { DEFAULT_CLUSTER_SHELL_IMAGE, DEFAULT_NODE_SHELL_NAMESPACE } from '$stores/preferences.svelte'
 
 describe('which namespace an in-cluster shell opens in', () => {
   it("defaults to the tab's namespace, so the two terminals agree with the rest of the interface", () => {
-    expect(clusterShellNamespaceFor('shop')).toBe('shop')
+    expect(clusterShellNamespaceFor(['shop'])).toBe('shop')
   })
 
   it('has NO answer when the tab is on every namespace, and says so by being empty', () => {
     // A pod lives in exactly one namespace, so "all namespaces" is not a
     // scope this has. The dialog asks; nothing here guesses.
-    expect(clusterShellNamespaceFor(ALL_NAMESPACES)).toBe('')
-    expect(canOpenClusterShell(clusterShellNamespaceFor(ALL_NAMESPACES))).toBe(false)
+    expect(clusterShellNamespaceFor([])).toBe('')
+    expect(canOpenClusterShell(clusterShellNamespaceFor([]))).toBe(false)
+  })
+
+  it('has no answer for a set of several either, and asks rather than picking one', () => {
+    expect(clusterShellNamespaceFor(['billing', 'shop'])).toBe('')
   })
 
   it('never falls back to a system namespace, which is the node shell’s setting and the wrong answer here', () => {
@@ -26,7 +29,7 @@ describe('which namespace an in-cluster shell opens in', () => {
     // and where a node shell has to be. Reusing it here would put a pod in the
     // one namespace an operator is least likely to be permitted to create one
     // in, without being told.
-    expect(clusterShellNamespaceFor(ALL_NAMESPACES)).not.toBe(DEFAULT_NODE_SHELL_NAMESPACE)
+    expect(clusterShellNamespaceFor([])).not.toBe(DEFAULT_NODE_SHELL_NAMESPACE)
     expect(clusterShellRequest('', '').namespace).toBe('')
   })
 

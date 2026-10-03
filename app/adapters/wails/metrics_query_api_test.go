@@ -10,14 +10,19 @@ import (
 )
 
 type stubQueries struct {
-	result domain.BackendSeriesResult
-	err    error
+	result     domain.BackendSeriesResult
+	candidates []domain.MetricsBackendCandidate
+	err        error
 }
 
 func (s stubQueries) Series(
 	context.Context, domain.ClusterID, domain.MetricID, domain.MetricScope, time.Duration,
 ) (domain.BackendSeriesResult, error) {
 	return s.result, s.err
+}
+
+func (s stubQueries) Backends(context.Context, domain.ClusterID) ([]domain.MetricsBackendCandidate, error) {
+	return s.candidates, s.err
 }
 
 // THERE IS NO QUERY BOX AND NO URL TO TYPE, and the bound surface is where
@@ -47,6 +52,14 @@ func TestTheBoundSurfaceTakesNoExpressionAndNoURL(t *testing.T) {
 	for i := range api.NumMethod() {
 		exported := api.Method(i)
 		if exported.Name == "GetSeries" {
+			continue
+		}
+		// Backends lists discovered Services for the picker: one cluster id,
+		// no expression, no URL.
+		if exported.Name == "Backends" {
+			if exported.Type.NumIn() != 2 || exported.Type.In(1).Kind() != reflect.String {
+				t.Fatalf("Backends takes %d parameters, want (receiver, clusterID)", exported.Type.NumIn())
+			}
 			continue
 		}
 		t.Fatalf("MetricsQueryAPI exposes %s; every exported method of a bound "+
@@ -152,5 +165,24 @@ func TestSeriesIsNeverNullOnTheWire(t *testing.T) {
 	}
 	if result.Status != string(domain.BackendNotEnabled) {
 		t.Fatalf("status %q, want not-enabled", result.Status)
+	}
+}
+
+// The picker's list crosses with the names the frontend reads
+// (web/src/lib/metricsBackends.ts): namespace, service, product, detail.
+func TestBackendsCrossTheBridgeForThePicker(t *testing.T) {
+	api, err := NewMetricsQueryAPI(stubQueries{candidates: []domain.MetricsBackendCandidate{
+		{Backend: domain.MetricsBackend{Kind: domain.MetricsBackendPrometheus, Namespace: "monitoring", Service: "prometheus-operated", Port: "web"}, Rank: 0, Verification: domain.VerificationVerified, Detail: "PodSteer's automatic pick."},
+		{Backend: domain.MetricsBackend{Kind: domain.MetricsBackendPrometheus, Namespace: "linkerd-viz", Service: "prometheus", Port: "admin", LinkerdViz: true}, Rank: 1},
+	}}, &App{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := api.Backends("dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Product != "Prometheus" || got[0].Verified != "verified" || !got[1].LinkerdViz || got[1].Rank != 1 || got[1].Port != "admin" {
+		t.Fatalf("%+v", got)
 	}
 }

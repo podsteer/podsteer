@@ -19,6 +19,7 @@
   import { namespaceInventory, type NamespaceInventory } from '$lib/api/client'
   import { preferences } from '$stores/preferences.svelte'
   import { toApiError } from '$lib/api/errors'
+  import { TOPOLOGY_KIND_ID } from '$stores/session.svelte'
   import DetailSection from './DetailSection.svelte'
   import ColumnDivider from './ColumnDivider.svelte'
 
@@ -147,5 +148,19 @@
         ? ` ${inventory.empty} other ${inventory.empty === 1 ? 'kind holds' : 'kinds hold'} nothing.`
         : ''}
     </p>
+  {/if}
+
+  {#if onbrowse}
+    <!-- The same move as a count's link — this namespace, somewhere else —
+         to the page that draws what is in it and how it connects. Offered
+         whatever the counts say, because "is anything here connected to
+         anything" is a question the counts cannot answer. -->
+    <button
+      type="button"
+      onclick={() => onbrowse?.(TOPOLOGY_KIND_ID, namespace)}
+      class="resource-link mt-2 text-body-small"
+    >
+      Open topology of {namespace}
+    </button>
   {/if}
 </DetailSection>

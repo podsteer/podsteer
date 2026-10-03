@@ -298,6 +298,18 @@ type ClusterSettings struct {
 	// MetricsQuery says whether a discovered monitoring backend is queried
 	// for this cluster, which one answers, and on what terms.
 	MetricsQuery MetricsQuerySettings
+
+	// KeptForwards are the port-forwards the operator asked to keep across
+	// restarts, on this cluster.
+	//
+	// THE SECOND NAMED OBJECT-NAME EXCEPTION, and it is opt-in per forward:
+	// a forward is written here only while its "Keep across restarts" switch
+	// is on, and removed when it is turned off or the forward is stopped. It
+	// holds a namespace, a pod or Service name and two port numbers — a
+	// definition, never a credential and never anything the cluster returned.
+	// SECURITY.md and the readme header the store writes carry the same
+	// disclosure.
+	KeptForwards []KeptForward
 }
 
 // DefaultClusterSettings returns what a cluster nobody has configured has:
@@ -316,7 +328,12 @@ func (c ClusterSettings) withDefaults() ClusterSettings {
 // IsDefault reports that this entry says nothing a fresh cluster does not
 // already say, so the file has no reason to carry it.
 func (c ClusterSettings) IsDefault() bool {
-	return c.withDefaults() == DefaultClusterSettings()
+	// Field by field: the struct holds a slice, so it is no longer comparable
+	// as a whole.
+	defaults := DefaultClusterSettings()
+	return len(c.KeptForwards) == 0 &&
+		c.NodeHistory == defaults.NodeHistory &&
+		c.withDefaults().MetricsQuery == defaults.MetricsQuery
 }
 
 // Cluster returns one cluster's settings, defaults included.
@@ -382,6 +399,7 @@ func (s Settings) Clone() Settings {
 	out.Kubeconfig.Sources = slices.Clone(s.Kubeconfig.Sources)
 	out.Clusters = make(map[string]ClusterSettings, len(s.Clusters))
 	for id, cluster := range s.Clusters {
+		cluster.KeptForwards = slices.Clone(cluster.KeptForwards)
 		out.Clusters[id] = cluster
 	}
 	return out
@@ -442,6 +460,20 @@ func (s *Settings) Normalise() int {
 	}
 	for id, cluster := range s.Clusters {
 		reset += cluster.MetricsQuery.normalise()
+
+		// An unusable or duplicated forward is DROPPED, counted like a bad
+		// kubeconfig source: a list entry has no default to fall back to.
+		kept := make([]KeptForward, 0, len(cluster.KeptForwards))
+		usedPorts := make(map[int]struct{}, len(cluster.KeptForwards))
+		for _, forward := range cluster.KeptForwards {
+			if _, taken := usedPorts[forward.LocalPort]; forward.Validate() != nil || taken {
+				reset++
+				continue
+			}
+			usedPorts[forward.LocalPort] = struct{}{}
+			kept = append(kept, forward)
+		}
+		cluster.KeptForwards = kept
 
 		// DROPPED WHEN IT SAYS NOTHING. An entry equal to the defaults is a
 		// stanza carrying no decision — left behind by a cluster somebody
@@ -523,6 +555,16 @@ func (s Settings) Validate() error {
 		// by the next one.
 		if err := s.Clusters[id].withDefaults().MetricsQuery.validate(); err != nil {
 			return fmt.Errorf("cluster %q: %w", id, err)
+		}
+		usedPorts := make(map[int]struct{}, len(s.Clusters[id].KeptForwards))
+		for _, forward := range s.Clusters[id].KeptForwards {
+			if err := forward.Validate(); err != nil {
+				return fmt.Errorf("cluster %q: %w", id, err)
+			}
+			if _, taken := usedPorts[forward.LocalPort]; taken {
+				return fmt.Errorf("cluster %q: local port %d is kept twice", id, forward.LocalPort)
+			}
+			usedPorts[forward.LocalPort] = struct{}{}
 		}
 	}
 	return nil

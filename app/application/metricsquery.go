@@ -169,10 +169,11 @@ func (s *MetricsQueryService) Series(
 	// verificationCache.write.
 	generation := s.verifications.generation(id)
 
-	verification, clusterNodes, err := s.verify(ctx, id, generation, backend)
+	check, err := s.verify(ctx, id, generation, backend)
 	if err != nil {
 		return s.failed(backend, err), nil
 	}
+	verification, clusterNodes := check.verification, check.clusterNodes
 
 	// WHAT MAY BE DRAWN IS DECIDED BEFORE ANYTHING IS ASKED FOR. A mismatched
 	// or unverifiable backend is never sent a range query at all: there is
@@ -188,9 +189,24 @@ func (s *MetricsQueryService) Series(
 		if query.Fleet == domain.FleetRefuse {
 			return domain.UnverifiedResult(backend, verification), nil
 		}
+		// NARROWING FILTERS ON `node`. A backend that names its nodes by
+		// hostname only would answer a node-filtered query with nothing —
+		// an empty chart that reads as an idle cluster — so it is refused
+		// with the reason instead.
+		if !check.narrowable {
+			result := domain.UnverifiedResult(backend, verification)
+			result.Message = fmt.Sprintf(
+				"%s holds more than this cluster, and its series name nodes by hostname rather than by a `node` label, so a query cannot be narrowed to this cluster. No aggregate is drawn.",
+				backend.Describe())
+			return result, nil
+		}
 		narrowTo = clusterNodes
 	default:
-		return domain.UnverifiedResult(backend, verification), nil
+		result := domain.UnverifiedResult(backend, verification)
+		if check.byAddress {
+			result.Message = byAddressMessage(backend)
+		}
+		return result, nil
 	}
 
 	expression, step, err := domain.ComposeExpression(metric, scope, window, narrowTo)
@@ -226,6 +242,47 @@ func (s *MetricsQueryService) Series(
 	}
 
 	return domain.AnsweredResult(backend, verification, len(narrowTo) > 0, expression, step, series), nil
+}
+
+// Backends lists every discovered backend for the Settings picker, best
+// first. DISCOVERY ONLY — a service listing, cached — and the verification
+// shown is the one already remembered, never a fresh probe: opening a picker
+// is not a reason to send anything to somebody's Prometheus.
+func (s *MetricsQueryService) Backends(ctx context.Context, id domain.ClusterID) ([]domain.MetricsBackendCandidate, error) {
+	backends, err := s.discovery.ListMetricsBackends(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("discovering a metrics backend in %q: %w", id, err)
+	}
+
+	candidates := make([]domain.MetricsBackendCandidate, 0, len(backends))
+	for rank, backend := range backends {
+		candidate := domain.MetricsBackendCandidate{Backend: backend, Rank: rank}
+		byAddress := false
+		if cached, ok := s.verifications.get(id, backend); ok && cached.failure == nil {
+			candidate.Verification = cached.check.verification
+			byAddress = cached.check.byAddress
+		}
+		switch {
+		case backend.LinkerdViz:
+			candidate.Detail = "linkerd-viz's own Prometheus: holds Linkerd's traffic metrics, not the kubelet series the charts read."
+		case rank == 0:
+			candidate.Detail = "PodSteer's automatic pick."
+		}
+		switch candidate.Verification {
+		case domain.VerificationVerified:
+			candidate.Detail = strings.TrimSpace(candidate.Detail + " Holds this cluster's nodes and no others.")
+		case domain.VerificationFleet:
+			candidate.Detail = strings.TrimSpace(candidate.Detail + " Holds other clusters' nodes as well.")
+		case domain.VerificationMismatch:
+			candidate.Detail = strings.TrimSpace(candidate.Detail + " Holds none of this cluster's nodes.")
+		case domain.VerificationUnverifiable:
+			if byAddress {
+				candidate.Detail = strings.TrimSpace(candidate.Detail + " Names its nodes only by address, so it could not be checked.")
+			}
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates, nil
 }
 
 // Invalidate drops what is remembered about one cluster.
@@ -304,24 +361,43 @@ func (s *MetricsQueryService) verify(
 	id domain.ClusterID,
 	generation uint64,
 	backend domain.MetricsBackend,
-) (domain.BackendVerification, []string, error) {
+) (nodeCheck, error) {
 	if cached, ok := s.verifications.get(id, backend); ok {
-		return cached.verification, cached.clusterNodes, cached.failure
+		return cached.check, cached.failure
 	}
 
 	type answer struct {
-		verification domain.BackendVerification
-		nodes        []string
-		err          error
+		check nodeCheck
+		err   error
 	}
 
 	shared, _, _ := s.verifying.Do(string(id)+"\x00"+backendKey(backend), func() (any, error) {
-		verification, nodes, err := s.checkNodes(ctx, id, generation, backend)
-		return answer{verification: verification, nodes: nodes, err: err}, nil
+		check, err := s.checkNodes(ctx, id, generation, backend)
+		return answer{check: check, err: err}, nil
 	})
 
 	result, _ := shared.(answer)
-	return result.verification, result.nodes, result.err
+	return result.check, result.err
+}
+
+// nodeCheck is the node-set check's verdict and what it was reached on.
+type nodeCheck struct {
+	verification domain.BackendVerification
+	// clusterNodes is what the check compared against, kept so a narrowed
+	// query is composed from the SAME set the verdict was reached on.
+	clusterNodes []string
+	// byAddress says the backend named its nodes only by address, which is
+	// why the verdict is unverifiable — see domain.VerifyNodeProbe.
+	byAddress bool
+	// narrowable says its series carry `node`, which fleet narrowing filters on.
+	narrowable bool
+}
+
+// byAddressMessage is the chart's sentence for an address-only answer.
+func byAddressMessage(backend domain.MetricsBackend) string {
+	return fmt.Sprintf(
+		"%s names its nodes only by address, and an address match cannot tell this cluster from another on the same network, so PodSteer cannot tell whether it holds this cluster's data. No aggregate is drawn.",
+		backend.Describe())
 }
 
 // checkNodes performs the comparison itself. See verify.
@@ -330,30 +406,23 @@ func (s *MetricsQueryService) checkNodes(
 	id domain.ClusterID,
 	generation uint64,
 	backend domain.MetricsBackend,
-) (domain.BackendVerification, []string, error) {
+) (nodeCheck, error) {
 	// The cluster's own nodes first. It is a read the tab's poll has almost
 	// certainly just made, so readcache.go coalesces it rather than costing a
 	// second LIST.
 	nodes, err := s.nodes.ListNodes(ctx, id, domain.Projection{})
 	if err != nil {
 		// A CLUSTER WHOSE NODES WE COULD NOT LIST IS UNVERIFIABLE, NOT
-		// FORBIDDEN. This is the namespace-scoped account this project is
-		// built for: it may proxy perfectly well and simply may not list
-		// nodes cluster-wide. Reported as an error it reaches failed() and
-		// becomes the services/proxy sentence — sending somebody to ask for a
-		// permission they already hold, about a Service nobody asked about.
-		//
-		// The backend is NOT probed afterwards: with no node set of ours to
-		// compare against, VerifyBackendNodes answers unverifiable whatever
-		// the backend says, so asking is a request that cannot change the
-		// answer. And it is NOT cached, because a node list can fail
-		// transiently and half an hour of no chart is the wrong price for a
-		// timeout.
+		// FORBIDDEN: the namespace-scoped account this project is built for
+		// may proxy perfectly well and simply may not list nodes. The backend
+		// is NOT probed afterwards — with nothing to compare against the
+		// answer cannot change — and this is NOT cached, because a node list
+		// can fail transiently.
 		s.logger.Debug("could not list this cluster's nodes; the backend is unverifiable",
 			slog.String("cluster", id.String()),
 			slog.String("backend", backend.Describe()),
 			slog.String("error", err.Error()))
-		return domain.VerificationUnverifiable, nil, nil
+		return nodeCheck{verification: domain.VerificationUnverifiable}, nil
 	}
 
 	ours := make([]string, 0, len(nodes))
@@ -363,24 +432,23 @@ func (s *MetricsQueryService) checkNodes(
 
 	theirs, err := s.query.QueryNodes(ctx, id, backend)
 	if err != nil {
-		// CACHED BRIEFLY, AND AS THE FAILURE IT WAS. See probeFailureTTL: a
-		// backend slow enough to time out will time out again, and under
-		// `auto` every range change would otherwise re-run the most expensive
-		// query this feature has and wait the full timeout for it.
+		// CACHED BRIEFLY, AND AS THE FAILURE IT WAS. See probeFailureTTL.
 		s.verifications.putFailure(id, generation, backend, err)
-		return "", nil, err
+		return nodeCheck{}, err
 	}
 
-	verification := domain.VerifyBackendNodes(theirs, ours)
-	s.verifications.put(id, generation, backend, verification, ours)
+	verification, byAddress := domain.VerifyNodeProbe(theirs, ours)
+	check := nodeCheck{verification: verification, clusterNodes: ours, byAddress: byAddress, narrowable: theirs.NodeLabel}
+	s.verifications.put(id, generation, backend, check)
 	s.logger.Debug("verified a metrics backend",
 		slog.String("cluster", id.String()),
 		slog.String("backend", backend.Describe()),
 		slog.String("verification", string(verification)),
-		slog.Int("backendNodes", len(theirs)),
+		slog.Bool("byAddress", byAddress),
+		slog.Int("backendNodes", len(theirs.Names)),
 		slog.Int("clusterNodes", len(ours)))
 
-	return verification, ours, nil
+	return check, nil
 }
 
 // failed turns a port error into the status the panel reads.
@@ -400,6 +468,24 @@ func (s *MetricsQueryService) failed(backend domain.MetricsBackend, err error) d
 			Message: fmt.Sprintf(
 				"Your account may not reach %s through the API server's proxy. That is a permission on your cluster (get on services/proxy), not a setting here. PodSteer stops asking for a few minutes after a refusal, so a permission granted now takes a moment to take effect.",
 				backend.Describe()),
+			Provenance: provenance,
+		}
+	case errors.Is(err, ports.ErrMetricsForwardRefused):
+		// THE PROXY WAS REFUSED BY THE BACKEND, AND THE FALLBACK BY THE
+		// CLUSTER. Both halves said, because the fix is the second: a
+		// permission the operator can ask for.
+		return domain.BackendSeriesResult{
+			Status: domain.BackendForbidden,
+			Message: fmt.Sprintf(
+				"%s refused the API server's proxy: %s. PodSteer then tried an ephemeral port-forward to its pod, which your account may not open — that needs create on pods/portforward (and get on the Service, list on its pods) in %s.",
+				backend.Describe(), messageAfterSentinel(err, ports.ErrMetricsForwardRefused), backend.Namespace),
+			Provenance: provenance,
+		}
+	case errors.Is(err, ports.ErrMetricsProxyRefused):
+		return domain.BackendSeriesResult{
+			Status: domain.BackendForbidden,
+			Message: fmt.Sprintf("%s could not be read: %s.",
+				backend.Describe(), messageAfterSentinel(err, ports.ErrMetricsProxyRefused)),
 			Provenance: provenance,
 		}
 	case errors.Is(err, ports.ErrMetricsBackendAuth):
@@ -491,14 +577,10 @@ func (c *verificationCache) generation(id domain.ClusterID) uint64 {
 }
 
 type verificationEntry struct {
-	at           time.Time
-	generation   uint64
-	backend      string
-	verification domain.BackendVerification
-	// clusterNodes is what the check compared against, kept so a narrowed
-	// query is composed from the SAME set the verdict was reached on rather
-	// than from a fresh list that may have moved underneath it.
-	clusterNodes []string
+	at         time.Time
+	generation uint64
+	backend    string
+	check      nodeCheck
 	// failure is set when the probe itself failed, and the entry then stands
 	// only for probeFailureTTL rather than the full window.
 	failure error
@@ -528,14 +610,13 @@ func (c *verificationCache) put(
 	id domain.ClusterID,
 	generation uint64,
 	backend domain.MetricsBackend,
-	verification domain.BackendVerification,
-	clusterNodes []string,
+	check nodeCheck,
 ) {
+	check.clusterNodes = append([]string(nil), check.clusterNodes...)
 	c.write(id, verificationEntry{
-		generation:   generation,
-		backend:      backendKey(backend),
-		verification: verification,
-		clusterNodes: append([]string(nil), clusterNodes...),
+		generation: generation,
+		backend:    backendKey(backend),
+		check:      check,
 	})
 }
 

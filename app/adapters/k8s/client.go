@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/discovery"
@@ -161,6 +162,11 @@ func (c Config) withDefaults() Config {
 // lazily one at a time would pay that cost several times over for a single
 // cluster.
 type clients struct {
+	// authFingerprint digests what authenticated this set when it was built,
+	// so a kubeconfig that now authenticates differently can be told from one
+	// that merely changed. Empty on a set not built by clientsFor. See
+	// credentials.go.
+	authFingerprint string
 	// typed serves the built-in kinds with compile-time-checked types.
 	typed kubernetes.Interface
 	// dynamic serves any kind, including custom resources, as unstructured
@@ -215,6 +221,11 @@ type clients struct {
 	// cluster, while an apply of an ordinary built-in kind never re-queries
 	// discovery at all.
 	restMapper meta.RESTMapper
+
+	// gateway caches which Gateway API resources discovery serves, for the
+	// topology (see topology.go). On the set, so it goes with the set when
+	// the cluster is invalidated or reconnected.
+	gateway gatewayDiscovery
 }
 
 // clientFactory builds and caches one client set per cluster.
@@ -229,6 +240,10 @@ type clients struct {
 type clientFactory struct {
 	cfg    Config
 	logger *slog.Logger
+	// proxyWarned is the last unusable-proxy complaint logged, so the same
+	// one is not repeated on every config build (the credential check builds
+	// one per kubeconfig change).
+	proxyWarned atomic.Value
 
 	mu      sync.RWMutex
 	clients map[domain.ClusterID]*clients
@@ -596,9 +611,12 @@ func (f *clientFactory) restConfig(id domain.ClusterID) (*rest.Config, error) {
 		dialer, err := settings.Dialer()
 		switch {
 		case err != nil:
-			f.logger.Warn("ignoring an unusable proxy setting; using the environment",
-				slog.String("mode", string(settings.Mode)),
-				slog.String("error", err.Error()))
+			if warned, _ := f.proxyWarned.Load().(string); warned != err.Error() {
+				f.proxyWarned.Store(err.Error())
+				f.logger.Warn("ignoring an unusable proxy setting; using the environment",
+					slog.String("mode", string(settings.Mode)),
+					slog.String("error", err.Error()))
+			}
 		case dialer != nil:
 			cfg.Proxy = dialer
 		}
@@ -699,13 +717,14 @@ func (f *clientFactory) clientsFor(id domain.ClusterID) (*clients, error) {
 	}
 
 	built := &clients{
-		typed:     typed,
-		dynamic:   dyn,
-		discovery: disco,
-		metrics:   metrics,
-		meta:      meta,
-		config:    dynamicConfig,
-		queryHTTP: queryHTTP,
+		authFingerprint: authFingerprint(cfg),
+		typed:           typed,
+		dynamic:         dyn,
+		discovery:       disco,
+		metrics:         metrics,
+		meta:            meta,
+		config:          dynamicConfig,
+		queryHTTP:       queryHTTP,
 	}
 
 	f.clients[id] = built

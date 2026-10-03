@@ -34,6 +34,9 @@ type countingQuery struct {
 	beforeNodes func()
 	series      []domain.PromSeries
 	rangeErr    error
+	// probe, when set, is the node probe's whole answer — for the tests
+	// about which label named the nodes.
+	probe *domain.NodeProbeAnswer
 }
 
 // answerNodes reads what the fake should say, under the lock.
@@ -52,7 +55,7 @@ func (q *countingQuery) set(change func(*countingQuery)) {
 	change(q)
 }
 
-func (q *countingQuery) QueryNodes(context.Context, domain.ClusterID, domain.MetricsBackend) ([]string, error) {
+func (q *countingQuery) QueryNodes(context.Context, domain.ClusterID, domain.MetricsBackend) (domain.NodeProbeAnswer, error) {
 	q.nodeCalls.Add(1)
 
 	nodes, before, err := q.answerNodes()
@@ -61,7 +64,14 @@ func (q *countingQuery) QueryNodes(context.Context, domain.ClusterID, domain.Met
 		// the window they are about rather than hoping for it.
 		before()
 	}
-	return nodes, err
+	q.mu.Lock()
+	probe := q.probe
+	q.mu.Unlock()
+	if probe != nil {
+		return *probe, err
+	}
+	// Named by `node`, which is what kube-prometheus-stack writes.
+	return domain.NodeProbeAnswer{Names: nodes, NodeLabel: len(nodes) > 0}, err
 }
 
 func (q *countingQuery) QueryRange(
@@ -747,4 +757,49 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return digits
+}
+
+// TWO KIND CLUSTERS ON ONE MACHINE share 172.18.0.x. A backend naming nodes
+// only by address is unverifiable, says why, and is sent no range query.
+func TestAnAddressOnlyBackendIsNeverVerified(t *testing.T) {
+	query := &countingQuery{probe: &domain.NodeProbeAnswer{Addresses: []string{"172.18.0.2", "172.18.0.3"}}}
+	service, err := application.NewMetricsQueryService(application.MetricsQueryServiceDeps{
+		Settings:  stubSettings{settings: domain.ClusterSettings{MetricsQuery: domain.MetricsQuerySettings{Mode: domain.MetricsQueryAuto}}},
+		Discovery: &stubDiscovery{backends: []domain.MetricsBackend{testBackend()}},
+		Query:     query,
+		Nodes:     &stubNodes{names: []string{"node-a", "node-b"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Series(context.Background(), "dev", domain.MetricCPU, domain.ScopeCluster, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != domain.BackendUnverified || result.Provenance.Verification != domain.VerificationUnverifiable ||
+		!strings.Contains(result.Message, "only by address") || query.rangeCalls.Load() != 0 {
+		t.Fatalf("%s %s %q, %d range calls", result.Status, result.Provenance.Verification, result.Message, query.rangeCalls.Load())
+	}
+}
+
+// Fleet narrowing filters on `node`; a fleet named by hostname is refused
+// with that reason rather than answered with a silently empty chart.
+func TestAFleetWithoutANodeLabelIsNotNarrowed(t *testing.T) {
+	query := &countingQuery{probe: &domain.NodeProbeAnswer{Names: []string{"node-a", "node-b", "someone-elses"}}}
+	service, err := application.NewMetricsQueryService(application.MetricsQueryServiceDeps{
+		Settings:  stubSettings{settings: domain.ClusterSettings{MetricsQuery: domain.MetricsQuerySettings{Mode: domain.MetricsQueryAuto, Fleet: domain.FleetFilter}}},
+		Discovery: &stubDiscovery{backends: []domain.MetricsBackend{testBackend()}},
+		Query:     query,
+		Nodes:     &stubNodes{names: []string{"node-a", "node-b"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Series(context.Background(), "dev", domain.MetricCPU, domain.ScopeCluster, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != domain.BackendUnverified || !strings.Contains(result.Message, "cannot be narrowed") || query.rangeCalls.Load() != 0 {
+		t.Fatalf("%s %q, %d range calls", result.Status, result.Message, query.rangeCalls.Load())
+	}
 }

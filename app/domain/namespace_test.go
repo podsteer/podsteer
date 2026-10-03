@@ -190,3 +190,44 @@ func mustSummaryPod(t *testing.T, namespace, name string, phase domain.PodPhase)
 	}
 	return pod
 }
+
+func TestNamespaceScope(t *testing.T) {
+	t.Parallel()
+
+	if _, err := domain.NewNamespaceScope([]string{"Not_Valid"}); err == nil {
+		t.Error("an invalid name was accepted")
+	}
+
+	for _, raw := range [][]string{nil, {}, {"", " "}} {
+		scope, err := domain.NewNamespaceScope(raw)
+		if err != nil || !scope.All || scope.Key() != "" {
+			t.Errorf("%q = %+v, %v; want All", raw, scope, err)
+		}
+	}
+
+	scope, err := domain.NewNamespaceScope([]string{"b", "a", "b", " "})
+	if err != nil || scope.All || len(scope.Namespaces) != 2 || scope.Namespaces[0] != "a" {
+		t.Fatalf("scope = %+v, %v; want sorted [a b]", scope, err)
+	}
+	if scope.Key() != "a,b" {
+		t.Errorf("Key = %q, want a,b", scope.Key())
+	}
+	if !scope.Includes("a") || scope.Includes("c") {
+		t.Error("Includes wrong for a named scope")
+	}
+	if scope.ListsClusterWide() {
+		t.Error("two namespaces should list per namespace")
+	}
+
+	wide, _ := domain.NewNamespaceScope([]string{"a", "b", "c", "d"})
+	if !wide.ListsClusterWide() {
+		t.Error("four namespaces should list cluster-wide")
+	}
+
+	if got := domain.ScopeOf("x"); got.All || got.Key() != "x" {
+		t.Errorf("ScopeOf(x) = %+v", got)
+	}
+	if got := domain.ScopeOf(domain.NamespaceAll); !got.All || !got.Includes("anything") {
+		t.Errorf("ScopeOf(all) = %+v", got)
+	}
+}

@@ -7,7 +7,7 @@ import type { ViewState } from '$lib/savedViews'
 
 const current: ViewState = {
   kindId: 'core/v1/pods',
-  namespace: 'kube-system',
+  namespaces: ['kube-system'],
   search: 're:crash',
   statusFilters: ['crashing'],
 }
@@ -18,7 +18,6 @@ async function open(props: Partial<{ current: ViewState }> = {}) {
   const rendered = render(SavedViewsMenu, {
     current,
     kindTitle: (kindId: string) => (kindId === 'core/v1/pods' ? 'Pods' : ''),
-    allNamespaces: '__all__',
     onapply,
     ...props,
   })
@@ -69,7 +68,7 @@ describe('the saved-views menu', () => {
   it('applies a view through the callback rather than reaching into the session', async () => {
     preferences.saveView('Everything', {
       kindId: 'apps/v1/deployments',
-      namespace: '__all__',
+      namespaces: [],
       search: '',
       statusFilters: [],
     })

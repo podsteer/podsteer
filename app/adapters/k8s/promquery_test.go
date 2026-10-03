@@ -324,14 +324,12 @@ func TestTheNodeProbeAnswerIsDeduplicatedAndSorted(t *testing.T) {
 		t.Fatalf("decoding: %v", err)
 	}
 
-	seen := map[string]struct{}{}
+	labels := []map[string]string{}
 	for _, result := range decoded.Data.Result {
-		if name := result.Metric[domain.NodeProbeLabel]; name != "" {
-			seen[name] = struct{}{}
-		}
+		labels = append(labels, result.Metric)
 	}
-	if len(seen) != 2 {
-		t.Fatalf("%d distinct nodes, want 2: %v", len(seen), seen)
+	if answer := domain.ReadNodeProbe(labels); len(answer.Names) != 2 || answer.Names[0] != "node-a" {
+		t.Fatalf("names %v, want [node-a node-b]", answer.Names)
 	}
 }
 

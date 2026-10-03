@@ -7,6 +7,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 
@@ -69,9 +70,15 @@ func (a *Adapter) ResizePod(ctx context.Context, id domain.ClusterID, namespace 
 		return fmt.Errorf("%s: %w", op, domain.ErrResizeNoChange)
 	}
 
+	// A sidecar is an init container, so it is patched under initContainers.
+	// Same merge key (name), same subresource.
+	list := "containers"
+	if plan.Sidecar {
+		list = "initContainers"
+	}
 	patch := map[string]any{
 		"spec": map[string]any{
-			"containers": []map[string]any{
+			list: []map[string]any{
 				{"name": plan.Container, "resources": resources},
 			},
 		},
@@ -81,7 +88,7 @@ func (a *Adapter) ResizePod(ctx context.Context, id domain.ClusterID, namespace 
 		return fmt.Errorf("marshaling resize patch: %w", err)
 	}
 
-	_, err = client.CoreV1().Pods(ns).Patch(
+	updated, err := client.CoreV1().Pods(ns).Patch(
 		ctx, podName, types.StrategicMergePatchType, patchBytes, metav1.PatchOptions{}, "resize")
 	if err != nil {
 		// The same two-case split the ephemeral-container write makes: a 404
@@ -97,7 +104,53 @@ func (a *Adapter) ResizePod(ctx context.Context, id domain.ClusterID, namespace 
 		return classify(op, err)
 	}
 
+	// A server without sidecar resize drops initContainers resources before
+	// validation and answers 200 with the pod unchanged, so a sidecar write is
+	// only known to have worked by reading what came back.
+	if plan.Sidecar && !sidecarResized(updated, plan) {
+		return fmt.Errorf("%s: %w", op, ports.ErrSidecarResizeUnsupported)
+	}
+
 	return nil
+}
+
+// sidecarResized reports whether the returned pod's sidecar carries every
+// figure the plan set. Compared as quantities, not strings: "1024Mi" and
+// "1Gi" are the same amount.
+func sidecarResized(pod *corev1.Pod, plan domain.ResizePlan) bool {
+	if pod == nil {
+		return false
+	}
+	for index := range pod.Spec.InitContainers {
+		container := &pod.Spec.InitContainers[index]
+		if container.Name != plan.Container {
+			continue
+		}
+		for _, check := range []struct {
+			wanted string
+			have   corev1.ResourceList
+			name   corev1.ResourceName
+		}{
+			{plan.CPURequest, container.Resources.Requests, corev1.ResourceCPU},
+			{plan.MemoryRequest, container.Resources.Requests, corev1.ResourceMemory},
+			{plan.CPULimit, container.Resources.Limits, corev1.ResourceCPU},
+			{plan.MemoryLimit, container.Resources.Limits, corev1.ResourceMemory},
+		} {
+			if check.wanted == "" {
+				continue
+			}
+			want, err := resource.ParseQuantity(check.wanted)
+			if err != nil {
+				return false
+			}
+			have, ok := check.have[check.name]
+			if !ok || have.Cmp(want) != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // ContainerResizeSpec reads one container's current figures and its resize
@@ -126,6 +179,23 @@ func (a *Adapter) ContainerResizeSpec(ctx context.Context, id domain.ClusterID, 
 			continue
 		}
 		return containerResize(container), nil
+	}
+
+	// SIDECARS ONLY, not every init container: a sidecar is an init container
+	// with restartPolicy Always and keeps running, so there is something to
+	// resize. In-place resize of init containers and sidecars is GA in
+	// Kubernetes 1.37; a plain init container has finished or is about to.
+	for index := range pod.Spec.InitContainers {
+		container := &pod.Spec.InitContainers[index]
+		if container.Name != containerName {
+			continue
+		}
+		if container.RestartPolicy == nil || *container.RestartPolicy != corev1.ContainerRestartPolicyAlways {
+			break
+		}
+		out := containerResize(container)
+		out.Sidecar = true
+		return out, nil
 	}
 
 	return domain.ContainerResize{}, fmt.Errorf("%s: %w", op, domain.ErrResizeContainerNotFound)

@@ -120,6 +120,22 @@ type WorkloadPort interface {
 	// from — the same sources as a pod's, with its pods in place of the one.
 	WorkloadGraphSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, kind domain.WorkloadKind, name string) (domain.WorkloadGraphInput, error)
 
+	// ApplicationGraphSources reads what one application's map is drawn from:
+	// the objects labelled app.kubernetes.io/instance=<instance> in the
+	// namespace, every ReplicaSet and Job there (an owned one may be
+	// unlabelled), the namespace's pods, Services and Ingresses.
+	//
+	// NEVER FAILS ONCE THE CLUSTER'S CLIENT IS OBTAINED. Each source degrades
+	// into ApplicationGraphInput.Unreadable under its own name, so an account
+	// that may not list CronJobs still gets the rest. An empty or all-
+	// namespaces scope, and an empty instance, are refused up front.
+	ApplicationGraphSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, instance string) (domain.ApplicationGraphInput, error)
+
+	// ApplicationPodSources is ApplicationGraphSources without what only the
+	// map draws: no Services, no Ingresses, no pod templates. Membership
+	// needs the candidates and the pods, and the Logs tab needs nothing else.
+	ApplicationPodSources(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, instance string) (domain.ApplicationGraphInput, error)
+
 	// ListPodsOnNode returns the pods the scheduler has placed on one node,
 	// across every namespace.
 	//
@@ -273,7 +289,7 @@ type MetricsQueryPort interface {
 	// answers for other clusters — see domain.VerifyBackendNodes — and using
 	// the metric and the label the charts themselves depend on is what makes
 	// the check unable to pass while the feature would fail.
-	QueryNodes(ctx context.Context, id domain.ClusterID, backend domain.MetricsBackend) ([]string, error)
+	QueryNodes(ctx context.Context, id domain.ClusterID, backend domain.MetricsBackend) (domain.NodeProbeAnswer, error)
 
 	// QueryRange evaluates one expression over a range at a step.
 	//
@@ -570,6 +586,18 @@ type PortForwardPort interface {
 	// makes the Service's selector carry through to the supervisor and the
 	// forward outlive the pod it landed on.
 	ServiceForwardTarget(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, service, wantedPort string) (domain.ServiceForwardTarget, error)
+	// PodForwardTarget reads one pod and returns what a forward to it needs —
+	// its UID, its own labels as the selector, and the name of the port — so a
+	// kept pod forward can be rebuilt from a definition after a restart.
+	// Refuses a pod that does not exist or is not ready, with the cluster's own
+	// reason, because forwarding to either produces a forward that never works.
+	PodForwardTarget(ctx context.Context, id domain.ClusterID, namespace domain.NamespaceName, pod string, remotePort int) (domain.ServiceForwardTarget, error)
+	// SetForwardTarget records what the operator asked a live forward to point
+	// at, which only they know for a Service.
+	SetForwardTarget(id string, target domain.ForwardTarget) error
+	// ReconnectPortForward asks a LOST forward to start looking again at once.
+	// A no-op for anything else.
+	ReconnectPortForward(id string) error
 	// StopPortForward closes a forward and WAITS for its port to be released,
 	// so a caller may immediately rebind it.
 	StopPortForward(id string) error

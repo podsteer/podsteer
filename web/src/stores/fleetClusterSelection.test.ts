@@ -40,26 +40,33 @@ describe('the merged table, narrowed by the strip chips', () => {
     open.selectedKindId = 'podsteer/fleet'
   })
 
-  const names = (session: ClusterSession) => session.visibleFleetPods.map((pod) => pod.name).sort()
+  /**
+   * Which clusters the merged pod table asks Go for — the selection, as it
+   * reaches the page query. The rows are filtered in Go (FleetService.
+   * QueryPods); what this file pins is what the chips SEND.
+   */
+  const names = (session: ClusterSession) => [...(session.fleetPodQuery.clusters ?? [])].sort()
 
-  it('shows every cluster with no chip pressed', () => {
-    expect(names(open)).toEqual(['api', 'cache', 'worker'])
+  it('asks for every cluster with no chip pressed', () => {
+    expect(names(open)).toEqual([])
   })
 
   it('narrows to one', () => {
     open.toggleFleetCluster('beta')
 
-    expect(names(open)).toEqual(['worker'])
+    expect(names(open)).toEqual(['beta'])
   })
 
-  it('SHOWS BOTH when two are pressed', () => {
+  it('SENDS BOTH when two are pressed', () => {
     // THE BUG. Through the search box this became `cluster:beta cluster:gamma`
     // — two ANDed terms over rows that each belong to one cluster — so the
-    // table emptied while both chips rendered pressed.
+    // table emptied while both chips rendered pressed. A selection is a list
+    // of clusters beside the query, never terms in it.
     open.toggleFleetCluster('beta')
     open.toggleFleetCluster('gamma')
 
-    expect(names(open)).toEqual(['cache', 'worker'])
+    expect(names(open)).toEqual(['beta', 'gamma'])
+    expect(open.fleetPodQuery.text).toBe('')
   })
 
   it('goes back to everything when the last selected chip is released', () => {
@@ -67,7 +74,7 @@ describe('the merged table, narrowed by the strip chips', () => {
     open.toggleFleetCluster('beta')
 
     expect(open.fleetClusters).toEqual([])
-    expect(names(open)).toEqual(['api', 'cache', 'worker'])
+    expect(names(open)).toEqual([])
   })
 
   it('goes back to everything when all three are pressed', () => {
@@ -76,7 +83,7 @@ describe('the merged table, narrowed by the strip chips', () => {
     open.toggleFleetCluster('gamma')
 
     expect(open.fleetClusters).toEqual([])
-    expect(names(open)).toEqual(['api', 'cache', 'worker'])
+    expect(names(open)).toEqual([])
   })
 
   it('stops narrowing to a cluster whose tab has closed', () => {
@@ -87,12 +94,12 @@ describe('the merged table, narrowed by the strip chips', () => {
     // gone — and the empty state read "across the 1 selected cluster",
     // naming a selection nothing on screen could show or release.
     open.toggleFleetCluster('beta')
-    expect(names(open)).toEqual(['worker'])
+    expect(names(open)).toEqual(['beta'])
 
     fleet.pods = [answer('alpha', 'api'), answer('gamma', 'cache')]
 
     expect(open.selectedFleetClusters).toEqual([])
-    expect(names(open)).toEqual(['api', 'cache'])
+    expect(names(open)).toEqual([])
   })
 
   it('brings the selection back with the tab, which the strip can show', () => {
@@ -105,7 +112,7 @@ describe('the merged table, narrowed by the strip chips', () => {
     fleet.pods = [answer('alpha', 'api'), answer('beta', 'worker'), answer('gamma', 'cache')]
 
     expect(open.selectedFleetClusters).toEqual(['beta'])
-    expect(names(open)).toEqual(['worker'])
+    expect(names(open)).toEqual(['beta'])
   })
 
   it('returns to the first page, because page 4 may no longer exist', () => {
@@ -113,19 +120,14 @@ describe('the merged table, narrowed by the strip chips', () => {
     open.toggleFleetCluster('beta')
 
     expect(open.page).toBe(1)
+    expect(open.fleetPodQuery.offset).toBe(0)
   })
 
-  it('pins the reason the chips left the search box', () => {
-    // NOT AN ASPIRATION — a record of why this state exists. Query terms are
-    // ANDed and a row belongs to one cluster, so two `cluster:` terms match
-    // nothing. That is correct for a typed search and fatal for a row of
-    // toggles, and the day somebody routes the chips back through the search
-    // box for the tidiness of it, this fails.
-    // Set directly rather than through setSearch, which debounces by design.
-    open.search = 'cluster:beta cluster:gamma'
-    expect(names(open)).toEqual([])
+  it('makes the selection a new page to ask for', () => {
+    const before = open.pageQueryKey
+    open.toggleFleetCluster('beta')
 
-    open.search = 'cluster:beta'
-    expect(names(open)).toEqual(['worker'])
+    expect(open.pageQueryKey).not.toBe(before)
+    expect(open.pageQueryKey).toContain('"clusters":["beta"]')
   })
 })

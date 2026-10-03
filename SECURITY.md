@@ -261,7 +261,9 @@ keeps in the webview's own storage rather than in that directory.
 **Saved views are the one thing in that webview storage that can hold a name
 from a cluster**, and only because you typed it: a view is a namespace and a
 search you chose to keep under a name of your own. Nothing records what you
-opened — the recents list is held in memory and gone when the tab closes — and
+opened — the recents list is held in memory and gone when the tab closes, as is
+the per-pod usage behind a pod's chart, which the Go process keeps in memory
+from the pod lists it reads and writes nowhere — and
 saved views are deliberately left out of the settings export below, so a file
 you keep in git or send to a colleague still carries no object names. Delete
 one from the same menu that saved it.
@@ -287,7 +289,9 @@ findings, the namespace each cluster was last left on — stays in the webview's
 own storage, and the two settings that hold OBJECT NAMES are deliberately among
 them.
 
-**One object name can reach this file, and only if you put it there.** PodSteer
+**Two kinds of object name can reach this file, and only if you put them
+there.** The second is a port-forward you switch **Keep across restarts** on
+for; it is described after this one. The first: PodSteer
 notices a monitoring stack already installed in a cluster and, under Settings →
 Clusters, lets you say whether its charts may read from it — and, where a
 cluster runs more than one, **which** one answers. If you pick something other
@@ -322,6 +326,25 @@ read in this file, so it is set out in full.
   no URL is typed anywhere, and the webview's content security policy is
   untouched. "It talks to your clusters, and to GitHub only if you let it"
   stays literally true.
+- **One fallback, when the backend itself refuses that proxy.** A monitoring
+  backend behind a service mesh's own policy — linkerd-viz's Prometheus is
+  the case that found it — answers the API server's proxy with its own 403.
+  PodSteer then makes the same GET once over an **ephemeral port-forward** to
+  one of the backend's pods: it reads the Service and lists its pods to find
+  one, opens the forward (the `create` verb on `pods/portforward`, recorded
+  in the audit log as such) and sends the query to `127.0.0.1` on this
+  machine. ONE forward serves everything one gesture sends — the node check,
+  the source probes and the traffic expressions — and is stopped when that
+  gesture's answer is returned, on every path. The refusal is remembered for
+  five minutes per cluster and backend (and forgotten on reconnect), so the
+  following queries go straight to a forward instead of earning another 403;
+  each of those gestures is again one `pods/portforward` in the audit log.
+  These forwards are internal: they are not listed on the Forwards page and
+  "Stop all" does not touch them. No proxy setting applies to the loopback
+  request. It is used only for
+  the backend's OWN refusal: when the API server refuses your account, that
+  is reported as it is and never routed around. If your account may not open
+  port-forwards, the panel says that permission is what is missing.
 - **The socket is not the new part; the query is.** The monitoring backend
   receives expressions this application wrote, attributed to your identity,
   and **it logs them** — a Prometheus query log, a Thanos or Mimir access log,
@@ -362,6 +385,65 @@ read in this file, so it is set out in full.
 - **Nothing new is written to disk by any of this**, and no value from a
   backend is recorded anywhere. The only thing this feature can put in
   `settings.json` is the choice of Service already disclosed above.
+
+**The topology's traffic layer sends more of these queries, of a different
+shape, to the same backend.** Everything above applies to it unchanged — the
+same per-cluster switch, the same chosen backend, the same service proxy, GET
+only, the same response cap — and these are the differences:
+
+- **The expressions name a service mesh's or network tool's metrics**, not
+  only kubelet ones: Istio's `istio_requests_total`, `istio_tcp_*` and
+  request-duration histogram; Linkerd's `request_total`, `response_total` and
+  `response_latency_ms`; Beyla's or OBI's `*_network_flow_bytes_total`;
+  Caretta's `caretta_links_observed`; and Hubble's `hubble_flows_processed_total`
+  and `hubble_http_*` metrics. They are a fixed table in
+  `app/domain/traffic.go`, and a test parses every one to assert it is
+  aggregated. **When you narrow the topology to five namespaces or fewer, those
+  namespace names are written into the expression** as a label matcher, so
+  they reach the backend's query log and the cluster's audit log (as part of
+  the proxied URL) — the chart queries never carried an object's name.
+- **They group by pairs of workloads, not by node.** The answer grows with the
+  number of workload pairs that talk to each other — never with the number of
+  pods — and more than 5,000 pairs is refused rather than drawn. Each answer
+  therefore carries workload and namespace names from your monitoring stack
+  into the application's memory for as long as the layer is on screen.
+  Nothing from it is written to disk.
+- **A switch-on is a handful of requests, not one.** Opening the layer asks
+  one `count()` per source — five in all — to learn which sources exist (the
+  answer is remembered for half an hour per cluster and forgotten on
+  disconnect), then one query per measure of the chosen source: up to eight.
+  Each lands in the audit log as a `get` on `services/proxy`. None is sent on
+  a tick; switching the layer on, choosing a source or a window, or pressing
+  refresh is what sends them.
+- **A backend that holds other clusters is refused for traffic**, whatever the
+  fleet setting says. Charts can be narrowed to your nodes; traffic is grouped
+  by workload, so there is no way to narrow it and a workload of the same name
+  in another cluster would be counted as yours. A backend the node check
+  cannot verify either way (one that never scrapes the kubelet, such as
+  linkerd-viz's, or one naming its nodes only by IP address, which another
+  cluster on the same network can share) is checked by its answer instead: it
+  is drawn only when every namespace it names is one of yours AND at least one
+  of its workloads is on your map. Both checks must actually run — if your
+  account may not list namespaces, or the map could not be read, nothing is
+  drawn and the panel says which check could not be made.
+- **Nothing is installed and no other API is used.** When a source is absent,
+  the layer says what it would need. PodSteer does not deploy a mesh, an agent
+  or an exporter, and it does not talk to Hubble Relay's gRPC API — Hubble
+  traffic is read only from Hubble's Prometheus metrics.
+
+**The second: a port-forward you chose to keep.** Each forward has a "Keep"
+switch, off by default. While it is on, the forward's definition is written to
+`clusters.<context>.keptForwards` so PodSteer can reopen it after a restart:
+the **namespace**, the **pod or Service name**, the port (a container port for a
+pod, a Service port for a Service) and the **local port** it listened on.
+Nothing else — no credential, no label selector, no address beyond a loopback
+port, and nothing the cluster returned. It is removed when you turn the switch
+off, when you stop the forward, or when you choose Forget on a paused one;
+quitting PodSteer is not stopping, which is what makes it survive. Unlike the
+monitoring Service, these ARE names of workloads, which is why it is opt-in per
+forward and never a setting that applies to forwards in general. **PodSteer
+never connects a cluster to restore one**: at launch a kept forward is listed
+as paused, and it is reopened only when you open its cluster.
 
 How it behaves is as much of the answer as what it holds. It is rewritten
 whole and atomically, into a temporary file in the same directory which is
@@ -737,7 +819,9 @@ else it can reach with your credentials, is not something PodSteer mediates.
   object's name arriving beside it — is itself in scope.
 - A query reaching a monitoring backend for a cluster you did not switch this
   on for, or arriving on PodSteer's refresh tick rather than because you
-  opened a chart, changed its range or pressed the control. Also an expression
+  opened a chart, changed its range or pressed the control (or switched the
+  topology's traffic layer on, chose its source or window, or refreshed it).
+  Also an expression
   reaching one that is not in the fixed table — anything an operator, a
   cluster's own data, or a URL could put there.
 - A desktop notification carrying the name of any object in any cluster, or

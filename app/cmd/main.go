@@ -31,6 +31,7 @@ import (
 
 	"github.com/podsteer/podsteer/app/adapters/archive"
 	"github.com/podsteer/podsteer/app/adapters/assets"
+	"github.com/podsteer/podsteer/app/adapters/collation"
 	historystore "github.com/podsteer/podsteer/app/adapters/history"
 	"github.com/podsteer/podsteer/app/adapters/k8s"
 	"github.com/podsteer/podsteer/app/adapters/localshell"
@@ -257,9 +258,23 @@ func run() error {
 	// operator did, not a thing PodSteer did, so nothing else in the process
 	// would ever notice it. See application.KubeconfigWatcher for why this
 	// stats rather than watches.
+	//
+	// Credentials rewritten under an open cluster are the one thing it acts
+	// on: see application.KubeconfigWatcher. `others` is filled in below, once
+	// the services it releases exist.
+	credentials := &credentialRefresher{adapter: kubernetes}
 	kubeconfigWatcher, err := application.NewKubeconfigWatcher(application.KubeconfigWatcherDeps{
-		Files:  kubernetes.KubeconfigFiles,
-		Events: desktop,
+		Files:       kubernetes.KubeconfigFiles,
+		Events:      desktop,
+		Credentials: credentials,
+		Open: func() []domain.ClusterID {
+			open := registry.All()
+			ids := make([]domain.ClusterID, 0, len(open))
+			for _, cluster := range open {
+				ids = append(ids, cluster.ID())
+			}
+			return ids
+		},
 		Logger: logger,
 	})
 	if err != nil {
@@ -315,10 +330,44 @@ func run() error {
 		return fmt.Errorf("wiring metrics query service: %w", err)
 	}
 
+	// The namespace topology. It is also the adapter's change sink: the watch
+	// stores and every write tell it a cluster changed, and it coalesces that
+	// into one `topology:changed` per cluster per second for scopes somebody
+	// drew. Set before App.Run, so before anything is read.
+	topologyService, err := application.NewTopologyService(application.TopologyServiceDeps{
+		Topology: kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring topology service: %w", err)
+	}
+	kubernetes.SetChangeSink(topologyService)
+
+	// The topology's traffic layer. Built ON the metrics-query service rather
+	// than beside it: the setting, the chosen backend and the node-set check
+	// are that service's, so traffic is off exactly where charts are off and
+	// answers from exactly the backend they answer from. Nodes is the
+	// topology service, so every endpoint carries the id of the box it
+	// belongs to — the graph last drawn for the scope, or a fresh read.
+	trafficService, err := application.NewTrafficService(application.TrafficServiceDeps{
+		Metrics: metricsQueryService,
+		Query:   kubernetes,
+		Nodes:   topologyService,
+		// The cluster's namespaces, half of how an answer from a backend
+		// the node check could not verify is checked before it is drawn.
+		Namespaces: kubernetes,
+		Logger:     logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring traffic service: %w", err)
+	}
+
 	workloadService, err := application.NewWorkloadService(application.WorkloadServiceDeps{
 		Workloads: kubernetes,
 		Metrics:   kubernetes,
 		Registry:  registry,
+		TextOrder: collation.Key,
 		Logger:    logger,
 	})
 	if err != nil {
@@ -345,10 +394,24 @@ func run() error {
 		Resources: browseService,
 		Catalog:   catalog,
 		Registry:  registry,
+		TextOrder: collation.Key,
 		Logger:    logger,
 	})
 	if err != nil {
 		return fmt.Errorf("wiring fleet service: %w", err)
+	}
+
+	// Kept port-forwards. Built from the adapter that owns the forwards and
+	// the store that holds their definitions; it is told by the cluster
+	// service when a cluster is connected and never connects one itself.
+	forwardKeeper, err := application.NewForwardKeeper(application.ForwardKeeperDeps{
+		Settings: settingsStore,
+		Forwards: kubernetes,
+		Registry: registry,
+		Logger:   logger,
+	})
+	if err != nil {
+		return fmt.Errorf("wiring forward keeper: %w", err)
 	}
 
 	// WIRED AFTER THE SERVICES IT RELEASES, for the reason given at
@@ -356,14 +419,16 @@ func run() error {
 	// exist before the list is composed, and the fleet service is the last of
 	// them because it reads through workloadService and browseService.
 	clusterService, err := application.NewClusterService(application.ClusterServiceDeps{
-		Kubeconfig: kubernetes,
-		Cluster:    kubernetes,
-		Workloads:  kubernetes,
-		Metrics:    kubernetes,
-		Events:     desktop,
-		Registry:   registry,
-		Catalog:    catalog,
-		Logger:     logger,
+		Kubeconfig:  kubernetes,
+		Cluster:     kubernetes,
+		Workloads:   kubernetes,
+		Metrics:     kubernetes,
+		Events:      desktop,
+		Registry:    registry,
+		Catalog:     catalog,
+		Logger:      logger,
+		OnConnected: forwardKeeper,
+		Credentials: credentials,
 		// What a disconnect releases, in one list, composed here for the
 		// reason Invalidate is not a port: it exists to serve caching and
 		// goroutine ownership, not the domain. The adapter releases its
@@ -377,8 +442,10 @@ func run() error {
 		// nodes this connection has never seen; and the fleet service
 		// releases the late answers it is holding, which would otherwise be
 		// rendered as the new connection's rows in the merged table.
-		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService, fleetService},
+		Invalidator: application.Invalidators{kubernetes, overviewService, metricsQueryService, trafficService, topologyService, fleetService, workloadService},
 	})
+
+	credentials.others = application.Invalidators{overviewService, metricsQueryService, trafficService, topologyService, fleetService}
 
 	// Every open cluster's client, released. This is the same set of holders
 	// the disconnect path releases, for the same reason: a client outlives
@@ -387,7 +454,7 @@ func run() error {
 	// closing their tabs, which is why every holder of per-connection state
 	// has to be in it and not only in Disconnect's.
 	reconnectClusters = func() {
-		invalidators := application.Invalidators{kubernetes, overviewService, metricsQueryService, fleetService}
+		invalidators := application.Invalidators{kubernetes, overviewService, metricsQueryService, trafficService, topologyService, fleetService, workloadService}
 		for _, cluster := range registry.All() {
 			invalidators.Invalidate(cluster.ID())
 		}
@@ -549,7 +616,7 @@ func run() error {
 	// both track a resource PodSteer created (a bound socket, a privileged
 	// pod) and both must tear it down where the record lives, so they share
 	// the adapter rather than a service layer that would only forward calls.
-	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, kubernetes, workloadService, desktop, logger)
+	managementAPI, err := wailsadapter.NewManagementAPI(managementService, kubernetes, kubernetes, workloadService, forwardKeeper, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring management API: %w", err)
 	}
@@ -586,6 +653,16 @@ func run() error {
 	metricsQueryAPI, err := wailsadapter.NewMetricsQueryAPI(metricsQueryService, desktop, logger)
 	if err != nil {
 		return fmt.Errorf("wiring metrics query API: %w", err)
+	}
+
+	topologyAPI, err := wailsadapter.NewTopologyAPI(topologyService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring topology API: %w", err)
+	}
+
+	trafficAPI, err := wailsadapter.NewTrafficAPI(trafficService, desktop, logger)
+	if err != nil {
+		return fmt.Errorf("wiring traffic API: %w", err)
 	}
 
 	// The update check. Its adapter is the ONLY thing in PodSteer that talks
@@ -661,6 +738,7 @@ func run() error {
 			wailsapp.NewService(helmAPI),
 			wailsapp.NewService(historyAPI),
 			wailsapp.NewService(metricsQueryAPI),
+			wailsapp.NewService(trafficAPI),
 			wailsapp.NewService(settingsAPI),
 			wailsapp.NewService(managementAPI),
 			wailsapp.NewService(terminalAPI),
@@ -669,6 +747,7 @@ func run() error {
 			wailsapp.NewService(systemAPI),
 			wailsapp.NewService(updateAPI),
 			wailsapp.NewService(notificationAPI),
+			wailsapp.NewService(topologyAPI),
 		},
 
 		// Only one PodSteer should hold the kubeconfig and its client caches;
@@ -700,6 +779,11 @@ func run() error {
 			// to stop and the only one that would otherwise keep stat'ing
 			// files while everything below it is being torn down.
 			kubeconfigWatcher.Stop()
+			// The keeper before the forwards: a restore finishing after the
+			// sweep would start a forward nothing will ever stop. Its
+			// definitions stay in the settings file — quitting is not
+			// stopping, which is what "keep across restarts" means.
+			forwardKeeper.Close()
 			kubernetes.StopAllPortForwards()
 			// Node shells next, and for a sharper reason than a leaked socket:
 			// each is a PRIVILEGED pod on a node, and a process that exits
@@ -724,6 +808,9 @@ func run() error {
 			// Same reason, same place: reflectors are goroutines holding
 			// connections, and every one of them has an owner that stops it.
 			kubernetes.StopAllWatches()
+			// After the watches, which are what feed it: its pending
+			// announcements are dropped and any already firing waited for.
+			topologyService.Close()
 			historyService.Close()
 			// Before Detach, which drops the handle this needs to release
 			// what the platform held — a D-Bus connection on Linux. Same rule

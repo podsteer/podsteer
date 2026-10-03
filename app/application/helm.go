@@ -84,15 +84,31 @@ func (s *HelmService) ListReleases(
 	namespace domain.NamespaceName,
 	refresh bool,
 ) (domain.HelmListing, error) {
+	return s.ListReleasesIn(ctx, id, domain.ScopeOf(namespace), refresh)
+}
+
+// ListReleasesIn is ListReleases over a scope of namespaces. A named scope
+// that is short reads one listing per namespace and merges them; a wide one
+// reads cluster-wide and keeps the scope's releases.
+//
+// A MERGED LISTING IS ONLY AS GOOD AS ITS WORST PART: the first non-listed
+// status stands for the whole, and truncation is OR'd, so a release missing
+// because one namespace was refused is never presented as absent.
+func (s *HelmService) ListReleasesIn(
+	ctx context.Context,
+	id domain.ClusterID,
+	scope domain.NamespaceScope,
+	refresh bool,
+) (domain.HelmListing, error) {
 	if _, err := s.registry.Get(id); err != nil {
 		return domain.HelmListing{}, fmt.Errorf("listing Helm releases: %w", err)
 	}
 
-	listing, err := s.helm.ListHelmReleases(ctx, id, namespace, refresh)
+	listing, err := s.readReleasesIn(ctx, id, scope, refresh)
 	if err != nil {
 		if ctx.Err() != nil {
 			return domain.HelmListing{}, fmt.Errorf(
-				"listing Helm releases in %q of %q: %w", namespace, id, err)
+				"listing Helm releases in %q of %q: %w", scope.Key(), id, err)
 		}
 		return domain.HelmListing{
 			Releases: []domain.HelmRelease{},
@@ -108,7 +124,7 @@ func (s *HelmService) ListReleases(
 	// in — the same rule ManagementService's own audit lines follow.
 	s.logger.DebugContext(ctx, "listed helm releases",
 		slog.String("cluster", id.String()),
-		slog.String("namespace", namespace.String()),
+		slog.String("namespace", scope.Key()),
 		slog.String("status", string(listing.Status)),
 		slog.Int("releases", len(listing.Releases)),
 		slog.Bool("truncated", listing.Truncated),
@@ -186,4 +202,78 @@ func helmFailureReason(err error) string {
 		return "The cluster could not be reached, so the release list could not be read. Try again."
 	}
 	return "The release list could not be read. The cluster may be unreachable; try again."
+}
+
+// readReleasesIn reads the releases of a scope. Refusal is a status on the
+// listing, not an error, so the cluster-wide-then-per-namespace fallback
+// readScoped makes on ErrForbidden is made here on HelmForbidden instead.
+func (s *HelmService) readReleasesIn(ctx context.Context, id domain.ClusterID, scope domain.NamespaceScope, refresh bool) (domain.HelmListing, error) {
+	if scope.Everything() {
+		return s.helm.ListHelmReleases(ctx, id, domain.NamespaceAll, refresh)
+	}
+
+	if scope.ListsClusterWide() {
+		listing, err := s.helm.ListHelmReleases(ctx, id, domain.NamespaceAll, refresh)
+		if err != nil {
+			return domain.HelmListing{}, err
+		}
+		if listing.Status != domain.HelmForbidden {
+			return filterReleases(listing, scope), nil
+		}
+	}
+
+	listings, err := perNamespace(ctx, scope, func(ctx context.Context, namespace domain.NamespaceName) (domain.HelmListing, error) {
+		return s.helm.ListHelmReleases(ctx, id, namespace, refresh)
+	})
+	if err != nil {
+		return domain.HelmListing{}, err
+	}
+
+	merged := domain.HelmListing{Status: domain.HelmListed, Driver: domain.HelmSecretDriver}
+	for i, listing := range listings {
+		if i == 0 || (merged.Status == domain.HelmListed && listing.Status != domain.HelmListed) {
+			merged.Driver = listing.Driver
+		}
+		if helmRank(listing.Status) > helmRank(merged.Status) {
+			merged.Status, merged.Refusal = listing.Status, listing.Refusal
+		}
+		merged.Releases = append(merged.Releases, listing.Releases...)
+		merged.Truncated = merged.Truncated || listing.Truncated
+		// The oldest read states the age, so the listing never claims to be
+		// fresher than its stalest part.
+		if merged.ListedAt == 0 || (listing.ListedAt != 0 && listing.ListedAt < merged.ListedAt) {
+			merged.ListedAt = listing.ListedAt
+		}
+	}
+	if merged.Releases == nil {
+		merged.Releases = []domain.HelmRelease{}
+	}
+	return merged, nil
+}
+
+// helmRank orders statuses by how little their releases can be trusted, so a
+// merged listing reports the worst of its parts: failed over forbidden over
+// listed.
+func helmRank(status domain.HelmListStatus) int {
+	switch status {
+	case domain.HelmFailed:
+		return 2
+	case domain.HelmForbidden:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// filterReleases keeps the releases of a cluster-wide listing that are in
+// the scope.
+func filterReleases(listing domain.HelmListing, scope domain.NamespaceScope) domain.HelmListing {
+	kept := make([]domain.HelmRelease, 0, len(listing.Releases))
+	for _, release := range listing.Releases {
+		if scope.Includes(release.Namespace) {
+			kept = append(kept, release)
+		}
+	}
+	listing.Releases = kept
+	return listing
 }
