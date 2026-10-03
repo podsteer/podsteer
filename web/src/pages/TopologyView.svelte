@@ -60,14 +60,14 @@
   import TrafficPanel from '$lib/components/TrafficPanel.svelte'
   import type { TopologyGraph, TopologyNode, TrafficLayer } from '$lib/topology/contract'
   import type { DecorationTone, EdgeDecoration, TopologyDecorator } from '$lib/topology/decorations'
-  import PaneToolbar from '$lib/components/PaneToolbar.svelte'
   import ToolbarButton from '$lib/components/ToolbarButton.svelte'
   import ToolbarToggle from '$lib/components/ToolbarToggle.svelte'
   import { dismissable } from '$lib/popover'
   import Select from '$lib/components/Select.svelte'
   import Checkbox from '$lib/components/Checkbox.svelte'
   import { scrollEdges, scrollStep } from '$lib/scrollEdges'
-  import ToolbarSearch from '$lib/components/ToolbarSearch.svelte'
+  import SearchField from '$lib/components/SearchField.svelte'
+  import { overflowControls, type TopologyHeaderContent } from '$lib/topologyHeader'
   import HelpButton from '$lib/components/HelpButton.svelte'
   import { help } from '$stores/help.svelte'
   import type { HelpSection } from '$lib/help'
@@ -77,6 +77,7 @@
     ChevronLeft,
     ChevronRight,
     SlidersHorizontal,
+    Ellipsis,
     Columns3,
     Crosshair,
     ImageDown,
@@ -100,9 +101,16 @@
     decorator?: TopologyDecorator
     /** Replaces the built-in TrafficPanel, rendered in the layer strip. */
     trafficControls?: Snippet
+    /**
+     * Where the page's header goes. The workspace passes this, and the count
+     * and controls render in ITS header row, after the title — the row every
+     * list page puts its search and tools in. Without it (a test, a host with
+     * no header) the page draws the same controls in a row of its own.
+     */
+    header?: (content: TopologyHeaderContent | null) => void
   }
 
-  let { session, traffic, decorator, trafficControls }: Props = $props()
+  let { session, traffic, decorator, trafficControls, header }: Props = $props()
 
   // --- Scope ---------------------------------------------------------------
 
@@ -836,6 +844,46 @@
     return { x: layout.bounds.x, y: layout.bounds.y, width: right - layout.bounds.x, height: bottom - layout.bounds.y }
   })
 
+  // --- The header ----------------------------------------------------------
+
+  let searchBox = $state<{ focus: () => void } | null>(null)
+  /** The width the header leaves for the controls, as drawn. */
+  let controlsWidth = $state(0)
+  const overflow = $derived(
+    overflowControls(controlsWidth, {
+      apps: groupChoice === 'app' && appCount > 0,
+      labelField: groupChoice === 'label',
+      changed,
+      trafficOn,
+      groups: Boolean(grouped && grouped.groups.length > 0),
+    }),
+  )
+  /** The complete count of what the scope holds, as the list pages count rows. */
+  const objectCount = $derived(graph ? totalOf(graph.counts) || graph.nodes.length : null)
+
+  $effect(() => {
+    if (!header) return
+    header({ count: headerCount, controls: headerControls, focusSearch: () => searchBox?.focus() })
+    return () => header(null)
+  })
+
+  // The "⋯" menu, for the map controls a narrow header has no room for.
+  let moreOpen = $state(false)
+  let moreTrigger = $state<HTMLElement | null>(null)
+  let morePanel = $state<HTMLElement | null>(null)
+  $effect(() => {
+    if (!moreOpen || !morePanel) return
+    return dismissable(morePanel, moreTrigger, () => (moreOpen = false))
+  })
+  function toggleOrientation(): void {
+    preferences.setMapOrientation(orientation === 'horizontal' ? 'vertical' : 'horizontal')
+  }
+
+  function fromMenu(action: () => void): void {
+    moreOpen = false
+    action()
+  }
+
   // --- Help: what this drawing says about itself ---------------------------
 
   /**
@@ -978,8 +1026,40 @@
   ]
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col">
-  <PaneToolbar>
+{#snippet headerCount()}
+  {#if objectCount !== null}
+    <span
+      class="rounded-full bg-surface-container-high px-2 py-0.5 text-label-small tabular-nums text-on-surface-variant"
+      title="Objects in this scope, counted completely"
+    >
+      {objectCount}
+    </span>
+  {/if}
+{/snippet}
+
+{#snippet headerControls()}
+  <!-- The page's tools, in the header row like every list page's: search
+       first, then what decides what is drawn, then the map controls. One
+       row always; a narrow header folds the least-used map controls into
+       "⋯" ($lib/topologyHeader) rather than wrapping. -->
+  <div class="flex min-w-0 flex-1 items-center gap-1.5" bind:clientWidth={controlsWidth} data-topology-controls>
+    <SearchField
+      bind:this={searchBox}
+      value={query}
+      label="Find on the topology"
+      placeholder="Find… kind: ns:"
+      description="Find by name; narrow with kind:Service or ns:web. Enter for the next match, Shift+Enter for the previous."
+      onchange={(value) => (query = value)}
+      onsubmit={(backwards) => (backwards ? goToMatch(-1) : nextMatch())}
+      invalid={query.trim() !== '' && matches.length === 0}
+      class="min-w-32 flex-1"
+    />
+    {#if query.trim()}
+      <span class="shrink-0 text-label-medium tabular-nums text-on-surface-variant" aria-live="polite">
+        {matches.length === 0 ? '0' : `${Math.min(matchIndex + 1, matches.length)}/${matches.length}`}
+      </span>
+    {/if}
+
     <Select
       compact
       label="Grouping"
@@ -1019,7 +1099,7 @@
                  hover:bg-surface-container"
           title="Which applications are drawn"
         >
-          <span class="max-w-48 truncate">{appsLabel}</span>
+          <span class="max-w-32 truncate">{appsLabel}</span>
           <ChevronDown class="size-3.5 text-on-surface-variant" strokeWidth={2} />
         </button>
         {#if appsOpen}
@@ -1077,37 +1157,21 @@
       </div>
     {/if}
 
-    <!-- The same field every pane's toolbar searches with. kind: and ns:
-         narrow it as typed text; Enter and Shift+Enter step through matches. -->
-    <!-- Takes whatever the toolbar has free, and gives it back when
-         "Changed · Refresh" appears; the right-hand controls never shrink. -->
-      <ToolbarSearch
-        fill
-        value={query}
-        label="Find on the topology"
-        placeholder="Find… kind: ns:"
-        description="Find by name; narrow with kind:Service or ns:web. Enter for the next match, Shift+Enter for the previous."
-        count={query.trim() ? (matches.length === 0 ? '0' : `${Math.min(matchIndex + 1, matches.length)}/${matches.length}`) : undefined}
-        empty={query.trim() !== '' && matches.length === 0}
-        onchange={(value) => (query = value)}
-        onnext={nextMatch}
-        onprevious={() => goToMatch(-1)}
-      />
 
-    {#snippet trailing()}
-      {#if changed}
-        <!-- Said, not done: the map holds still until somebody asks. -->
-        <button
-          type="button"
-          onclick={() => void load(true)}
-          class="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-notice-warn px-2.5
-                 text-label-medium text-gauge-warn-ink"
-          title="Something in this scope changed since it was drawn — read it again"
-        >
-          <RefreshCw class="size-3.5 shrink-0" strokeWidth={2} />
-          Changed · Refresh
-        </button>
-      {/if}
+    {#if changed}
+      <!-- Said, not done: the map holds still until somebody asks. -->
+      <button
+        type="button"
+        onclick={() => void load(true)}
+        class="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-notice-warn px-2.5
+               text-label-medium text-gauge-warn-ink"
+        title="Something in this scope changed since it was drawn — read it again"
+      >
+        <RefreshCw class="size-3.5 shrink-0" strokeWidth={2} />
+        Changed · Refresh
+      </button>
+    {/if}
+    {#if !overflow.has('live')}
       <button
         type="button"
         role="switch"
@@ -1122,90 +1186,100 @@
         <span class="size-2 rounded-full {live ? 'bg-primary' : 'bg-outline'}" aria-hidden="true"></span>
         Live
       </button>
+    {/if}
+    {#if !overflow.has('refresh')}
       <ToolbarButton icon={RefreshCw} label="Refresh" title="Read the topology again" onclick={() => void load(true)} disabled={loading} />
+    {/if}
 
-      <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+    <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
 
-      <!-- Observed traffic: a toggle, and its controls in a popover beside it.
-           Off until pressed; nothing is asked of the cluster's Prometheus
-           before that. What it found, or why not, is in Help. -->
-      <div class="relative flex items-center" data-layer-controls>
-        {#if trafficControls}
-          {@render trafficControls()}
-        {:else}
-          <ToolbarToggle
-            icon={Activity}
-            label="Observed traffic"
-            title={trafficOn ? 'Observed traffic is shown' : 'Show observed traffic, from the cluster’s own monitoring backend'}
-            pressed={trafficOn}
-            onclick={toggleTraffic}
-          />
-          {#if trafficOn}
-            <!-- Opens a popover, so it says so: expanded, not pressed. -->
-            <button
-              bind:this={trafficTrigger}
-              type="button"
-              aria-label="Traffic options"
-              aria-haspopup="dialog"
-              aria-expanded={trafficOptionsOpen}
-              title="Source, window and filters"
-              onclick={() => (trafficOptionsOpen = !trafficOptionsOpen)}
-              class="state-layer grid size-7 shrink-0 place-items-center rounded-full transition-colors duration-100
-                     {trafficOptionsOpen
-                ? 'bg-surface-container-high text-on-surface'
-                : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
-            >
-              <SlidersHorizontal class="size-4" strokeWidth={1.8} />
-            </button>
-          {/if}
-          <!-- Mounted while the layer is on, shown only while the popover is
-               open: closing the popover must not forget the layer. -->
-          {#if trafficOn}
-            <div
-              bind:this={trafficPopover}
-              role="dialog"
-              aria-label="Observed traffic options"
-              tabindex="-1"
-              hidden={!trafficOptionsOpen}
-              class="absolute right-0 top-9 z-30 w-[26rem] max-w-[90vw] rounded-md border border-outline-variant
-                     bg-surface-container p-3 shadow-lg"
-              data-traffic-popover
-            >
-              <TrafficPanel
-                clusterId={session.cluster.id}
-                namespaces={scope.namespaces}
-                all={scope.all}
-                bind:on={trafficOn}
-                bind:filters={trafficFilters}
-                onlayer={(next) => (panelLayer = next)}
-                onhelp={(said) => (trafficSaid = said)}
-              />
-            </div>
-          {/if}
-        {/if}
-      </div>
-      <HelpButton topic="topology" about="the topology" notice={helpNotice} />
-
-      <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
-
-      {#if grouped && grouped.groups.length > 0}
-        <ToolbarButton
-          icon={Layers}
-          label={allCollapsed ? 'Expand all groups' : 'Collapse all groups'}
-          title={allCollapsed ? 'Expand all groups' : `Collapse all ${grouped.groups.length} groups`}
-          active={allCollapsed}
-          onclick={toggleAllGroups}
+    <!-- Observed traffic: a toggle, and its controls in a popover beside it.
+         Off until pressed; nothing is asked of the cluster's Prometheus
+         before that. What it found, or why not, is in Help. -->
+    <div class="relative flex items-center" data-layer-controls>
+      {#if trafficControls}
+        {@render trafficControls()}
+      {:else}
+        <ToolbarToggle
+          icon={Activity}
+          label="Observed traffic"
+          title={trafficOn ? 'Observed traffic is shown' : 'Show observed traffic, from the cluster’s own monitoring backend'}
+          pressed={trafficOn}
+          onclick={toggleTraffic}
         />
+        {#if trafficOn}
+          <!-- Opens a popover, so it says so: expanded, not pressed. -->
+          <button
+            bind:this={trafficTrigger}
+            type="button"
+            aria-label="Traffic options"
+            aria-haspopup="dialog"
+            aria-expanded={trafficOptionsOpen}
+            title="Source, window and filters"
+            onclick={() => (trafficOptionsOpen = !trafficOptionsOpen)}
+            class="state-layer grid size-7 shrink-0 place-items-center rounded-full transition-colors duration-100
+                   {trafficOptionsOpen
+              ? 'bg-surface-container-high text-on-surface'
+              : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+          >
+            <SlidersHorizontal class="size-4" strokeWidth={1.8} />
+          </button>
+        {/if}
+        <!-- Mounted while the layer is on, shown only while the popover is
+             open: closing the popover must not forget the layer. -->
+        {#if trafficOn}
+          <div
+            bind:this={trafficPopover}
+            role="dialog"
+            aria-label="Observed traffic options"
+            tabindex="-1"
+            hidden={!trafficOptionsOpen}
+            class="absolute right-0 top-9 z-30 w-[26rem] max-w-[90vw] rounded-md border border-outline-variant
+                   bg-surface-container p-3 shadow-lg"
+            data-traffic-popover
+          >
+            <TrafficPanel
+              clusterId={session.cluster.id}
+              namespaces={scope.namespaces}
+              all={scope.all}
+              bind:on={trafficOn}
+              bind:filters={trafficFilters}
+              onlayer={(next) => (panelLayer = next)}
+              onhelp={(said) => (trafficSaid = said)}
+            />
+          </div>
+        {/if}
       {/if}
+    </div>
+    <HelpButton topic="topology" about="the topology" notice={helpNotice} />
+
+    <div class="mx-0.5 h-5 w-px shrink-0 bg-outline-variant/60" aria-hidden="true"></div>
+
+    {#if grouped && grouped.groups.length > 0 && !overflow.has('layers')}
+      <ToolbarButton
+        icon={Layers}
+        label={allCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+        title={allCollapsed ? 'Expand all groups' : `Collapse all ${grouped.groups.length} groups`}
+        active={allCollapsed}
+        onclick={toggleAllGroups}
+      />
+    {/if}
+    {#if !overflow.has('zoom')}
       <ToolbarButton icon={ZoomOut} label="Zoom out" title="Zoom out" onclick={() => zoomAbout(1 / 1.25, paneWidth / 2, paneHeight / 2)} />
       <ToolbarButton icon={ZoomIn} label="Zoom in" title="Zoom in" onclick={() => zoomAbout(1.25, paneWidth / 2, paneHeight / 2)} />
+    {/if}
+    {#if !overflow.has('fit')}
       <ToolbarButton icon={Crosshair} label="Fit to the pane" title="Fit to the pane" onclick={fit} />
+    {/if}
+    {#if !overflow.has('orientation')}
       <ToolbarButton
         icon={orientation === 'horizontal' ? Rows3 : Columns3}
         label={orientation === 'horizontal' ? 'Lay out vertically' : 'Lay out horizontally'}
         title={orientation === 'horizontal' ? 'Lay out vertically' : 'Lay out horizontally'}
-        onclick={() => preferences.setMapOrientation(orientation === 'horizontal' ? 'vertical' : 'horizontal')}
+        onclick={toggleOrientation}
       />
+    {/if}
+    {#if !overflow.has('export')}
       <ToolbarButton
         icon={ImageDown}
         label="Export as PNG"
@@ -1213,8 +1287,86 @@
         onclick={() => void exportPng()}
         disabled={!layout || exporting}
       />
-    {/snippet}
-  </PaneToolbar>
+    {/if}
+
+    {#if overflow.size > 0}
+      <div class="relative">
+        <button
+          bind:this={moreTrigger}
+          type="button"
+          aria-label="More map controls"
+          title="More map controls"
+          aria-haspopup="menu"
+          aria-expanded={moreOpen}
+          onclick={() => (moreOpen = !moreOpen)}
+          class="state-layer grid size-7 shrink-0 place-items-center rounded-full transition-colors duration-100
+                 {moreOpen
+            ? 'bg-surface-container-high text-on-surface'
+            : 'text-on-surface-variant hover:bg-surface-container hover:text-on-surface'}"
+        >
+          <Ellipsis class="size-4" strokeWidth={1.8} />
+        </button>
+        {#if moreOpen}
+          <div
+            bind:this={morePanel}
+            role="menu"
+            aria-label="More map controls"
+            tabindex="-1"
+            class="absolute right-0 top-9 z-30 flex min-w-52 flex-col rounded-xs border border-outline-variant
+                   bg-surface-container py-1 shadow-level-2"
+          >
+            {#if overflow.has('live')}
+              <button type="button" role="menuitemcheckbox" aria-checked={live} class="menu-row" onclick={() => fromMenu(toggleLive)}>
+                {live ? 'Live: on' : 'Live: off'}
+              </button>
+            {/if}
+            {#if overflow.has('refresh')}
+              <button type="button" role="menuitem" class="menu-row" disabled={loading} onclick={() => fromMenu(() => void load(true))}>
+                Refresh
+              </button>
+            {/if}
+            {#if overflow.has('layers') && grouped && grouped.groups.length > 0}
+              <button type="button" role="menuitem" class="menu-row" onclick={() => fromMenu(toggleAllGroups)}>
+                {allCollapsed ? 'Expand all groups' : 'Collapse all groups'}
+              </button>
+            {/if}
+            {#if overflow.has('zoom')}
+              <button type="button" role="menuitem" class="menu-row" onclick={() => fromMenu(() => zoomAbout(1.25, paneWidth / 2, paneHeight / 2))}>
+                Zoom in
+              </button>
+              <button type="button" role="menuitem" class="menu-row" onclick={() => fromMenu(() => zoomAbout(1 / 1.25, paneWidth / 2, paneHeight / 2))}>
+                Zoom out
+              </button>
+            {/if}
+            {#if overflow.has('fit')}
+              <button type="button" role="menuitem" class="menu-row" onclick={() => fromMenu(fit)}>Fit to the pane</button>
+            {/if}
+            {#if overflow.has('orientation')}
+              <button type="button" role="menuitem" class="menu-row" onclick={() => fromMenu(toggleOrientation)}>
+                {orientation === 'horizontal' ? 'Lay out vertically' : 'Lay out horizontally'}
+              </button>
+            {/if}
+            {#if overflow.has('export')}
+              <button type="button" role="menuitem" class="menu-row" disabled={!layout || exporting} onclick={() => fromMenu(() => void exportPng())}>
+                Export as PNG
+              </button>
+            {/if}
+          </div>
+        {/if}
+      </div>
+    {/if}
+  </div>
+{/snippet}
+
+<div class="flex min-h-0 flex-1 flex-col">
+
+  {#if !header}
+    <!-- No workspace header to sit in: the same controls, in a row of their own. -->
+    <div class="flex h-12 shrink-0 items-center gap-3 border-b border-outline-variant/60 px-4">
+      {@render headerCount()}
+      {@render headerControls()}
+    </div>
+  {/if}
 
   {#if toggles.length > 0}
     <!-- One toggle per Kind, with the COMPLETE count: switching a kind off
@@ -1241,7 +1393,7 @@
       bind:this={kindRow}
       onscroll={measureKindRow}
       onwheel={onKindWheel}
-      class="kind-row flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-3 py-1.5"
+      class="kind-row flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-3 py-1"
       style:mask-image={kindMask}
       style:-webkit-mask-image={kindMask}
       role="group"
@@ -1615,6 +1767,25 @@
 </div>
 
 <style>
+  /* The "⋯" menu's rows: the Select option's size and spacing. */
+  .menu-row {
+    display: flex;
+    inline-size: 100%;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    text-align: start;
+    font-size: var(--text-body-medium);
+    line-height: var(--text-body-medium--line-height);
+    color: var(--color-on-surface);
+  }
+  .menu-row:hover:not(:disabled),
+  .menu-row:focus-visible {
+    background-color: var(--color-surface-container-high);
+  }
+  .menu-row:disabled {
+    opacity: 0.38;
+  }
+
   /* The kind row scrolls without a bar: the fade is what says there is more. */
   .kind-row {
     scrollbar-width: none;

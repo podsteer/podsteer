@@ -39,6 +39,16 @@
      * effect (`describeQuery`). Omit to leave both unset.
      */
     description?: string
+    /**
+     * The accessible name, when the placeholder is too short to be one — a
+     * placeholder of syntax hints says nothing to a screen reader.
+     */
+    label?: string
+    /**
+     * Enter steps through matches instead of leaving the field — for a page
+     * that FINDS (the topology) rather than filters. Shift+Enter goes back.
+     */
+    onsubmit?: (backwards: boolean) => void
   }
 
   let {
@@ -49,6 +59,8 @@
     class: className = '',
     invalid = false,
     description,
+    label,
+    onsubmit,
   }: Props = $props()
 
   // `aria-describedby` needs an id to point at, and this field can appear
@@ -66,6 +78,11 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && onsubmit) {
+      event.preventDefault()
+      onsubmit(event.shiftKey)
+      return
+    }
     // Enter has nothing to confirm — every keystroke already filters the
     // table live — so it just gets the cursor out of the field.
     if (event.key === 'Escape' || event.key === 'Enter') {
@@ -109,7 +126,7 @@
     spellcheck="false"
     {value}
     {placeholder}
-    aria-label={placeholder}
+    aria-label={label ?? placeholder}
     aria-invalid={invalid || undefined}
     aria-describedby={description ? descriptionId : undefined}
     title={description}
