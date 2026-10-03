@@ -428,7 +428,7 @@
       value={session.scopeOnScreen}
       choices={picker.choices}
       title={picker.title}
-      onapply={(scope) => void session.selectNamespaces(scope.namespaces)}
+      onchange={(scope) => void session.selectNamespaces(scope.namespaces)}
       onopen={() => (session.viewMode === 'fleet' ? fleet.refreshNamespaces() : void session.refreshNamespaces())}
       class="w-full"
     />

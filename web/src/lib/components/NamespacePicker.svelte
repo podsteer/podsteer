@@ -6,12 +6,13 @@
   that chooses it — extracted from the Topology page's own scope picker, the
   first place the set existed.
 
-  A DRAFT AND AN APPLY, not a change per tick. Ticking three namespaces one
-  at a time would be three refreshes of whatever is on screen, the first two
-  of them answers to questions nobody meant to ask. Cancel, Escape or a click
-  elsewhere leave the filter exactly as it was. Apply is disabled while the
-  draft is empty and not All: there is no "nothing selected", because a list
-  of nothing is not a filter anybody wants.
+  APPLIED AS YOU TICK, like the topology's own menus — no Apply, no Cancel.
+  So that ticking three namespaces is not three refreshes, a tick is DEBOUNCED
+  (APPLY_DELAY_MS, the latest selection wins) and FLUSHED the moment the menu
+  closes, however it closes — Escape, Enter, a click elsewhere. Ticking "All
+  namespaces" applies at once, and unticking the last namespace is All:
+  there is no "nothing selected", because a list of nothing is not a filter
+  anybody wants. Ticking a namespace while All is on starts a set of one.
 
   A NAME THE CLUSTER NO LONGER LISTS STAYS VISIBLE, marked "not found" — a
   namespace deleted while the tab was open, one remembered from before, or an
@@ -21,12 +22,19 @@
 
   Keyboard: Enter, Space or ↓ on the trigger open it with focus in the filter;
   ↑/↓ move through "All namespaces" and the rows; Space ticks the row; Enter
-  applies; Escape cancels.
+  or Escape closes, and what was ticked stays applied.
 -->
+<script lang="ts" module>
+  /** How long a tick waits for the next one before it is applied. */
+  export const APPLY_DELAY_MS = 375
+</script>
+
 <script lang="ts">
   import { ChevronDown } from '@lucide/svelte'
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { namespaceLabelOf, scopeOf, type NamespaceScope } from '$lib/namespaceScope'
+  import Checkbox from './Checkbox.svelte'
+
 
   interface Choice {
     name: string
@@ -45,9 +53,12 @@
     title?: string
     /** The accessible name of the control and its panel. */
     label?: string
-    applyLabel?: string
-    /** Called with the chosen scope when Apply is pressed. */
-    onapply: (scope: NamespaceScope) => void
+    /**
+     * Called with the chosen scope: once the ticks settle (debounced), at
+     * once for All, and on close for anything still pending. Never twice for
+     * the same selection.
+     */
+    onchange: (scope: NamespaceScope) => void
     /** Called as the panel opens, for a list that can go stale. */
     onopen?: () => void
     class?: string
@@ -59,8 +70,7 @@
     disabled = false,
     title,
     label = 'Namespaces',
-    applyLabel = 'Apply',
-    onapply,
+    onchange,
     onopen,
     class: className = '',
   }: Props = $props()
@@ -89,7 +99,30 @@
     rows.filter((row) => !filter || row.name.toLowerCase().includes(filter.trim().toLowerCase())),
   )
 
-  const canApply = $derived(draftAll || draftNamespaces.length > 0)
+  /** Some ticked but not All: the "All" box is drawn mixed. */
+  const someTicked = $derived(!draftAll && draftNamespaces.length > 0)
+
+  let pending: ReturnType<typeof setTimeout> | null = null
+  /** The last scope handed to `onchange` (or shown on open), as a key. */
+  let lastSent = ''
+
+  const keyOf = (scope: NamespaceScope) => (scope.all ? '*' : scope.namespaces.join(','))
+
+  /** Hands the draft over now, if it differs from what was last handed over. */
+  function flush(): void {
+    if (pending) clearTimeout(pending)
+    pending = null
+    const next = scopeOf(draftAll ? [] : draftNamespaces)
+    if (keyOf(next) === lastSent) return
+    lastSent = keyOf(next)
+    onchange(next)
+  }
+
+  /** The latest tick wins; the change goes out once ticking pauses. */
+  function schedule(): void {
+    if (pending) clearTimeout(pending)
+    pending = setTimeout(flush, APPLY_DELAY_MS)
+  }
 
   /** `active`, kept on a row that exists when the filter shows fewer. */
   const current = $derived(Math.min(active, visible.length))
@@ -98,6 +131,7 @@
     if (disabled) return
     draftAll = value.all
     draftNamespaces = [...value.namespaces]
+    lastSent = keyOf(scopeOf(value.all ? [] : value.namespaces))
     filter = ''
     active = 0
     open = true
@@ -106,28 +140,51 @@
   }
 
   function hide(focusTrigger = true): void {
+    // Whatever is still waiting goes now: closing is "done", not "undo".
+    flush()
     open = false
     claim?.release()
     claim = null
     if (focusTrigger) trigger?.focus()
   }
 
-  function apply(): void {
-    if (!canApply) return
-    const next = scopeOf(draftAll ? [] : draftNamespaces)
-    hide()
-    onapply(next)
-  }
-
   function toggle(name: string): void {
-    if (draftAll) return
-    draftNamespaces = draftNamespaces.includes(name)
+    if (draftAll) {
+      // Ticking one namespace while All is on means "just this one".
+      draftAll = false
+      draftNamespaces = [name]
+      schedule()
+      return
+    }
+    const next = draftNamespaces.includes(name)
       ? draftNamespaces.filter((entry) => entry !== name)
       : [...draftNamespaces, name]
+    if (next.length === 0) {
+      // The last one unticked: that is All, and it applies at once.
+      setAll(true)
+      return
+    }
+    draftNamespaces = next
+    schedule()
+  }
+
+  /** All on applies at once. All off keeps what was ticked under it. */
+  function setAll(on: boolean): void {
+    if (on) {
+      draftAll = true
+      draftNamespaces = []
+      flush()
+      return
+    }
+    // Clearing All leaves the boxes to tick. Nothing ticked is still All —
+    // an empty set is never applied as "nothing" — so there is nothing to
+    // send until a namespace is.
+    draftAll = false
+    if (draftNamespaces.length > 0) schedule()
   }
 
   function toggleActive(): void {
-    if (current === 0) draftAll = !draftAll
+    if (current === 0) setAll(!draftAll)
     else {
       const row = visible[current - 1]
       if (row) toggle(row.name)
@@ -160,7 +217,7 @@
         break
       case 'Enter':
         event.preventDefault()
-        apply()
+        hide()
         break
       case 'Escape':
         event.preventDefault()
@@ -204,7 +261,11 @@
     node.focus()
   }
 
-  $effect(() => () => claim?.release())
+  $effect(() => () => {
+    claim?.release()
+    // Unmounted mid-tick: the last selection still counts.
+    if (pending) flush()
+  })
 </script>
 
 <svelte:window onpointerdown={onPointerDown} onkeydown={onWindowKeydown} />
@@ -239,63 +300,52 @@
       class="absolute left-0 top-9 z-[70] flex max-h-96 w-full min-w-64 flex-col gap-2 rounded-xs border
              border-outline-variant bg-surface-container p-3 shadow-level-2"
     >
-      <label
-        class="flex items-center gap-2 rounded-xs px-1 text-body-medium text-on-surface
-               {current === 0 ? 'state-layer-active' : ''}"
-      >
-        <input type="checkbox" bind:checked={draftAll} />
-        All namespaces
-      </label>
+      <div class="rounded-xs px-1 py-1 {current === 0 ? 'state-layer-active' : ''}">
+        <Checkbox
+          full
+          dense
+          checked={draftAll}
+          indeterminate={someTicked}
+          onchange={(on) => setAll(on)}
+          class="text-body-medium text-on-surface"
+        >
+          All namespaces
+        </Checkbox>
+      </div>
       <input
         use:autofocus
-        type="search"
+        type="text"
+        autocomplete="off"
+        spellcheck="false"
         bind:value={filter}
         placeholder="Filter namespaces…"
         aria-label="Filter namespaces"
-        class="field h-8 px-2 text-body-small"
+        class="field h-8 px-2 text-body-medium"
       />
       <ul class="min-h-0 flex-1 overflow-y-auto" aria-label="Namespaces">
         {#each visible as row, index (row.name)}
-          <li>
-            <label
-              class="flex items-center gap-2 rounded-xs px-1 py-0.5 text-body-small text-on-surface
-                     {draftAll ? 'opacity-50' : ''} {current === index + 1 ? 'state-layer-active' : ''}"
+          <li class="rounded-xs px-1 py-1 {current === index + 1 ? 'state-layer-active' : ''}">
+            <Checkbox
+              full
+              dense
+              checked={draftAll || draftNamespaces.includes(row.name)}
+              onchange={() => toggle(row.name)}
+              class="text-body-medium text-on-surface {draftAll ? 'opacity-70' : ''}"
             >
-              <input
-                type="checkbox"
-                disabled={draftAll}
-                checked={draftAll || draftNamespaces.includes(row.name)}
-                onchange={() => toggle(row.name)}
-              />
-              <span class="truncate">{row.name}</span>
-              {#if row.hint}
-                <span class="shrink-0 text-on-surface-variant/70">— {row.hint}</span>
-              {/if}
-            </label>
+              <span class="flex min-w-0 items-center gap-1">
+                <span class="truncate">{row.name}</span>
+                {#if row.hint}
+                  <span class="shrink-0 text-on-surface-variant/70">— {row.hint}</span>
+                {/if}
+              </span>
+            </Checkbox>
           </li>
         {:else}
-          <li class="text-body-small text-on-surface-variant/70">
+          <li class="px-1 text-body-medium text-on-surface-variant/70">
             {rows.length === 0 ? 'No namespaces to choose from.' : 'No namespace matches.'}
           </li>
         {/each}
       </ul>
-      <div class="flex justify-end gap-2">
-        <button
-          type="button"
-          class="state-layer rounded-sm px-3 py-1 text-label-large text-on-surface-variant hover:bg-surface-container-high"
-          onclick={() => hide()}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          disabled={!canApply}
-          class="rounded-sm bg-primary px-3 py-1 text-label-large text-on-primary disabled:opacity-50"
-          onclick={apply}
-        >
-          {applyLabel}
-        </button>
-      </div>
     </div>
   {/if}
 </div>

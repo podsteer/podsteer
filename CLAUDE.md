@@ -461,9 +461,12 @@ changed, persisted per cluster; `selectNamespace(ns)` and `toggleNamespace(ns)`
 wrap it. `openObject` ADDS an object's namespace to a named set rather than
 replacing it. `$lib/namespaceScope` has the type, normalisation and the label
 rule (All / `shop` / `keda +2` with every name in the title / `N namespaces`);
-`NamespacePicker.svelte` is the one picker (All + filter + checkboxes, a draft
-applied once, Apply disabled for an empty set, a remembered name the cluster
-no longer lists kept as "not found"). The navigator's picker stays enabled on
+`NamespacePicker.svelte` is the one picker (All + filter + the shared
+Checkbox; no Apply or Cancel — a tick applies after a ~375 ms debounce, latest
+wins, flushed when the menu closes however it closes; All applies at once and
+unticking the last namespace is All; a remembered name the cluster no longer
+lists kept as "not found"). Rapid ticks cannot land a stale list: each
+applied set is a `refresh()`, whose request counter drops older answers. The navigator's picker stays enabled on
 cluster-scoped kinds (its tooltip says the filter does not apply there), and on
 All clusters it offers the union of the open clusters' namespaces, naming the
 clusters that hold one when not all do ($lib/navigatorNamespaces). Every list goes through the client's

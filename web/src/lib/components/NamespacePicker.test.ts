@@ -1,16 +1,16 @@
 import { cleanup, fireEvent, render } from '@testing-library/svelte'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import NamespacePicker from './NamespacePicker.svelte'
+import NamespacePicker, { APPLY_DELAY_MS } from './NamespacePicker.svelte'
 import type { NamespaceScope } from '$lib/namespaceScope'
 
 const choices = [{ name: 'billing' }, { name: 'keda' }, { name: 'shop' }, { name: 'old', hint: 'terminating' }]
 
 function mount(value: NamespaceScope, extra: Record<string, unknown> = {}) {
-  const onapply = vi.fn()
-  const rendered = render(NamespacePicker, { value, choices, onapply, ...extra })
+  const onchange = vi.fn()
+  const rendered = render(NamespacePicker, { value, choices, onchange, ...extra })
   const trigger = rendered.getByRole('button', { name: /Namespaces/ }) as HTMLButtonElement
-  return { ...rendered, onapply, trigger }
+  return { ...rendered, onchange, trigger }
 }
 
 function boxFor(container: HTMLElement, name: string): HTMLInputElement {
@@ -18,7 +18,10 @@ function boxFor(container: HTMLElement, name: string): HTMLInputElement {
   return label!.querySelector('input') as HTMLInputElement
 }
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 describe('the namespace picker', () => {
   it('labels the trigger by the rule: All, one, "x +n", "N namespaces"', () => {
@@ -42,43 +45,73 @@ describe('the namespace picker', () => {
     expect(listed).toEqual(['keda'])
   })
 
-  it('disables the list while All is ticked, and enables it when All is cleared', async () => {
-    const { trigger, container, getByLabelText } = mount({ namespaces: [], all: true })
+  it('has no Apply or Cancel: a tick is applied, once ticking pauses', async () => {
+    vi.useFakeTimers()
+    const { trigger, container, queryByRole, onchange } = mount({ namespaces: [], all: true })
     await fireEvent.click(trigger)
+    expect(queryByRole('button', { name: 'Apply' })).toBeNull()
+    expect(queryByRole('button', { name: 'Cancel' })).toBeNull()
 
-    expect(boxFor(container, 'keda').disabled).toBe(true)
-    await fireEvent.click(getByLabelText('All namespaces'))
-    expect(boxFor(container, 'keda').disabled).toBe(false)
-  })
-
-  it('will not apply an empty set, and applies a ticked one sorted', async () => {
-    const { trigger, container, getByLabelText, getByRole, onapply } = mount({ namespaces: [], all: true })
-    await fireEvent.click(trigger)
-    await fireEvent.click(getByLabelText('All namespaces'))
-
-    const apply = getByRole('button', { name: 'Apply' }) as HTMLButtonElement
-    expect(apply.disabled).toBe(true)
-
+    // While All is on, ticking one starts a set of one; a second tick soon
+    // after replaces the pending change rather than adding a refresh.
     await fireEvent.click(boxFor(container, 'shop'))
     await fireEvent.click(boxFor(container, 'billing'))
-    expect(apply.disabled).toBe(false)
-    await fireEvent.click(apply)
+    expect(onchange).not.toHaveBeenCalled()
 
-    expect(onapply).toHaveBeenCalledWith({ namespaces: ['billing', 'shop'], all: false })
+    vi.advanceTimersByTime(APPLY_DELAY_MS)
+    expect(onchange).toHaveBeenCalledTimes(1)
+    expect(onchange).toHaveBeenCalledWith({ namespaces: ['billing', 'shop'], all: false })
   })
 
-  it('changes nothing on Cancel', async () => {
-    const { trigger, container, getByRole, onapply } = mount({ namespaces: ['shop'], all: false })
+  it('applies All at once, and unticking the last namespace is All', async () => {
+    vi.useFakeTimers()
+    const { trigger, container, getByLabelText, onchange } = mount({ namespaces: ['shop'], all: false })
+    await fireEvent.click(trigger)
+
+    await fireEvent.click(boxFor(container, 'shop'))
+    expect(onchange).toHaveBeenLastCalledWith({ namespaces: [], all: true })
+
+    await fireEvent.click(boxFor(container, 'keda'))
+    vi.advanceTimersByTime(APPLY_DELAY_MS)
+    expect(onchange).toHaveBeenLastCalledWith({ namespaces: ['keda'], all: false })
+
+    await fireEvent.click(getByLabelText('All namespaces'))
+    expect(onchange).toHaveBeenLastCalledWith({ namespaces: [], all: true })
+  })
+
+  it('draws All as mixed while some namespaces are ticked', async () => {
+    const { trigger, getByLabelText } = mount({ namespaces: ['shop'], all: false })
+    await fireEvent.click(trigger)
+    const all = getByLabelText('All namespaces') as HTMLInputElement
+    expect(all.indeterminate).toBe(true)
+  })
+
+  it('flushes a pending tick the moment the menu closes, and keeps it', async () => {
+    vi.useFakeTimers()
+    const { trigger, container, getByLabelText, onchange } = mount({ namespaces: ['shop'], all: false })
     await fireEvent.click(trigger)
     await fireEvent.click(boxFor(container, 'keda'))
-    await fireEvent.click(getByRole('button', { name: 'Cancel' }))
+    expect(onchange).not.toHaveBeenCalled()
 
-    expect(onapply).not.toHaveBeenCalled()
+    await fireEvent.keyDown(getByLabelText('Filter namespaces'), { key: 'Escape' })
+    expect(onchange).toHaveBeenCalledTimes(1)
+    expect(onchange).toHaveBeenCalledWith({ namespaces: ['keda', 'shop'], all: false })
     expect(container.querySelector('[role="dialog"]')).toBeNull()
+
+    // Nothing more goes out when the timer would have fired.
+    vi.advanceTimersByTime(APPLY_DELAY_MS * 2)
+    expect(onchange).toHaveBeenCalledTimes(1)
   })
 
-  it('works from the keyboard: open into the filter, move, tick, apply', async () => {
-    const { trigger, getByLabelText, onapply } = mount({ namespaces: ['shop'], all: false })
+  it('sends nothing when the menu closes with nothing changed', async () => {
+    const { trigger, getByLabelText, onchange } = mount({ namespaces: ['shop'], all: false })
+    await fireEvent.click(trigger)
+    await fireEvent.keyDown(getByLabelText('Filter namespaces'), { key: 'Escape' })
+    expect(onchange).not.toHaveBeenCalled()
+  })
+
+  it('works from the keyboard: open into the filter, move, tick, close', async () => {
+    const { trigger, getByLabelText, onchange } = mount({ namespaces: ['shop'], all: false })
     await fireEvent.keyDown(trigger, { key: 'Enter' })
 
     const filter = getByLabelText('Filter namespaces')
@@ -89,16 +122,7 @@ describe('the namespace picker', () => {
     await fireEvent.keyDown(filter, { key: ' ' })
     await fireEvent.keyDown(filter, { key: 'Enter' })
 
-    expect(onapply).toHaveBeenCalledWith({ namespaces: ['billing', 'shop'], all: false })
-  })
-
-  it('cancels on Escape', async () => {
-    const { trigger, getByLabelText, onapply, container } = mount({ namespaces: ['shop'], all: false })
-    await fireEvent.keyDown(trigger, { key: 'Enter' })
-    await fireEvent.keyDown(getByLabelText('Filter namespaces'), { key: 'Escape' })
-
-    expect(onapply).not.toHaveBeenCalled()
-    expect(container.querySelector('[role="dialog"]')).toBeNull()
+    expect(onchange).toHaveBeenCalledWith({ namespaces: ['billing', 'shop'], all: false })
   })
 
   it('keeps a selected namespace the cluster no longer lists, marked not found', async () => {
@@ -125,36 +149,36 @@ describe('the namespace picker', () => {
 })
 
 describe('closing from outside the panel', () => {
-  it('cancels on Escape even when focus is not inside it', async () => {
-    const { trigger, onapply, container } = mount({ namespaces: ['shop'], all: false })
+  it('closes on Escape even when focus is not inside it, keeping what was ticked', async () => {
+    const { trigger, onchange, container } = mount({ namespaces: ['shop'], all: false })
     await fireEvent.click(trigger)
+    await fireEvent.click(boxFor(container, 'keda'))
     ;(document.activeElement as HTMLElement | null)?.blur()
 
     await fireEvent.keyDown(window, { key: 'Escape' })
 
-    expect(onapply).not.toHaveBeenCalled()
+    expect(onchange).toHaveBeenCalledWith({ namespaces: ['keda', 'shop'], all: false })
     expect(container.querySelector('[role="dialog"]')).toBeNull()
   })
 
-  it('cancels when focus moves to something outside the picker', async () => {
+  it('closes when focus moves to something outside the picker', async () => {
     const outside = document.createElement('button')
     document.body.appendChild(outside)
-    const { trigger, getByLabelText, onapply, container } = mount({ namespaces: ['shop'], all: false })
+    const { trigger, getByLabelText, container } = mount({ namespaces: ['shop'], all: false })
     await fireEvent.click(trigger)
 
     await fireEvent.focusOut(getByLabelText('Filter namespaces'), { relatedTarget: outside })
 
-    expect(onapply).not.toHaveBeenCalled()
     expect(container.querySelector('[role="dialog"]')).toBeNull()
     outside.remove()
   })
 
   it('stays open while focus moves within it', async () => {
-    const { trigger, getByLabelText, getByRole, container } = mount({ namespaces: ['shop'], all: false })
+    const { trigger, getByLabelText, container } = mount({ namespaces: ['shop'], all: false })
     await fireEvent.click(trigger)
 
     await fireEvent.focusOut(getByLabelText('Filter namespaces'), {
-      relatedTarget: getByRole('button', { name: 'Apply' }),
+      relatedTarget: getByLabelText('All namespaces'),
     })
 
     expect(container.querySelector('[role="dialog"]')).not.toBeNull()
