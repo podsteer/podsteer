@@ -50,7 +50,7 @@
     type ViewNode,
   } from '$lib/graphGroup'
   import { buildCullIndex, visible, viewportOf } from '$lib/graphCull'
-  import { preserve, refitsOnLayout, shapeKey, type Drawn } from '$lib/graphPositions'
+  import { anyVisible, preserve, refitsOnLayout, shapeKey, type Drawn } from '$lib/graphPositions'
   import { createLayoutClient, liveDelayMs, Superseded } from '$lib/layoutClient'
   import { centreOn, locate, searchNodes } from '$lib/topologySearch'
   import { badgeFor, indexFindings, type FindingBadge } from '$lib/findingsOverlay'
@@ -366,13 +366,32 @@
         layoutFailure = ''
         const viewNow = { panX, panY, zoom, width: paneWidth, height: paneHeight }
         const refit = refitsOnLayout({ fitNext, fitHeld, drawnShape: drawn?.shape ?? null, shape })
-        const kept = preserve(refit ? null : drawn, { layout, shape }, viewNow, across)
+        // The old drawing's boxes, followed into the new one through the
+        // objects they stand for: a box that went into a group or a fold is
+        // represented there, and a group that opened by its first member.
+        const before = drawnGraph
+        const nextDrawn = new Set(target.nodes.map((node) => node.id))
+        const representative = (id: string): string | null => {
+          const members = before?.grouped.nodes.find((node) => node.id === id)?.members ?? []
+          for (const member of members) {
+            const at = locate(member, nextDrawn, [foldedNow.standIn, target.standIn])
+            if (at) return at
+          }
+          return null
+        }
+        const kept = preserve(refit ? null : drawn, { layout, shape }, viewNow, across, representative)
+        // Whatever was followed, a view with no box in it is no view: fit.
+        const lost =
+          !refit &&
+          !kept.kept &&
+          viewNow.width > 0 &&
+          !anyVisible(kept.layout, { ...viewNow, panX: kept.panX, panY: kept.panY })
         drawn = { layout: kept.layout, shape }
         drawnGraph = { grouped: target, folded: foldedNow }
         panX = kept.panX
         panY = kept.panY
         layingOut = false
-        if (refit) {
+        if (refit || lost) {
           fitNext = false
           fit()
         }

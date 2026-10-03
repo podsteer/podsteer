@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { group } from './graphGroup'
-import { anchorShift, preserve, shapeKey, type Drawn, refitsOnLayout } from './graphPositions'
+import { anchorShift, anyVisible, preserve, shapeKey, type Drawn, refitsOnLayout } from './graphPositions'
 import { layoutCompound, type CompoundLayout } from './graphLayout'
 
 function drawn(layout: CompoundLayout, ids: string[], parents = new Map<string, string>()): Drawn {
@@ -121,3 +121,59 @@ describe('collapse all, as the grouping rule sees it', () => {
     expect(refitsOnLayout({ fitNext: false, fitHeld: false, drawnShape: shape(open), shape: shape(closed) })).toBe(false)
   })
 })
+
+describe('following the anchor through collapse and expand', () => {
+  // Thirteen deployments in two namespaces, laid out grouped.
+  const nodes = Array.from({ length: 13 }, (_, i) => {
+    const ns = i < 7 ? 'a' : 'b'
+    return {
+      id: `${ns}/Deployment/d${i}`, kind: 'workload', apiKind: 'Deployment', name: `d${i}`, namespace: ns,
+      state: 'ok' as const, detail: '', group: '', members: [`${ns}/Deployment/d${i}`], counts: { Deployment: 1 },
+    }
+  })
+  const view = { nodes, edges: [] }
+  const open = group(view, 'namespace', new Set())
+  const closed = group(view, 'namespace', new Set(open.groups.map((g) => g.id)))
+  const lay = (g: typeof open) => layoutCompound({ nodes: g.nodes, edges: [] }, g.parents, true)
+  const drawnOf = (g: typeof open): Drawn => ({ layout: lay(g), shape: shapeKey(g.nodes.map((n) => n.id), g.parents) })
+  const before = drawnOf(open)
+  const after = drawnOf(closed)
+  /** A box's group, or itself: what the page's representative does. */
+  const intoGroup = (id: string) => closed.standIn.get(id) ?? null
+
+  it('keeps the anchor’s group where the anchor was, zoomed in', () => {
+    // Zoomed in on d9, in namespace b.
+    const d9 = before.layout.nodes.find((n) => n.id === 'b/Deployment/d9')!
+    const zoom = 2.5
+    const pane = { width: 800, height: 600 }
+    const viewNow = { zoom, ...pane, panX: pane.width / 2 - d9.x * zoom, panY: pane.height / 2 - d9.y * zoom }
+
+    const kept = preserve(before, after, viewNow, true, intoGroup)
+    const box = after.layout.nodes.find((n) => n.id === closed.standIn.get('b/Deployment/d9'))!
+    expect(kept.panX + box.x * zoom).toBeCloseTo(pane.width / 2, 6)
+    expect(kept.panY + box.y * zoom).toBeCloseTo(pane.height / 2, 6)
+    expect(anyVisible(kept.layout, { ...viewNow, panX: kept.panX, panY: kept.panY })).toBe(true)
+  })
+
+  it('keeps an expanded group’s first member where the group box was', () => {
+    const groupBox = after.layout.nodes.find((n) => n.id === closed.standIn.get('a/Deployment/d0'))!
+    const zoom = 2
+    const pane = { width: 800, height: 600 }
+    const viewNow = { zoom, ...pane, panX: pane.width / 2 - groupBox.x * zoom, panY: pane.height / 2 - groupBox.y * zoom }
+    const firstMember = (id: string) => closed.groups.find((g) => g.id === id)?.members[0] ?? null
+
+    const kept = preserve(after, before, viewNow, true, firstMember)
+    const member = before.layout.nodes.find((n) => n.id === firstMember(groupBox.id))!
+    expect(kept.panX + member.x * zoom).toBeCloseTo(pane.width / 2, 6)
+  })
+
+  it('finds nothing to follow without a representative, and nothing is on screen: refit', () => {
+    const d9 = before.layout.nodes.find((n) => n.id === 'b/Deployment/d9')!
+    const zoom = 3
+    const viewNow = { zoom, width: 800, height: 600, panX: 400 - d9.x * zoom - 50_000, panY: 300 - d9.y * zoom }
+    expect(anchorShift(before.layout, after.layout, viewNow)).toBeNull()
+    const kept = preserve(before, after, viewNow, true)
+    expect(anyVisible(kept.layout, { ...viewNow, panX: kept.panX, panY: kept.panY })).toBe(false)
+  })
+})
+

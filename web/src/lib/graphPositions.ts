@@ -68,6 +68,7 @@ export function preserve(
   next: Drawn,
   view: View,
   horizontal: boolean,
+  representative?: Representative,
 ): Preserved {
   if (!previous) return { layout: next.layout, panX: view.panX, panY: view.panY, kept: false }
 
@@ -80,7 +81,7 @@ export function preserve(
     }
   }
 
-  const shift = anchorShift(previous.layout, next.layout, view)
+  const shift = anchorShift(previous.layout, next.layout, view, representative)
   if (!shift) return { layout: next.layout, panX: view.panX, panY: view.panY, kept: false }
   return {
     layout: next.layout,
@@ -88,6 +89,29 @@ export function preserve(
     panY: view.panY + shift.dy * view.zoom,
     kept: false,
   }
+}
+
+/**
+ * The box in the NEW drawing that stands for a box of the old one that is no
+ * longer drawn as itself: the collapsed group its object went into, the fold
+ * that took it, or — expanding — the first member of the group box that is
+ * gone. Null when nothing stands for it.
+ */
+export type Representative = (previousId: string) => string | null
+
+/** Whether any box of the layout is inside the pane at this pan and zoom. */
+export function anyVisible(layout: CompoundLayout, view: View): boolean {
+  const left = -view.panX / view.zoom
+  const top = -view.panY / view.zoom
+  const right = left + view.width / view.zoom
+  const bottom = top + view.height / view.zoom
+  return layout.nodes.some(
+    (node) =>
+      node.x + node.width / 2 >= left &&
+      node.x - node.width / 2 <= right &&
+      node.y + node.height / 2 >= top &&
+      node.y - node.height / 2 <= bottom,
+  )
 }
 
 /**
@@ -119,14 +143,19 @@ export function keepPositions(
 }
 
 /**
- * How far the anchor moved, in layout coordinates — the box present in both
- * layouts whose OLD position was nearest the centre of the pane. Null when the
- * two layouts share no box at all.
+ * How far the anchor moved, in layout coordinates.
+ *
+ * The anchor is the OLD box nearest the centre of the pane, followed into the
+ * new drawing: as itself if it is still drawn, else as its `representative` —
+ * collapsing a group keeps the GROUP where the box somebody was looking at
+ * was, and expanding one keeps its first member there. A box with neither is
+ * passed over for the next nearest. Null when nothing can be followed at all.
  */
 export function anchorShift(
   previous: CompoundLayout,
   next: CompoundLayout,
   view: View,
+  representative?: Representative,
 ): { dx: number; dy: number; anchor: string } | null {
   const centreX = (view.width / 2 - view.panX) / view.zoom
   const centreY = (view.height / 2 - view.panY) / view.zoom
@@ -135,7 +164,8 @@ export function anchorShift(
   let best: { dx: number; dy: number; anchor: string } | null = null
   let nearest = Infinity
   for (const node of previous.nodes) {
-    const moved = now.get(node.id)
+    const stand = now.has(node.id) ? node.id : (representative?.(node.id) ?? null)
+    const moved = stand ? now.get(stand) : undefined
     if (!moved) continue
     const distance = Math.hypot(node.x - centreX, node.y - centreY)
     if (distance < nearest || (distance === nearest && best && node.id < best.anchor)) {
