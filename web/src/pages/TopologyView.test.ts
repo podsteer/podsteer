@@ -420,3 +420,41 @@ describe('TopologyView toolbar polish', () => {
   })
 })
 
+describe('TopologyView kind row buttons and search width', () => {
+  it('shows a chevron only where there is more, and scrolls by most of the row', async () => {
+    render(TopologyView, { session: session() })
+    await drawn()
+    const row = screen.getByRole('group', { name: 'Kinds drawn' }) as HTMLElement
+    expect(screen.queryByRole('button', { name: 'Scroll kinds left' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Scroll kinds right' })).toBeNull()
+
+    Object.defineProperty(row, 'scrollWidth', { configurable: true, value: 1000 })
+    Object.defineProperty(row, 'clientWidth', { configurable: true, value: 300 })
+    // Instant, so the test reads the position at once.
+    row.scrollTo = ((options: ScrollToOptions) => {
+      row.scrollLeft = options.left ?? 0
+    }) as typeof row.scrollTo
+    await fireEvent.scroll(row)
+
+    expect(screen.queryByRole('button', { name: 'Scroll kinds left' })).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: 'Scroll kinds right' }))
+    expect(row.scrollLeft).toBe(240)
+    await fireEvent.scroll(row)
+    expect(screen.getByRole('button', { name: 'Scroll kinds left' })).toBeTruthy()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Scroll kinds left' }))
+    expect(row.scrollLeft).toBe(0)
+  })
+
+  it('lets the search field fill the toolbar and the controls keep their size', async () => {
+    render(TopologyView, { session: session() })
+    await drawn()
+    const field = screen.getByRole('textbox', { name: 'Find on the topology' })
+    const box = field.closest('div') as HTMLElement
+    expect(box.className).toContain('flex-1')
+    expect(box.className).toContain('min-w-48')
+    const live = screen.getByRole('switch')
+    expect(live.className).toContain('shrink-0')
+  })
+})
+

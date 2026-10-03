@@ -66,6 +66,7 @@
   import { dismissable } from '$lib/popover'
   import Select from '$lib/components/Select.svelte'
   import Checkbox from '$lib/components/Checkbox.svelte'
+  import { scrollEdges, scrollStep } from '$lib/scrollEdges'
   import ToolbarSearch from '$lib/components/ToolbarSearch.svelte'
   import HelpButton from '$lib/components/HelpButton.svelte'
   import { help } from '$stores/help.svelte'
@@ -73,6 +74,8 @@
   import {
     Activity,
     ChevronDown,
+    ChevronLeft,
+    ChevronRight,
     SlidersHorizontal,
     Columns3,
     Crosshair,
@@ -242,8 +245,7 @@
   function measureKindRow(): void {
     const row = kindRow
     if (!row) return
-    const left = row.scrollLeft > 1
-    const right = row.scrollLeft + row.clientWidth < row.scrollWidth - 1
+    const { left, right } = scrollEdges(row.scrollLeft, row.clientWidth, row.scrollWidth)
     kindFade = left && right ? 'both' : left ? 'left' : right ? 'right' : 'none'
   }
 
@@ -253,6 +255,21 @@
       ? undefined
       : `linear-gradient(to right, ${kindFade === 'left' || kindFade === 'both' ? 'transparent' : 'black'}, black ${FADE}, black calc(100% - ${FADE}), ${kindFade === 'right' || kindFade === 'both' ? 'transparent' : 'black'})`,
   )
+
+  /** A scroll button: most of the visible width, smoothly unless motion is reduced. */
+  function scrollKinds(direction: -1 | 1): void {
+    const row = kindRow
+    if (!row) return
+    const left = row.scrollLeft + direction * scrollStep(row.clientWidth)
+    if (typeof row.scrollTo === 'function') {
+      row.scrollTo({ left, behavior: reducedMotion ? 'auto' : 'smooth' })
+    } else {
+      row.scrollLeft = left
+    }
+    // Smooth scrolling reports through the scroll event as it moves; an
+    // instant one may not, so measure now as well.
+    measureKindRow()
+  }
 
   /** A vertical wheel over the row scrolls it sideways, when it can scroll. */
   function onKindWheel(event: WheelEvent): void {
@@ -1062,8 +1079,10 @@
 
     <!-- The same field every pane's toolbar searches with. kind: and ns:
          narrow it as typed text; Enter and Shift+Enter step through matches. -->
-    <div class="flex w-64 min-w-40 shrink">
+    <!-- Takes whatever the toolbar has free, and gives it back when
+         "Changed · Refresh" appears; the right-hand controls never shrink. -->
       <ToolbarSearch
+        fill
         value={query}
         label="Find on the topology"
         placeholder="Find… kind: ns:"
@@ -1074,7 +1093,6 @@
         onnext={nextMatch}
         onprevious={() => goToMatch(-1)}
       />
-    </div>
 
     {#snippet trailing()}
       {#if changed}
@@ -1098,7 +1116,7 @@
         title={live
           ? 'Live: redraws after changes, waiting longer the bigger the map'
           : 'Redraw on its own after a change'}
-        class="flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-label-medium
+        class="flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-label-medium
                {live ? 'border-primary bg-primary/12 text-primary' : 'border-outline-variant text-on-surface-variant'}"
       >
         <span class="size-2 rounded-full {live ? 'bg-primary' : 'bg-outline'}" aria-hidden="true"></span>
@@ -1203,12 +1221,27 @@
          changes what is drawn, never what the page says it found. -->
     <!-- ONE ROW, scrolled sideways rather than wrapped onto two or three:
          a wheel over it scrolls it, a fade says there is more on that side,
-         and Tab still reaches every badge (the browser scrolls it into view). -->
+         and Tab still reaches every badge (the browser scrolls it into view).
+         A chevron at either end, only while there is more that way, for
+         anybody without a sideways wheel. -->
+    <div class="flex shrink-0 items-center border-b border-outline-variant/40">
+    {#if kindFade === 'left' || kindFade === 'both'}
+      <button
+        type="button"
+        aria-label="Scroll kinds left"
+        title="Scroll kinds left"
+        onclick={() => scrollKinds(-1)}
+        class="state-layer ml-1 grid size-7 shrink-0 place-items-center rounded-full text-on-surface-variant
+               transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+      >
+        <ChevronLeft class="size-4" strokeWidth={1.8} />
+      </button>
+    {/if}
     <div
       bind:this={kindRow}
       onscroll={measureKindRow}
       onwheel={onKindWheel}
-      class="kind-row flex shrink-0 items-center gap-1 overflow-x-auto border-b border-outline-variant/40 px-3 py-1.5"
+      class="kind-row flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-3 py-1.5"
       style:mask-image={kindMask}
       style:-webkit-mask-image={kindMask}
       role="group"
@@ -1230,6 +1263,19 @@
           <span class="tabular-nums text-on-surface-variant">{toggle.count}</span>
         </button>
       {/each}
+    </div>
+    {#if kindFade === 'right' || kindFade === 'both'}
+      <button
+        type="button"
+        aria-label="Scroll kinds right"
+        title="Scroll kinds right"
+        onclick={() => scrollKinds(1)}
+        class="state-layer mr-1 grid size-7 shrink-0 place-items-center rounded-full text-on-surface-variant
+               transition-colors duration-100 hover:bg-surface-container hover:text-on-surface"
+      >
+        <ChevronRight class="size-4" strokeWidth={1.8} />
+      </button>
+    {/if}
     </div>
   {/if}
 
