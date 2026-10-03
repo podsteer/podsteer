@@ -16,7 +16,12 @@ export function dismissable(
   close: () => void,
 ): () => void {
   // After the panel has rendered, so its controls exist to be focused.
-  const moveIn = setTimeout(() => (panel.querySelector<HTMLElement>(FOCUSABLE) ?? panel).focus(), 0)
+  // Unless something in it already took focus — a filter field that focuses
+  // itself is where typing should go.
+  const moveIn = setTimeout(() => {
+    if (panel.contains(document.activeElement)) return
+    ;(panel.querySelector<HTMLElement>(FOCUSABLE) ?? panel).focus()
+  }, 0)
 
   const onPointer = (event: PointerEvent) => {
     const target = event.target as Node | null

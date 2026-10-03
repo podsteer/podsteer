@@ -1120,7 +1120,12 @@
           title="Which applications are drawn"
         >
           <span class="max-w-32 truncate">{appsLabel}</span>
-          <ChevronDown class="size-3.5 text-on-surface-variant" strokeWidth={2} />
+          <!-- The Select's chevron, exactly: same size, colour and turn. -->
+          <ChevronDown
+            class="size-4 shrink-0 text-on-surface-variant/70 transition-transform duration-150
+                   {appsOpen ? 'rotate-180' : ''}"
+            strokeWidth={2}
+          />
         </button>
         {#if appsOpen}
           <div
@@ -1143,14 +1148,12 @@
                 All applications
               </Checkbox>
             </div>
-            <input
-              type="text"
-              autocomplete="off"
-              spellcheck="false"
-              bind:value={appFilter}
+            <SearchField
+              inMenu
+              value={appFilter}
+              onchange={(next) => (appFilter = next)}
               placeholder="Filter applications…"
-              aria-label="Filter applications"
-              class="field h-8 px-2 text-body-medium"
+              label="Filter applications"
             />
             <ul class="min-h-0 flex-1 overflow-y-auto" aria-label="Applications">
               {#each appChoices as app (app.id)}
