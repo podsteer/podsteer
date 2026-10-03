@@ -127,7 +127,7 @@ describe('TopologyView', () => {
     await drawn()
 
     backend.emit({ clusterId: 'dev', namespaces: ['shop'] })
-    const badge = await screen.findByRole('button', { name: /Changed — Refresh/ })
+    const badge = await screen.findByRole('button', { name: /Changed · Refresh/ })
     expect(backend.calls).toHaveLength(1)
 
     // A change elsewhere says nothing.
@@ -135,7 +135,7 @@ describe('TopologyView', () => {
 
     await fireEvent.click(badge)
     await vi.waitFor(() => expect(backend.calls).toHaveLength(2))
-    await vi.waitFor(() => expect(screen.queryByRole('button', { name: /Changed — Refresh/ })).toBeNull())
+    await vi.waitFor(() => expect(screen.queryByRole('button', { name: /Changed · Refresh/ })).toBeNull())
   })
 
   it('opens a box by its Kind, verbatim, and a findings badge on the overview', async () => {
@@ -385,6 +385,38 @@ describe('TopologyView popovers and Help, reviewed', () => {
     expect(popover.hidden).toBe(false)
     await fireEvent.pointerDown(document.body)
     expect(popover.hidden).toBe(true)
+  })
+})
+
+describe('TopologyView toolbar polish', () => {
+  it('keeps the kind badges on one row that a wheel scrolls sideways, with a fade', async () => {
+    render(TopologyView, { session: session() })
+    await drawn()
+    const row = screen.getByRole('group', { name: 'Kinds drawn' }) as HTMLElement
+    expect(row.className).toContain('overflow-x-auto')
+    expect(row.className).not.toContain('flex-wrap')
+
+    // Wider content than the row: the right edge fades, and a vertical wheel
+    // moves it sideways.
+    Object.defineProperty(row, 'scrollWidth', { configurable: true, value: 900 })
+    Object.defineProperty(row, 'clientWidth', { configurable: true, value: 300 })
+    await fireEvent.scroll(row)
+    expect(row.dataset.fade).toBe('right')
+
+    await fireEvent.wheel(row, { deltaY: 120, deltaX: 0 })
+    expect(row.scrollLeft).toBe(120)
+    expect(row.dataset.fade).toBe('both')
+  })
+
+  it('keeps Changed on one line and the search placeholder short, its syntax in the title', async () => {
+    render(TopologyView, { session: session() })
+    await drawn()
+    const field = screen.getByRole('textbox', { name: 'Find on the topology' }) as HTMLInputElement
+    expect(field.placeholder).toBe('Find… kind: ns:')
+    expect(field.title).toContain('kind:Service')
+    backend.emit({ clusterId: 'dev', namespaces: ['shop'] })
+    const badge = await screen.findByRole('button', { name: /Changed · Refresh/ })
+    expect(badge.className).toContain('whitespace-nowrap')
   })
 })
 

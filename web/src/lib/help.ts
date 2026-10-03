@@ -953,6 +953,12 @@ export const HELP_TOPICS = {
         ],
       },
       {
+        heading: 'Finding an object',
+        body: [
+          'Type a name in Find. kind: and ns: narrow it — kind:Service, ns:web, or both with a name. Enter goes to the next match and Shift+Enter to the previous; an object folded into a set or a collapsed group is found on the box that stands for it.',
+        ],
+      },
+      {
         heading: 'Bounded',
         body: [
           'ConfigMaps, Secrets and volume claims are drawn by the names the pod templates give them. PodSteer does not read them to draw the map — a Secret is never read at all — so a box can name something that does not exist.',

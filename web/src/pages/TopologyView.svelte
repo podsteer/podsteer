@@ -65,6 +65,7 @@
   import ToolbarToggle from '$lib/components/ToolbarToggle.svelte'
   import { dismissable } from '$lib/popover'
   import Select from '$lib/components/Select.svelte'
+  import Checkbox from '$lib/components/Checkbox.svelte'
   import ToolbarSearch from '$lib/components/ToolbarSearch.svelte'
   import HelpButton from '$lib/components/HelpButton.svelte'
   import { help } from '$stores/help.svelte'
@@ -232,6 +233,47 @@
 
   const orientation = $derived(preferences.mapOrientation)
   const horizontal = $derived(orientation === 'horizontal')
+
+  // The kind row: one line, scrolled sideways, with a fade on whichever side
+  // has more.
+  let kindRow = $state<HTMLDivElement | null>(null)
+  let kindFade = $state<'none' | 'left' | 'right' | 'both'>('none')
+
+  function measureKindRow(): void {
+    const row = kindRow
+    if (!row) return
+    const left = row.scrollLeft > 1
+    const right = row.scrollLeft + row.clientWidth < row.scrollWidth - 1
+    kindFade = left && right ? 'both' : left ? 'left' : right ? 'right' : 'none'
+  }
+
+  const FADE = '24px'
+  const kindMask = $derived(
+    kindFade === 'none'
+      ? undefined
+      : `linear-gradient(to right, ${kindFade === 'left' || kindFade === 'both' ? 'transparent' : 'black'}, black ${FADE}, black calc(100% - ${FADE}), ${kindFade === 'right' || kindFade === 'both' ? 'transparent' : 'black'})`,
+  )
+
+  /** A vertical wheel over the row scrolls it sideways, when it can scroll. */
+  function onKindWheel(event: WheelEvent): void {
+    const row = kindRow
+    if (!row || row.scrollWidth <= row.clientWidth) return
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+    event.preventDefault()
+    row.scrollLeft += event.deltaY
+    measureKindRow()
+  }
+
+  $effect(() => {
+    const row = kindRow
+    void toggles
+    if (!row) return
+    measureKindRow()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(measureKindRow)
+    observer.observe(row)
+    return () => observer.disconnect()
+  })
 
   function toggleKind(apiKind: string): void {
     const next = new Set(hiddenKinds)
@@ -937,7 +979,9 @@
         bind:value={groupLabel}
         aria-label="Label key to group by"
         placeholder="label key"
-        class="h-8 w-48 rounded-sm border border-outline-variant bg-surface px-2 text-body-small text-on-surface"
+        autocomplete="off"
+        spellcheck="false"
+        class="field h-8 w-48 px-2 text-body-medium"
       />
     {/if}
 
@@ -970,14 +1014,18 @@
             class="absolute left-0 top-9 z-30 flex max-h-96 w-72 flex-col gap-2 rounded-md border
                    border-outline-variant bg-surface-container p-3 shadow-lg"
           >
-            <label class="flex items-center gap-2 text-body-medium text-on-surface">
-              <input
-                type="checkbox"
+            <div class="px-1 py-1">
+              <Checkbox
+                full
+                dense
                 checked={(grouped?.hidden.length ?? 0) === 0}
-                onchange={(event) => showAllApps(event.currentTarget.checked)}
-              />
-              All applications
-            </label>
+                indeterminate={(grouped?.hidden.length ?? 0) > 0 && (grouped?.hidden.length ?? 0) < appCount}
+                onchange={(on) => showAllApps(on)}
+                class="text-body-medium text-on-surface"
+              >
+                All applications
+              </Checkbox>
+            </div>
             <input
               type="text"
               autocomplete="off"
@@ -985,19 +1033,26 @@
               bind:value={appFilter}
               placeholder="Filter applications…"
               aria-label="Filter applications"
-              class="field h-8 px-2 text-body-small"
+              class="field h-8 px-2 text-body-medium"
             />
             <ul class="min-h-0 flex-1 overflow-y-auto" aria-label="Applications">
               {#each appChoices as app (app.id)}
-                <li>
-                  <label class="flex items-center gap-2 py-0.5 text-body-small text-on-surface">
-                    <input type="checkbox" checked={!hiddenApps.has(app.id)} onchange={() => toggleApp(app.id)} />
-                    <span class="min-w-0 flex-1 truncate">{app.label}</span>
-                    <span class="tabular-nums text-on-surface-variant">{totalOf(app.counts)}</span>
-                  </label>
+                <li class="px-1 py-1">
+                  <Checkbox
+                    full
+                    dense
+                    checked={!hiddenApps.has(app.id)}
+                    onchange={() => toggleApp(app.id)}
+                    class="text-body-medium text-on-surface"
+                  >
+                    <span class="flex min-w-0 items-center gap-2">
+                      <span class="min-w-0 flex-1 truncate">{app.label}</span>
+                      <span class="shrink-0 tabular-nums text-on-surface-variant">{totalOf(app.counts)}</span>
+                    </span>
+                  </Checkbox>
                 </li>
               {:else}
-                <li class="text-body-small text-on-surface-variant/70">No application matches.</li>
+                <li class="px-1 text-body-medium text-on-surface-variant/70">No application matches.</li>
               {/each}
             </ul>
           </div>
@@ -1011,7 +1066,8 @@
       <ToolbarSearch
         value={query}
         label="Find on the topology"
-        placeholder="Find… (kind:Service ns:web)"
+        placeholder="Find… kind: ns:"
+        description="Find by name; narrow with kind:Service or ns:web. Enter for the next match, Shift+Enter for the previous."
         count={query.trim() ? (matches.length === 0 ? '0' : `${Math.min(matchIndex + 1, matches.length)}/${matches.length}`) : undefined}
         empty={query.trim() !== '' && matches.length === 0}
         onchange={(value) => (query = value)}
@@ -1026,11 +1082,12 @@
         <button
           type="button"
           onclick={() => void load(true)}
-          class="flex h-7 items-center gap-1 rounded-full bg-notice-warn px-2.5 text-label-medium text-gauge-warn-ink"
-          title="Something in this scope changed since it was drawn"
+          class="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-notice-warn px-2.5
+                 text-label-medium text-gauge-warn-ink"
+          title="Something in this scope changed since it was drawn — read it again"
         >
-          <RefreshCw class="size-3.5" strokeWidth={2} />
-          Changed — Refresh
+          <RefreshCw class="size-3.5 shrink-0" strokeWidth={2} />
+          Changed · Refresh
         </button>
       {/if}
       <button
@@ -1144,10 +1201,19 @@
   {#if toggles.length > 0}
     <!-- One toggle per Kind, with the COMPLETE count: switching a kind off
          changes what is drawn, never what the page says it found. -->
+    <!-- ONE ROW, scrolled sideways rather than wrapped onto two or three:
+         a wheel over it scrolls it, a fade says there is more on that side,
+         and Tab still reaches every badge (the browser scrolls it into view). -->
     <div
-      class="flex shrink-0 flex-wrap items-center gap-1 border-b border-outline-variant/40 px-3 py-1.5"
+      bind:this={kindRow}
+      onscroll={measureKindRow}
+      onwheel={onKindWheel}
+      class="kind-row flex shrink-0 items-center gap-1 overflow-x-auto border-b border-outline-variant/40 px-3 py-1.5"
+      style:mask-image={kindMask}
+      style:-webkit-mask-image={kindMask}
       role="group"
       aria-label="Kinds drawn"
+      data-fade={kindFade}
     >
       {#each toggles as toggle (toggle.apiKind)}
         {@const on = !hiddenKinds.has(toggle.apiKind)}
@@ -1155,7 +1221,7 @@
           type="button"
           aria-pressed={on}
           onclick={() => toggleKind(toggle.apiKind)}
-          class="flex h-6 items-center gap-1 rounded-full border px-2 text-label-small
+          class="flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2 text-label-small
                  {on
             ? 'border-outline-variant bg-surface-container-high text-on-surface'
             : 'border-outline-variant/50 text-on-surface-variant/70 line-through'}"
@@ -1503,6 +1569,14 @@
 </div>
 
 <style>
+  /* The kind row scrolls without a bar: the fade is what says there is more. */
+  .kind-row {
+    scrollbar-width: none;
+  }
+  .kind-row::-webkit-scrollbar {
+    display: none;
+  }
+
   /*
     The dependency map's flow, reused: dashes travel from source to target, so
     the movement reads as direction rather than decoration. Applied only while
