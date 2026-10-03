@@ -250,7 +250,7 @@ describe('TopologyView, as the toolbar now has it', () => {
   async function groupByApplication() {
     const trigger = document.querySelector('[data-select-trigger]') as HTMLElement
     await fireEvent.click(trigger)
-    await fireEvent.click(screen.getByRole('option', { name: /Group by application/ }))
+    await fireEvent.click(screen.getByRole('option', { name: /By application/ }))
   }
 
   it('hides unticked applications and keeps the kind counts complete', async () => {
@@ -358,7 +358,7 @@ describe('TopologyView popovers and Help, reviewed', () => {
     await drawn()
     const trigger = document.querySelector('[data-select-trigger]') as HTMLElement
     await fireEvent.click(trigger)
-    await fireEvent.click(screen.getByRole('option', { name: /Group by application/ }))
+    await fireEvent.click(screen.getByRole('option', { name: /By application/ }))
     const apps = screen.getByRole('button', { name: /All applications/ })
     await fireEvent.click(apps)
     const all = screen.getByRole('dialog', { name: 'Applications drawn' }).querySelector('input') as HTMLInputElement
@@ -453,7 +453,7 @@ describe('TopologyView kind row buttons and search width', () => {
     // The same SearchField the list pages' header uses, ⌘K hint and all.
     const box = field.closest('label') as HTMLElement
     expect(box.className).toContain('flex-1')
-    expect(box.className).toContain('min-w-32')
+    expect(box.className).toContain('min-w-48')
     const live = screen.getByRole('switch')
     expect(live.className).toContain('shrink-0')
   })

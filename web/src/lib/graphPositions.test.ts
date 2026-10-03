@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { group } from './graphGroup'
 import { anchorShift, preserve, shapeKey, type Drawn, refitsOnLayout } from './graphPositions'
 import { layoutCompound, type CompoundLayout } from './graphLayout'
 
@@ -95,5 +96,28 @@ describe('refitsOnLayout', () => {
 
   it('keeps the anchor once somebody has panned or zoomed', () => {
     expect(refitsOnLayout({ fitNext: false, fitHeld: false, drawnShape: 'v|other', shape })).toBe(false)
+  })
+})
+
+describe('collapse all, as the grouping rule sees it', () => {
+  // Two namespaces, each one Deployment; "collapse all" draws two group boxes
+  // instead of the two Deployments — a different shape, like a regrouping.
+  const view = {
+    nodes: ['a', 'b'].map((ns) => ({
+      id: `${ns}/Deployment/web`, kind: 'workload', apiKind: 'Deployment', name: 'web', namespace: ns,
+      state: 'ok' as const, detail: '', group: '', members: [`${ns}/Deployment/web`], counts: { Deployment: 1 },
+    })),
+    edges: [],
+  }
+  const open = group(view, 'namespace', new Set())
+  const closed = group(view, 'namespace', new Set(open.groups.map((g) => g.id)))
+  const shape = (g: typeof open) => shapeKey(g.nodes.map((n) => n.id), g.parents)
+
+  it('refits when nobody has panned or zoomed since the last fit', () => {
+    expect(refitsOnLayout({ fitNext: false, fitHeld: true, drawnShape: shape(open), shape: shape(closed) })).toBe(true)
+  })
+
+  it('keeps the anchor once the view has been moved', () => {
+    expect(refitsOnLayout({ fitNext: false, fitHeld: false, drawnShape: shape(open), shape: shape(closed) })).toBe(false)
   })
 })

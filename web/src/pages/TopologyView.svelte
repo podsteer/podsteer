@@ -67,7 +67,7 @@
   import Checkbox from '$lib/components/Checkbox.svelte'
   import { scrollEdges, scrollStep } from '$lib/scrollEdges'
   import SearchField from '$lib/components/SearchField.svelte'
-  import { overflowControls, type TopologyHeaderContent } from '$lib/topologyHeader'
+  import { decideHeader, type TopologyHeaderContent } from '$lib/topologyHeader'
   import HelpButton from '$lib/components/HelpButton.svelte'
   import { help } from '$stores/help.svelte'
   import type { HelpSection } from '$lib/help'
@@ -849,8 +849,8 @@
   let searchBox = $state<{ focus: () => void } | null>(null)
   /** The width the header leaves for the controls, as drawn. */
   let controlsWidth = $state(0)
-  const overflow = $derived(
-    overflowControls(controlsWidth, {
+  const headerDecision = $derived(
+    decideHeader(controlsWidth, {
       apps: groupChoice === 'app' && appCount > 0,
       labelField: groupChoice === 'label',
       changed,
@@ -858,6 +858,7 @@
       groups: Boolean(grouped && grouped.groups.length > 0),
     }),
   )
+  const overflow = $derived(headerDecision.menu)
   /** The complete count of what the scope holds, as the list pages count rows. */
   const objectCount = $derived(graph ? totalOf(graph.counts) || graph.nodes.length : null)
 
@@ -1019,9 +1020,9 @@
     node.set === 'group' ? 'Group' : node.set ? describeCounts(node.counts) : node.apiKind
 
   const groupChoices = [
-    { value: 'namespace', label: 'Group by namespace' },
-    { value: 'app', label: 'Group by application' },
-    { value: 'label', label: 'Group by label' },
+    { value: 'namespace', label: 'By namespace' },
+    { value: 'app', label: 'By application' },
+    { value: 'label', label: 'By label' },
     { value: 'none', label: 'No groups' },
   ]
 </script>
@@ -1052,7 +1053,7 @@
       onchange={(value) => (query = value)}
       onsubmit={(backwards) => (backwards ? goToMatch(-1) : nextMatch())}
       invalid={query.trim() !== '' && matches.length === 0}
-      class="min-w-32 flex-1"
+      class="min-w-48 flex-1"
     />
     {#if query.trim()}
       <span class="shrink-0 text-label-medium tabular-nums text-on-surface-variant" aria-live="polite">
@@ -1158,7 +1159,22 @@
     {/if}
 
 
-    {#if changed}
+    {#if changed && headerDecision.changedCompact}
+      <!-- Narrow: the same notice as an icon, so it costs a button's width
+           rather than the search's. -->
+      <button
+        type="button"
+        onclick={() => void load(true)}
+        aria-label="Changed — refresh"
+        title="Something in this scope changed since it was drawn — read it again"
+        class="state-layer relative grid size-7 shrink-0 place-items-center rounded-full text-gauge-warn-ink
+               hover:bg-surface-container"
+        data-changed-compact
+      >
+        <RefreshCw class="size-4" strokeWidth={1.8} />
+        <span class="absolute top-0.5 right-0.5 size-2 rounded-full bg-gauge-warn ring-2 ring-surface" aria-hidden="true"></span>
+      </button>
+    {:else if changed}
       <!-- Said, not done: the map holds still until somebody asks. -->
       <button
         type="button"

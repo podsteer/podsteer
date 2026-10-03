@@ -1621,8 +1621,12 @@ wins by terminating the busy worker) → `graphPositions` → `graphCull` → dr
   through matches; `kind:` and `ns:` are typed text; nothing suggests). The
   row never wraps: `$lib/topologyHeader` folds zoom, orientation, collapse
   all, fit, export, refresh and Live — in that order — into a "⋯" menu when
-  the header is too narrow. Without a header host the page draws the same
-  controls in a row of its own.
+  the header is too narrow, never squeezing the search under 12rem (⌘K hint
+  included; its CSS minimum is the same). "Changed · Refresh" takes its
+  label only if that fits without folding more; otherwise it is a 32px icon,
+  and its arrival folds at most one more control. Collapse all refits under
+  the grouping rule (`refitsOnLayout`: only while nobody has moved the view).
+  Without a header host the page draws the same controls in a row of its own.
 
 ## Secrets are read on request, never on render
 

@@ -7,8 +7,16 @@
  * When it is narrow, the least-needed map controls move into an overflow menu,
  * lowest priority first: zoom (the wheel and +/- do it), orientation, collapse
  * all groups, fit, export, refresh, then Live. Search keeps at least
- * SEARCH_MIN; grouping, the applications menu, Changed, traffic and help
- * always stay.
+ * SEARCH_MIN — 12rem, its ⌘K hint included — and is never what gives way;
+ * the field's own CSS minimum is the same number, so an estimate that is
+ * off by a few pixels cannot clip its placeholder either. Grouping, the
+ * applications menu, Changed, traffic and help always stay.
+ *
+ * CHANGED IS NOT ALLOWED TO RESHUFFLE THE ROW. When "Changed · Refresh"
+ * appears it takes its full label only if that fits without folding anything
+ * the row did not already fold; otherwise it is drawn as a 32px icon, and
+ * only if even that does not fit is ONE more control folded — the next in
+ * the order. A notice arriving never moves four controls at once.
  *
  * Widths are the drawn sizes of the controls (a 28px icon button, the gaps
  * between them), estimated rather than measured: measuring would need every
@@ -38,12 +46,14 @@ const WIDTH: Record<Overflowable, number> = {
   live: 78,
 }
 
-/** The search field never shrinks below this (8rem). */
-export const SEARCH_MIN = 128
-const GROUPING = 176
+/** The search field never shrinks below this (12rem, ⌘K hint included). */
+export const SEARCH_MIN = 192
+const GROUPING = 140 // "By application", the longest choice
 const APPS = 160
 const LABEL_FIELD = 198
-const CHANGED = 138
+const CHANGED = 150
+/** "Changed" as an icon button, when the full label does not fit. */
+const CHANGED_COMPACT = 34
 const TRAFFIC = 34
 const TRAFFIC_OPTIONS = 34
 const HELP = 38
@@ -55,6 +65,8 @@ export interface HeaderState {
   apps: boolean
   labelField: boolean
   changed: boolean
+  /** Changed drawn as its icon rather than its label. */
+  changedCompact?: boolean
   trafficOn: boolean
   /** Whether there are groups to collapse, so "layers" is drawn at all. */
   groups: boolean
@@ -67,7 +79,7 @@ export function headerWidth(state: HeaderState, menu: ReadonlySet<Overflowable>)
     GROUPING +
     (state.apps ? APPS : 0) +
     (state.labelField ? LABEL_FIELD : 0) +
-    (state.changed ? CHANGED : 0) +
+    (state.changed ? (state.changedCompact ? CHANGED_COMPACT : CHANGED) : 0) +
     TRAFFIC +
     (state.trafficOn ? TRAFFIC_OPTIONS : 0) +
     HELP +
@@ -122,3 +134,33 @@ export interface TopologyHeaderContent {
   controls: Snippet
   focusSearch: () => void
 }
+
+/** What the header draws: which controls fold, and how Changed is shown. */
+export interface HeaderDecision {
+  menu: Set<Overflowable>
+  changedCompact: boolean
+}
+
+/**
+ * The whole decision, with Changed's rule applied: decided first as if
+ * Changed were absent, then Changed takes its full label if that fits as is,
+ * else its icon, and only then one more control folds (and another only if
+ * the icon still does not fit, which a 34px button rarely needs).
+ */
+export function decideHeader(available: number, state: HeaderState): HeaderDecision {
+  const base = overflowControls(available, { ...state, changed: false })
+  if (!state.changed || !(available > 0)) return { menu: base, changedCompact: false }
+
+  if (headerWidth({ ...state, changedCompact: false }, base) <= available) {
+    return { menu: base, changedCompact: false }
+  }
+  const compact = { ...state, changedCompact: true }
+  const menu = new Set(base)
+  for (const control of OVERFLOW_ORDER) {
+    if (headerWidth(compact, menu) <= available) break
+    if (menu.has(control) || (control === 'layers' && !state.groups)) continue
+    menu.add(control)
+  }
+  return { menu, changedCompact: true }
+}
+
