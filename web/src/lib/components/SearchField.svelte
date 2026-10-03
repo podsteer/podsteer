@@ -49,6 +49,12 @@
      * that FINDS (the topology) rather than filters. Shift+Enter goes back.
      */
     onsubmit?: (backwards: boolean) => void
+    /**
+     * Inside a menu (a namespace or application list's filter): no ⌘K hint,
+     * since ⌘K reaches the page's search and not this one, and the field
+     * takes focus as the menu opens.
+     */
+    inMenu?: boolean
   }
 
   let {
@@ -61,6 +67,7 @@
     description,
     label,
     onsubmit,
+    inMenu = false,
   }: Props = $props()
 
   // `aria-describedby` needs an id to point at, and this field can appear
@@ -70,6 +77,14 @@
   const descriptionId = `${uid}-description`
 
   let inputEl = $state<HTMLInputElement | null>(null)
+
+  // A menu's filter is where typing goes the moment the menu opens.
+  let focusedOnce = false
+  $effect(() => {
+    if (!inMenu || !inputEl || focusedOnce) return
+    focusedOnce = true
+    inputEl.focus()
+  })
 
   /** Focus the search field. Called from outside via Cmd+K. */
   export function focus(): void {
@@ -157,7 +172,7 @@
     >
       <X class="size-3" strokeWidth={2.5} />
     </button>
-  {:else}
+  {:else if !inMenu}
     <span
       class="pointer-events-none absolute right-2 flex items-center gap-0.5 rounded border
              border-outline-variant/40 bg-surface-container px-1.5 py-0.5 text-label-small

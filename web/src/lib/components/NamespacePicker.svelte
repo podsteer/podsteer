@@ -34,6 +34,7 @@
   import { escapeLayer, type EscapeClaim } from '$lib/escape'
   import { namespaceLabelOf, scopeOf, type NamespaceScope } from '$lib/namespaceScope'
   import Checkbox from './Checkbox.svelte'
+  import SearchField from './SearchField.svelte'
 
 
   interface Choice {
@@ -257,9 +258,6 @@
     hide(false)
   }
 
-  function autofocus(node: HTMLInputElement): void {
-    node.focus()
-  }
 
   $effect(() => () => {
     claim?.release()
@@ -312,15 +310,14 @@
           All namespaces
         </Checkbox>
       </div>
-      <input
-        use:autofocus
-        type="text"
-        autocomplete="off"
-        spellcheck="false"
-        bind:value={filter}
+      <!-- The app's own search field, in its in-menu form: it takes focus,
+           and ↑/↓/Space/Enter/Escape reach the panel's handler as before. -->
+      <SearchField
+        inMenu
+        value={filter}
+        onchange={(next) => (filter = next)}
         placeholder="Filter namespaces…"
-        aria-label="Filter namespaces"
-        class="field h-8 px-2 text-body-medium"
+        label="Filter namespaces"
       />
       <ul class="min-h-0 flex-1 overflow-y-auto" aria-label="Namespaces">
         {#each visible as row, index (row.name)}

@@ -483,3 +483,32 @@ describe('TopologyView in the workspace header', () => {
   })
 })
 
+describe('the applications menu, like every other dropdown', () => {
+  it('turns its chevron when open, and puts focus in the app search field', async () => {
+    useTopologyBackend(fixtureBackend({
+      ...GRAPH,
+      nodes: GRAPH.nodes.map((n) => (n.labels ? n : { ...n })),
+    }))
+    render(TopologyView, { session: session() })
+    await drawn()
+    const trigger = document.querySelector('[data-select-trigger]') as HTMLElement
+    await fireEvent.click(trigger)
+    await fireEvent.click(screen.getByRole('option', { name: /By application/ }))
+
+    const apps = screen.getByRole('button', { name: /All applications/ })
+    const chevron = apps.querySelector('svg:last-of-type') as SVGElement
+    expect(apps.getAttribute('aria-expanded')).toBe('false')
+    expect(chevron.getAttribute('class')).not.toContain('rotate-180')
+
+    await fireEvent.click(apps)
+    expect(apps.getAttribute('aria-expanded')).toBe('true')
+    expect(chevron.getAttribute('class')).toContain('rotate-180')
+
+    const field = screen.getByRole('textbox', { name: 'Filter applications' })
+    await vi.waitFor(() => expect(document.activeElement).toBe(field))
+    // The search field's look, without the ⌘K hint a menu cannot honour.
+    expect(field.className).toContain('field')
+    expect(field.closest('label')?.textContent).not.toMatch(/K/)
+  })
+})
+
