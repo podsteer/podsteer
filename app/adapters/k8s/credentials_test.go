@@ -35,8 +35,8 @@ func TestAuthFingerprintTracksOnlyWhatAuthenticates(t *testing.T) {
 		{"nothing changed", func(*rest.Config) {}, false},
 		{"the token", func(c *rest.Config) { c.BearerToken = "token-two" }, true},
 		{"basic auth", func(c *rest.Config) { c.Username = "admin" }, true},
-		{"a client certificate", func(c *rest.Config) { c.TLSClientConfig.CertData = []byte("c") }, true},
-		{"a client key", func(c *rest.Config) { c.TLSClientConfig.KeyData = []byte("k") }, true},
+		{"a client certificate", func(c *rest.Config) { c.CertData = []byte("c") }, true},
+		{"a client key", func(c *rest.Config) { c.KeyData = []byte("k") }, true},
 		{"the exec command's arguments", func(c *rest.Config) { c.ExecProvider.Args = []string{"eks", "get-token", "--role", "x"} }, true},
 		{"an exec environment variable", func(c *rest.Config) {
 			c.ExecProvider.Env = []clientcmdapi.ExecEnvVar{{Name: "AWS_PROFILE", Value: "prod"}}
@@ -48,7 +48,7 @@ func TestAuthFingerprintTracksOnlyWhatAuthenticates(t *testing.T) {
 		{"impersonation", func(c *rest.Config) { c.Impersonate.UserName = "someone" }, true},
 		{"the server address is not authentication", func(c *rest.Config) { c.Host = "https://other:6443" }, false},
 		{"the rate limit is not authentication", func(c *rest.Config) { c.QPS = 500 }, false},
-		{"the CA is not authentication", func(c *rest.Config) { c.TLSClientConfig.CAData = []byte("ca") }, false},
+		{"the CA is not authentication", func(c *rest.Config) { c.CAData = []byte("ca") }, false},
 	}
 
 	want := authFingerprint(base())
@@ -64,7 +64,7 @@ func TestAuthFingerprintTracksOnlyWhatAuthenticates(t *testing.T) {
 
 	t.Run("a certificate file rewritten in place", func(t *testing.T) {
 		cfg := base()
-		cfg.TLSClientConfig.CertFile = certFile
+		cfg.CertFile = certFile
 		before := authFingerprint(cfg)
 		if err := os.WriteFile(certFile, []byte("cert-two"), 0o600); err != nil {
 			t.Fatal(err)

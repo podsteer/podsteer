@@ -313,7 +313,7 @@ func TestAPanickingFetchIsAnErrorAndIsNotCached(t *testing.T) {
 				if calls.Add(1) == 1 {
 					if tt.panic == nil {
 						var m map[string]int
-						m["x"] = 1
+						m["x"] = 1 //nolint:staticcheck // SA5000 on purpose: a real runtime panic, not a panic(value)
 					}
 					panic(tt.panic)
 				}
