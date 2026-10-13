@@ -7,7 +7,7 @@ require (
 	github.com/creack/pty v1.1.24
 	github.com/wailsapp/wails/v3 v3.0.0-beta.25
 	golang.org/x/net v0.59.0
-	golang.org/x/sync v0.23.0
+	golang.org/x/sync v0.24.0
 	golang.org/x/sys v0.48.0
 	golang.org/x/text v0.42.0
 	k8s.io/api v0.37.1
