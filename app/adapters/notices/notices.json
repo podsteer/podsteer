@@ -328,7 +328,7 @@
   },
   {
    "name": "golang.org/x/net",
-   "version": "v0.59.0",
+   "version": "v0.62.0",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
    "copyright": "Copyright 2009 The Go Authors.",
@@ -344,7 +344,7 @@
   },
   {
    "name": "golang.org/x/sync",
-   "version": "v0.23.0",
+   "version": "v0.24.0",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
    "copyright": "Copyright 2009 The Go Authors.",
@@ -352,7 +352,7 @@
   },
   {
    "name": "golang.org/x/sys",
-   "version": "v0.48.0",
+   "version": "v0.49.0",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
    "copyright": "Copyright 2009 The Go Authors.",
@@ -360,7 +360,7 @@
   },
   {
    "name": "golang.org/x/term",
-   "version": "v0.46.0",
+   "version": "v0.47.0",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
    "copyright": "Copyright 2009 The Go Authors.",
@@ -368,7 +368,7 @@
   },
   {
    "name": "golang.org/x/text",
-   "version": "v0.42.0",
+   "version": "v0.43.0",
    "ecosystem": "go",
    "licence": "BSD-3-Clause",
    "copyright": "Copyright 2009 The Go Authors.",
