@@ -641,7 +641,7 @@
   },
   {
    "name": "@lucide/svelte",
-   "version": "1.48.0",
+   "version": "1.68.0",
    "ecosystem": "npm",
    "licence": "ISC",
    "copyright": "Copyright (c) 2026 Lucide Icons and Contributors · Copyright (c) 2013-present Cole Bemis",
@@ -836,7 +836,7 @@
   },
   {
    "name": "svelte",
-   "version": "5.57.1",
+   "version": "5.57.3",
    "ecosystem": "npm",
    "licence": "MIT",
    "copyright": "Copyright (c) 2016-2025 [Svelte Contributors](https://github.com/sveltejs/svelte/graphs/contributors)",
