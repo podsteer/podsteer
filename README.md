@@ -140,9 +140,9 @@ downloads with a little more context.
 - Go 1.27+ (the version `go.mod` pins, and the toolchain whose own macOS
   floor the darwin build tracks — see the note in the Makefile)
 - Node.js 20+
-- The [Wails v3 CLI](https://v3.wails.io), pinned to the beta this repository
+- The [Wails v3 CLI](https://v3.wails.io), pinned to the release this repository
   builds against:
-  `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.25`
+  `go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0`
 - A kubeconfig at `$KUBECONFIG` or `~/.kube/config`
 
 &nbsp;
