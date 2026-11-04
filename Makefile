@@ -356,8 +356,11 @@ icons:
 ifeq ($(OS),Windows_NT)
 	@# The resource object carries the icon, the version metadata and the
 	@# DPI-aware manifest. It has to sit beside main.go for the linker to
-	@# find it, which is why it is git-ignored at the root.
-	@$(WAILS) generate syso -icon build/windows/icon.ico \
+	@# find it, which is why it is git-ignored at the root. `-arch` is
+	@# required from Wails v3.1.0 (it no longer defaults and fails with
+	@# "arch '' not supported"); `go env GOARCH` is the architecture the
+	@# binary is linked for, so the two cannot disagree.
+	@$(WAILS) generate syso -arch $(shell go env GOARCH) -icon build/windows/icon.ico \
 		-info build/windows/info.json \
 		-manifest build/windows/podsteer.exe.manifest \
 		-out podsteer.syso >/dev/null
