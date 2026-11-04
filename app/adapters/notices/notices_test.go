@@ -139,7 +139,8 @@ func TestWindowsOnlyModulesAreCovered(t *testing.T) {
 	// mousetrap were once here and left when the kubeconfig loading rules
 	// stopped going through genericclioptions; go-webview2 left with Wails v2,
 	// which used it for the WebView2 loader where v3 goes through its own
-	// pkg/w32. In each case the inventory dropping them was the generator
+	// pkg/w32; go-colorable left with Wails v3.1.0, which stopped importing
+	// it. In each case the inventory dropping them was the generator
 	// being right rather than being single-platform, which is why this list is
 	// re-derived from `go list -deps` under GOOS=windows when it changes.
 	//
@@ -149,7 +150,6 @@ func TestWindowsOnlyModulesAreCovered(t *testing.T) {
 	for _, name := range []string{
 		"git.sr.ht/~jackmordaunt/go-toast/v2",
 		"github.com/go-ole/go-ole",
-		"github.com/mattn/go-colorable",
 	} {
 		if !present[name] {
 			t.Errorf("%s is linked into the Windows build but is absent from the notices; "+

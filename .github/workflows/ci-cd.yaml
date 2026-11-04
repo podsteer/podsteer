@@ -26,10 +26,10 @@ on:
 env:
   GO_VERSION_FILE: go.mod
   NODE_VERSION: '24'
-  # Wails v3. Pinned to the exact beta the repository builds against — a beta
-  # renames things between releases, and `@latest` here would break a build
-  # nobody changed.
-  WAILS_VERSION: v3.0.0-beta.25
+  # Wails v3. Pinned to the exact release the repository builds against —
+  # Wails ships a weekly minor, and `@latest` here would move a build nobody
+  # changed.
+  WAILS_VERSION: v3.1.0
   # LINUX_TAGS pins v3's GTK3 backend. v3 defaults to gtk4 + webkitgtk-6.0,
   # which Ubuntu 22.04 LTS does not carry at all, so defaulting would drop a
   # distribution PodSteer supports today for no gain the operator can see.

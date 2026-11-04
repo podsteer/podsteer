@@ -4,13 +4,13 @@ A desktop Kubernetes client built on Wails v3 (Go backend + the OS's native
 webview) rather than Electron, so that it starts fast and stays small in
 memory.
 
-Wails v3 is a BETA (`v3.0.0-beta.25`, pinned exactly in FOUR places that move
-together: `go.mod`, `@wailsio/runtime` in `web/package.json`,
+Wails v3 (`v3.1.0`) is pinned exactly in FOUR places that move together:
+`go.mod`, `@wailsio/runtime` in `web/package.json`,
 `.github/workflows/ci-cd.yaml` and README's CLI install line — then
-`make bindings` and `make notices`). It is pinned rather than floated because a
-beta renames things between releases, and `@latest` in CI would break a build
-nobody changed. Read every release note between the pin and the target before
-moving it; Dependabot proposes a version, not a migration.
+`make bindings` and `make notices`. Wails now ships a weekly minor release, so
+`@latest` in CI would still move a build nobody changed. Read every release
+note between the pin and the target before moving it, and never take a
+`-nightly`; Dependabot proposes a version, not a migration.
 
 **Release packaging** beyond the zips: `build/package-linux.sh` (nfpm + appimagetool;
 config in `build/linux/`) makes the AppImage/.deb/.rpm for amd64 and arm64,
