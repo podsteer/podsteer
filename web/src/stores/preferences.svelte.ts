@@ -725,6 +725,16 @@ interface PersistedShape {
    * terms, and a machine that can do one and not the other is ordinary.
    */
   desktopNotificationsEnabled: boolean
+  /**
+   * Whether PodSteer keeps refreshing at full rate while its window is
+   * hidden, minimised, occluded or behind a locked screen.
+   *
+   * macOS otherwise pauses the refresh timer (App Nap, and WebKit's
+   * hidden-page suspension), which leaves gaps in the sampled metrics and
+   * once left a poll dead until somebody refreshed by hand. Off trades those
+   * gaps for battery. It never keeps the machine itself awake.
+   */
+  backgroundRefreshEnabled: boolean
   /** severity -> the id of the motif it plays, or SILENT. */
   alertSounds: Record<AlertSeverity, string>
   /**
@@ -829,6 +839,10 @@ const DEFAULTS: PersistedShape = {
   // nobody asked for is one people deny permanently — taking with it the
   // notification they would have wanted later. Turning it on is what asks.
   desktopNotificationsEnabled: false,
+  // On: metrics without gaps is what this application is for, and the cost
+  // (battery while hidden) is one somebody on a laptop can choose to stop
+  // paying in Settings.
+  backgroundRefreshEnabled: true,
   alertSounds: DEFAULT_ALERT_SOUNDS,
   columns: {},
   customColumns: {},
@@ -917,6 +931,7 @@ export interface ExportedPreferences {
   sections: Record<string, boolean>
   alertSoundsEnabled: boolean
   desktopNotificationsEnabled: boolean
+  backgroundRefreshEnabled: boolean
   alertSounds: Record<AlertSeverity, string>
   columns: Record<string, Record<string, ColumnPreference>>
   customColumns: Record<string, CustomColumnSpec[]>
@@ -1117,6 +1132,9 @@ class Preferences {
 
   /** Whether a newly raised CRITICAL finding also posts an OS notification. */
   desktopNotificationsEnabled = $state<boolean>(DEFAULTS.desktopNotificationsEnabled)
+
+  /** Whether refreshing carries on at full rate while the window is hidden. */
+  backgroundRefreshEnabled = $state<boolean>(DEFAULTS.backgroundRefreshEnabled)
 
   /** Which motif each severity plays, by id, or SILENT for none. */
   alertSounds = $state<Record<AlertSeverity, string>>({ ...DEFAULTS.alertSounds })
@@ -1750,6 +1768,15 @@ class Preferences {
   }
 
   /**
+   * Turns background refreshing on or off. Only the choice: App.svelte
+   * hands it to Go, which is what actually holds the process awake.
+   */
+  setBackgroundRefreshEnabled = (enabled: boolean): void => {
+    this.backgroundRefreshEnabled = enabled
+    this.#save()
+  }
+
+  /**
    * Chooses one severity's motif, and plays it.
    *
    * Choosing a sound without hearing it is choosing from a few words, so the
@@ -1984,6 +2011,7 @@ class Preferences {
     sections: { ...this.sections },
     alertSoundsEnabled: this.alertSoundsEnabled,
     desktopNotificationsEnabled: this.desktopNotificationsEnabled,
+    backgroundRefreshEnabled: this.backgroundRefreshEnabled,
     alertSounds: { ...this.alertSounds },
     columns: plainCopy(this.columns),
     customColumns: plainCopy(this.customColumns),
@@ -2034,6 +2062,7 @@ class Preferences {
     this.sections = { ...next.sections }
     this.alertSoundsEnabled = next.alertSoundsEnabled
     this.desktopNotificationsEnabled = next.desktopNotificationsEnabled
+    this.backgroundRefreshEnabled = next.backgroundRefreshEnabled
     this.alertSounds = { ...next.alertSounds }
     this.columns = plainCopy(next.columns)
     this.customColumns = plainCopy(next.customColumns)
@@ -2280,6 +2309,9 @@ class Preferences {
       if (typeof stored.desktopNotificationsEnabled === 'boolean') {
         this.desktopNotificationsEnabled = stored.desktopNotificationsEnabled
       }
+      if (typeof stored.backgroundRefreshEnabled === 'boolean') {
+        this.backgroundRefreshEnabled = stored.backgroundRefreshEnabled
+      }
       // The one sound earlier builds stored becomes the warning sound, before
       // the per-severity map is read over it.
       if (isAlertSound(stored.alertSound)) {
@@ -2371,6 +2403,7 @@ class Preferences {
         sections: this.sections,
         alertSoundsEnabled: this.alertSoundsEnabled,
         desktopNotificationsEnabled: this.desktopNotificationsEnabled,
+        backgroundRefreshEnabled: this.backgroundRefreshEnabled,
         alertSounds: this.alertSounds,
         columns: this.columns,
         customColumns: this.customColumns,
@@ -2472,6 +2505,7 @@ export const EXPORTED_PREFERENCE_FIELDS = [
   'sections',
   'alertSoundsEnabled',
   'desktopNotificationsEnabled',
+  'backgroundRefreshEnabled',
   'alertSounds',
   'columns',
   'customColumns',
@@ -2643,6 +2677,7 @@ const PREFERENCE_READERS: {
   sections: asRecordOf(asBoolean),
   alertSoundsEnabled: asBoolean,
   desktopNotificationsEnabled: asBoolean,
+  backgroundRefreshEnabled: asBoolean,
   alertSounds: asAlertSounds,
   columns: asRecordOf(asRecordOf(asColumnPreference)),
   // Validated spec by spec by the same function the column picker and storage
@@ -2817,6 +2852,7 @@ const PREFERENCE_LABELS: Record<keyof ExportedPreferences, { label: string; unit
   sections: { label: 'Detail sections opened or closed', unit: 'sections' },
   alertSoundsEnabled: { label: 'Sound on a new finding' },
   desktopNotificationsEnabled: { label: 'Desktop notification on a new critical finding' },
+  backgroundRefreshEnabled: { label: 'Keep refreshing while the window is hidden' },
   alertSounds: { label: 'Sound per severity' },
   columns: { label: 'Saved column layouts', unit: 'kinds' },
   customColumns: { label: 'Custom columns', unit: 'kinds' },

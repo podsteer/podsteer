@@ -498,6 +498,33 @@
                 or press {shortcut('refresh').keys} at any time
               </span>
             </div>
+
+            <h3 class="mt-8 text-title-medium text-on-surface">
+              Keep refreshing while the window is hidden
+            </h3>
+            <p class="mt-0.5 text-body-medium text-on-surface-variant">
+              Keeps refreshing and sampling usage at full rate while PodSteer is minimised,
+              behind other windows or behind a locked screen, so the metrics have no gaps.
+              Off lets your operating system slow PodSteer down when you are not looking,
+              which saves battery. It never keeps the computer itself awake: a closed lid
+              still pauses everything, and refreshing resumes as soon as it wakes.
+            </p>
+            <div class="mt-3 flex gap-2" role="group" aria-label="Keep refreshing while the window is hidden">
+              {#each [true, false] as choice (choice)}
+                <button
+                  type="button"
+                  onclick={() => preferences.setBackgroundRefreshEnabled(choice)}
+                  aria-pressed={preferences.backgroundRefreshEnabled === choice}
+                  class="state-layer h-9 min-w-24 rounded-xs border px-4 text-label-large
+                         transition-colors duration-150 ease-standard
+                         {preferences.backgroundRefreshEnabled === choice
+                           ? 'border-transparent bg-secondary-container text-on-secondary-container'
+                           : 'border-outline text-on-surface-variant'}"
+                >
+                  {choice ? 'On' : 'Off'}
+                </button>
+              {/each}
+            </div>
           </section>
         {:else if section === 'appearance'}
           <section class="flex flex-col gap-6">

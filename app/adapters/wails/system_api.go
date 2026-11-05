@@ -88,6 +88,19 @@ func NewSystemAPI(name, version string, app *App, logger *slog.Logger) (*SystemA
 	return s, nil
 }
 
+// SetBackgroundRefresh applies the "Keep refreshing while the window is
+// hidden" preference: enabled stops the platform throttling or suspending the
+// application while its window is not visible (App Nap and WebKit's
+// hidden-page suspension on macOS), disabled hands that back to the platform.
+//
+// The preference itself is the frontend's (localStorage, like every other);
+// this only carries it out, on startup and on every change. It never keeps
+// the machine awake.
+func (s *SystemAPI) SetBackgroundRefresh(enabled bool) {
+	s.app.setBackgroundRunning(enabled)
+	s.logger.Debug("background refresh", slog.Bool("enabled", enabled))
+}
+
 // Info returns the running application's identity.
 func (s *SystemAPI) Info() AppInfo {
 	return s.info

@@ -122,6 +122,15 @@ import { fleet } from './fleet.svelte'
  */
 const MISSED_TICKS_BEFORE_RETRY = 4
 
+/**
+ * How many intervals may pass without a tick before the poll is presumed dead.
+ *
+ * Two, so one tick delayed by a busy main thread or the OS coalescing timers
+ * never counts, while a timer that has stopped firing altogether is caught
+ * the first time anybody looks. See ClusterSession.resume.
+ */
+const SILENT_TICKS_BEFORE_RESTART = 2
+
 export type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 /** One measurement of the open pod, taken from a refresh that already happened. */
@@ -964,6 +973,8 @@ export class ClusterSession {
   /** When the newest request left, so a wedged one can be written off. */
   #requestedAt = 0
   #timer: ReturnType<typeof setInterval> | null = null
+  /** When the poll last fired (or started), so a dead one can be noticed. */
+  #tickedAt = 0
 
   /**
    * When the kind list was last read, as a timestamp.
@@ -3669,7 +3680,9 @@ export class ClusterSession {
     // zero-delay interval would spin the CPU rather than doing nothing.
     if (intervalMs <= 0) return
 
+    this.#tickedAt = Date.now()
     this.#timer = setInterval(() => {
+      this.#tickedAt = Date.now()
       // Skip while a request is in flight, so a slow cluster cannot accumulate
       // a backlog of overlapping refreshes — BUT NOT FOR EVER.
       //
@@ -3693,6 +3706,36 @@ export class ClusterSession {
       clearInterval(this.#timer)
       this.#timer = null
     }
+  }
+
+  /**
+   * Restarts the poll if it has stopped ticking, and refreshes at once.
+   *
+   * WHY THIS EXISTS. A laptop closed overnight with every cluster unreachable
+   * came back with the poll dead: the status bar's "last refreshed" stuck at
+   * the moment of the reconnect, hours earlier, until somebody refreshed by
+   * hand. The tick itself is sound — the stall guard above writes off a
+   * request that never settles — so what stopped was the TIMER: WebKit
+   * suspends a hidden web view's timers, and nothing promises an interval set
+   * before that resumes after it. A clock cannot be trusted to notice its own
+   * death, so this is driven by what the operator does instead — the window
+   * becoming visible, regaining focus, the network returning, a key or a
+   * click — via Workspace.resume.
+   *
+   * CHEAP WHEN NOTHING IS WRONG, which is nearly every call: one comparison.
+   * A timer that is alive and on time is left alone, so a burst of clicks does
+   * not turn into a burst of refreshes.
+   */
+  resume = (intervalMs: number): void => {
+    if (intervalMs <= 0) return
+    const silentFor = Date.now() - this.#tickedAt
+    if (this.#timer !== null && silentFor < intervalMs * SILENT_TICKS_BEFORE_RESTART) return
+
+    console.warn(
+      `[podsteer] auto-refresh for ${this.cluster.id} had not ticked for ${Math.round(silentFor / 1000)}s; restarting it`,
+    )
+    this.startAutoRefresh(intervalMs)
+    void this.refresh()
   }
 
   /** Releases the timer, for when the tab closes. */

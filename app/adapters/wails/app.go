@@ -56,6 +56,11 @@ type App struct {
 	// StartNotifications. Nil until then, and nil for ever on a machine that
 	// cannot deliver — which is what NotificationAPI.Capability reports.
 	notifier *notifications.NotificationService
+	// keepRunning is the platform's switch for running unthrottled while the
+	// window is hidden, set by the composition root (SetBackgroundRunner).
+	// Nil means the platform has none, and SystemAPI.SetBackgroundRefresh
+	// does nothing.
+	keepRunning func(enabled bool)
 }
 
 // Compile-time proof that App can publish domain events.
@@ -74,6 +79,25 @@ func NewApp(logger *slog.Logger, requestTimeout time.Duration) *App {
 	return &App{
 		logger:         logger.With(slog.String("adapter", "wails")),
 		requestTimeout: requestTimeout,
+	}
+}
+
+// SetBackgroundRunner installs the platform's switch for running unthrottled
+// while the window is hidden — macwindow.SetKeepRunningWhenHidden on macOS.
+// A function rather than an import: adapters never import each other.
+func (a *App) SetBackgroundRunner(keepRunning func(enabled bool)) {
+	a.mu.Lock()
+	a.keepRunning = keepRunning
+	a.mu.Unlock()
+}
+
+// setBackgroundRunning flips the installed switch, if there is one.
+func (a *App) setBackgroundRunning(enabled bool) {
+	a.mu.RLock()
+	keepRunning := a.keepRunning
+	a.mu.RUnlock()
+	if keepRunning != nil {
+		keepRunning(enabled)
 	}
 }
 

@@ -22,7 +22,7 @@
   import { updates } from '$stores/updates.svelte'
   import { alertPlayer } from '$stores/alerts.svelte'
   import { notifications } from '$stores/notifications.svelte'
-  import { onNotificationActivated } from '$lib/api/client'
+  import { onNotificationActivated, setBackgroundRefresh } from '$lib/api/client'
   import { OVERVIEW_KIND_ID } from '$stores/session.svelte'
   import { forwards } from '$stores/forwards.svelte'
   import { nodeShells } from '$stores/nodeShells.svelte'
@@ -202,6 +202,52 @@
       preferences.effectiveIntervalMs === 0 ? 0 : HEARTBEAT_INTERVAL_MS,
     )
     return () => workspace.stopHeartbeat()
+  })
+
+  /**
+   * Carries out "Keep refreshing while the window is hidden": on boot, which
+   * is how a stored Off reaches Go (it starts On, the default), and on every
+   * change. A failure is logged, not raised — the worst it costs is the
+   * platform's default throttling.
+   */
+  $effect(() => {
+    const enabled = preferences.backgroundRefreshEnabled
+    setBackgroundRefresh(enabled).catch((cause: unknown) => {
+      console.warn('[podsteer] could not apply background refresh', cause)
+    })
+  })
+
+  /**
+   * Brings a dead poll back the moment somebody returns to the window.
+   *
+   * Timers are not enough on their own: a laptop closed overnight came back
+   * with the 10s refresh no longer firing at all, and nothing a timer drives
+   * can notice that a timer stopped. These signals come from the window and
+   * the operator instead. Each is one comparison when the poll is healthy —
+   * see Workspace.resume.
+   */
+  $effect(() => {
+    const interval = preferences.effectiveIntervalMs
+    if (interval === 0) return
+    const resume = () => workspace.resume(interval)
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') resume()
+    }
+    const options = { capture: true, passive: true }
+    document.addEventListener('visibilitychange', onVisibility)
+    window.addEventListener('focus', resume)
+    window.addEventListener('pageshow', resume)
+    window.addEventListener('online', resume)
+    window.addEventListener('pointerdown', resume, options)
+    window.addEventListener('keydown', resume, options)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      window.removeEventListener('focus', resume)
+      window.removeEventListener('pageshow', resume)
+      window.removeEventListener('online', resume)
+      window.removeEventListener('pointerdown', resume, options)
+      window.removeEventListener('keydown', resume, options)
+    }
   })
 
 </script>

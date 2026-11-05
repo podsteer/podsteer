@@ -219,6 +219,13 @@ describe('what a settings file must never carry', () => {
     // sanitises every entry and re-applies the cap, so an imported file
     // cannot install a set this build would refuse to ask for.
     //
+    // `backgroundRefreshEnabled` was argued for on 2026-11-05 and admitted. It
+    // is ONE BOOLEAN — whether PodSteer keeps refreshing at full rate while its
+    // window is hidden — with no key an object name could arrive under, the
+    // same shape as `desktopNotificationsEnabled`. It is a statement about the
+    // machine's power trade-off, and somebody who turned it off to save
+    // battery on a laptop wants their second laptop to agree.
+    //
     // `savedViews` was argued for on 2026-09-08 and REFUSED. A view holds a
     // namespace and whatever was typed into the search box, and this file's
     // header promises that no pod, node, namespace or workload appears in it.
@@ -242,6 +249,7 @@ describe('what a settings file must never carry', () => {
         'customColumns',
         'debugImage',
         'desktopNotificationsEnabled',
+        'backgroundRefreshEnabled',
         'detailLabelFraction',
         'detailWidthFraction',
         'expandedCategories',
