@@ -590,7 +590,12 @@ class Workspace {
   startHeartbeat = (intervalMs: number): void => {
     this.stopHeartbeat()
     if (intervalMs <= 0) return
-    this.#heartbeat = setInterval(() => void this.beat(), intervalMs)
+    this.#heartbeatMs = intervalMs
+    this.#beatAt = Date.now()
+    this.#heartbeat = setInterval(() => {
+      this.#beatAt = Date.now()
+      void this.beat()
+    }, intervalMs)
   }
 
   stopHeartbeat = (): void => {
@@ -599,7 +604,27 @@ class Workspace {
     this.#heartbeat = null
   }
 
+  /**
+   * Revives any poll whose timer has stopped firing — the tab in front's and
+   * this heartbeat — when the operator comes back to the window.
+   *
+   * Called from App.svelte on visibility, focus, the network returning, and
+   * any key or click: signals that do not depend on a timer, because a timer
+   * suspended by WebKit while the window was hidden is exactly what failed.
+   * See ClusterSession.resume, which does nothing when its poll is on time.
+   */
+  resume = (refreshIntervalMs: number): void => {
+    this.active?.resume(refreshIntervalMs)
+
+    if (this.#heartbeat === null || this.#heartbeatMs <= 0) return
+    if (Date.now() - this.#beatAt < this.#heartbeatMs * 2) return
+    this.startHeartbeat(this.#heartbeatMs)
+    void this.beat()
+  }
+
   #heartbeat: ReturnType<typeof setInterval> | null = null
+  #heartbeatMs = 0
+  #beatAt = 0
 }
 
 /**

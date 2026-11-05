@@ -9,3 +9,7 @@ package macwindow
 // NudgeTrafficLights does nothing outside macOS — there are no traffic
 // lights to nudge.
 func NudgeTrafficLights(_ float64) {}
+
+// SetKeepRunningWhenHidden does nothing outside macOS, where neither App Nap
+// nor WebKit's hidden-page suspension exists.
+func SetKeepRunningWhenHidden(_ bool) {}

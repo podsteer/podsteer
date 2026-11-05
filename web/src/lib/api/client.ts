@@ -170,6 +170,7 @@ import {
   OpenURL as bindOpenURL,
   ReadTextFile as bindReadTextFile,
   SaveTextFile as bindSaveTextFile,
+  SetBackgroundRefresh as bindSetBackgroundRefresh,
 } from '$bindings/systemapi'
 import {
   Cancel as bindCancelFileCopy,
@@ -1621,6 +1622,15 @@ export function forwardBrowserURL(forward: PortForward): string {
 /** Returns the running application's name, version and platform. */
 export function appInfo(): Promise<AppInfo> {
   return call(() => bindInfo())
+}
+
+/**
+ * Tells Go whether the platform may throttle or suspend PodSteer while its
+ * window is hidden — the "Keep refreshing while the window is hidden"
+ * preference, carried out. See SystemAPI.SetBackgroundRefresh.
+ */
+export function setBackgroundRefresh(enabled: boolean): Promise<void> {
+  return call(() => bindSetBackgroundRefresh(enabled))
 }
 
 /** Returns the version and platform facts a bug report needs. */

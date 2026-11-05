@@ -855,3 +855,29 @@ describe('the remembered namespace set per cluster', () => {
     expect(reloaded.namespacesByCluster).toEqual({})
   })
 })
+
+describe('keep refreshing while the window is hidden', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', memoryStorage())
+  })
+
+  it('is on by default', () => {
+    // Metrics without gaps is the point; battery is the opt-out.
+    expect(defaultExportedPreferences().backgroundRefreshEnabled).toBe(true)
+  })
+
+  it('remembers Off across a restart', async () => {
+    preferences.setBackgroundRefreshEnabled(false)
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.backgroundRefreshEnabled).toBe(false)
+    preferences.setBackgroundRefreshEnabled(true)
+  })
+
+  it('keeps the default when storage holds something that is not a boolean', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ backgroundRefreshEnabled: 'no' }))
+
+    const { preferences: reloaded } = await reimportPreferences()
+    expect(reloaded.backgroundRefreshEnabled).toBe(true)
+  })
+})

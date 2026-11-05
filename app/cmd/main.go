@@ -217,6 +217,7 @@ func run() error {
 	// The Wails lifecycle handler doubles as the outbound event publisher, so
 	// it is constructed before the use cases that publish through it.
 	desktop := wailsadapter.NewApp(logger, cfg.Kubernetes.RequestTimeout)
+	desktop.SetBackgroundRunner(macwindow.SetKeepRunningWhenHidden)
 
 	// --- Application (use cases) -----------------------------------------
 	//
@@ -857,6 +858,11 @@ func run() error {
 	desktopApp.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*wailsapp.ApplicationEvent) {
 		// No-op on every platform but macOS. See trafficLightVerticalNudge.
 		macwindow.NudgeTrafficLights(trafficLightVerticalNudge)
+		// On until the frontend says otherwise: it is the default of the
+		// Settings option it reads from localStorage, and the frontend
+		// applies the stored choice through SystemAPI.SetBackgroundRefresh
+		// as soon as it boots. No-op outside macOS.
+		macwindow.SetKeepRunningWhenHidden(true)
 		// Sampling is bounded by the window's own lifetime: it starts when
 		// the application does and stops when it closes, which is exactly
 		// the window the recorded history claims to cover.

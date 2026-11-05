@@ -132,3 +132,17 @@ export function ReadTextFile(title: string): $CancellablePromise<$models.TextFil
 export function SaveTextFile(suggestedName: string, content: string): $CancellablePromise<string> {
     return $Call.ByID(2129877442, suggestedName, content);
 }
+
+/**
+ * SetBackgroundRefresh applies the "Keep refreshing while the window is
+ * hidden" preference: enabled stops the platform throttling or suspending the
+ * application while its window is not visible (App Nap and WebKit's
+ * hidden-page suspension on macOS), disabled hands that back to the platform.
+ * 
+ * The preference itself is the frontend's (localStorage, like every other);
+ * this only carries it out, on startup and on every change. It never keeps
+ * the machine awake.
+ */
+export function SetBackgroundRefresh(enabled: boolean): $CancellablePromise<void> {
+    return $Call.ByID(108488333, enabled);
+}
