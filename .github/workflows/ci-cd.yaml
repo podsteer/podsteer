@@ -256,8 +256,16 @@ jobs:
     # The GitHub-side names carry the PDS__ prefix; the job-local names do not,
     # because inside this workflow there is nothing to disambiguate from and the
     # shell below reads better without it.
+    #
+    # THE IDENTITY IS BLANKED WHEN THE CERTIFICATE SECRET IS ABSENT. Dependabot
+    # runs (and forks) can read repository VARIABLES but receive no Actions
+    # SECRETS, so gating on the identity alone ran the import with an empty
+    # .p12 and failed with "SecKeychainItemImport: One or more parameters
+    # passed to a function were not valid" (PR #216). Blanking it here skips
+    # every macOS signing step together; the unsigned-build step below refuses
+    # that outcome on a tag, so a lost secret cannot ship an unsigned release.
     env:
-      APPLE_SIGNING_IDENTITY: ${{ vars.PDS__APPLE_SIGNING_IDENTITY }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.PDS__APPLE_CERTIFICATE_P12 != '' && vars.PDS__APPLE_SIGNING_IDENTITY || '' }}
       AZURE_CLIENT_ID: ${{ secrets.PDS__AZURE_CLIENT_ID }}
     strategy:
       # One platform's toolchain breaking should not hide whether the others
@@ -425,6 +433,15 @@ jobs:
       # Gatekeeper needs BOTH a Developer ID signature and a notarisation
       # ticket. A signature alone still warns, which is the usual reason
       # somebody concludes signing "did not work".
+      - name: Refuse Or Warn About An Unsigned macOS Build
+        if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY == ''
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "::error title=macOS build would be UNSIGNED::A tag build has no signing certificate (PDS__APPLE_CERTIFICATE_P12 or PDS__APPLE_SIGNING_IDENTITY is missing). Refusing to publish an unsigned, unnotarised app."
+            exit 1
+          fi
+          echo "::warning title=macOS assets are UNSIGNED::No signing certificate is available to this run (expected for Dependabot and forks), so the app and disk image were not signed or notarised."
+
       - name: Import The Signing Certificate
         if: runner.os == 'macOS' && env.APPLE_SIGNING_IDENTITY != ''
         env:
